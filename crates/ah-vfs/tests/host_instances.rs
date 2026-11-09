@@ -2,26 +2,21 @@ use aes_gcm::{
     Aes256Gcm, KeyInit, Nonce,
     aead::{Aead, Payload},
 };
-use ah_vfs::{
-    application::{
-        driver_catalog::DriverCatalog,
-        driver_info::DriverInfo,
-        dto::*,
-        host_instance_registry::HostInstanceRegistry,
-        mount_runtime::MountRuntime,
-        port::*,
-        service::{EntryService, InstanceService, MountService},
-    },
-    domain::{
-        DriverError, DriverInstance, DriverKey, InstanceId,
-        namespace::{ChildMountPolicy, VirtualPath},
-        storage::{StorageCapabilities, StorageError, StorageErrorKind},
-    },
-    infrastructure::{
-        instance_record_repository::SqliteInstanceRecordRepository,
-        mount_repository::SqliteMountRepository,
-    },
-};
+use ah_vfs::application::driver_catalog::DriverCatalog;
+use ah_vfs::application::driver_error::DriverError;
+use ah_vfs::application::driver_error::{LifecycleError, LifecycleFailure};
+use ah_vfs::application::driver_info::DriverInfo;
+use ah_vfs::application::dto::*;
+use ah_vfs::application::host_instance_registry::HostInstanceRegistry;
+use ah_vfs::application::mount_runtime::MountRuntime;
+use ah_vfs::application::port::*;
+use ah_vfs::application::service::{EntryService, InstanceService, MountService};
+use ah_vfs::domain::namespace::{ChildMountPolicy, VirtualPath};
+use ah_vfs::domain::{DriverInstance, DriverKey, InstanceId};
+use ah_vfs::infrastructure::instance_record_repository::SqliteInstanceRecordRepository;
+use ah_vfs::infrastructure::mount_repository::SqliteMountRepository;
+use ah_vfs_storage::Capabilities;
+use ah_vfs_storage::{Failure, Rejection};
 use std::{
     collections::BTreeMap,
     num::{NonZeroU32, NonZeroUsize},
@@ -33,7 +28,7 @@ use std::{
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 fn invalid() -> DriverError {
-    StorageError::new(StorageErrorKind::InvalidData).into()
+    LifecycleError::new(LifecycleFailure::InvalidRecord).into()
 }
 
 // Real authenticated encryption for isolated fixtures only. A production host
@@ -143,8 +138,8 @@ impl InstanceProvisioner for Provisioner {
         Box::pin(async move {
             self.migrations.fetch_add(1, Ordering::SeqCst);
             if self.fail_migration.load(Ordering::SeqCst) {
-                return Err(StorageError::with_source(
-                    StorageErrorKind::Backend,
+                return Err(LifecycleError::with_source(
+                    LifecycleFailure::Backend,
                     std::io::Error::other("secret-migration-diagnostic"),
                 )
                 .into());
@@ -159,11 +154,11 @@ struct AsyncProvisioner {
     entered: tokio::sync::Notify,
     release: tokio::sync::Notify,
     migrations: AtomicUsize,
-    result: Result<InstanceConfig, StorageErrorKind>,
-    prepare_error: Option<StorageErrorKind>,
+    result: Result<InstanceConfig, LifecycleFailure>,
+    prepare_error: Option<LifecycleFailure>,
 }
 impl AsyncProvisioner {
-    fn new(result: Result<InstanceConfig, StorageErrorKind>) -> Self {
+    fn new(result: Result<InstanceConfig, LifecycleFailure>) -> Self {
         Self {
             validation: Provisioner::default(),
             entered: tokio::sync::Notify::new(),
@@ -177,7 +172,7 @@ impl AsyncProvisioner {
 impl InstanceProvisioner for AsyncProvisioner {
     fn prepare(&self, config: InstanceConfig) -> DriverFuture<'_, PreparedConfig> {
         if let Some(kind) = self.prepare_error {
-            return Box::pin(async move { Err(StorageError::new(kind).into()) });
+            return Box::pin(async move { Err(LifecycleError::new(kind).into()) });
         }
         self.validation.prepare(config)
     }
@@ -192,8 +187,11 @@ impl InstanceProvisioner for AsyncProvisioner {
             self.entered.notify_one();
             self.release.notified().await;
             self.result.clone().map_err(|kind| {
-                StorageError::with_source(kind, std::io::Error::other("private-plugin-diagnostic"))
-                    .into()
+                LifecycleError::with_source(
+                    kind,
+                    std::io::Error::other("private-plugin-diagnostic"),
+                )
+                .into()
             })
         })
     }
@@ -226,7 +224,7 @@ fn info(version: u32, secret: bool) -> TestResult<DriverInfo> {
         .name("Host test".into())
         .version(semver::Version::new(1, 0, 0))
         .child_mount_policy(ChildMountPolicy::Allow)
-        .capabilities(StorageCapabilities::default())
+        .capabilities(Capabilities::default())
         .instance_config_schema(schema(secret))
         .instance_config_version(NonZeroU32::new(version).ok_or("version")?)
         .build())
@@ -359,7 +357,7 @@ async fn host_lifecycle_encrypts_nested_secrets_and_passes_decrypted_open_contex
     let entries = EntryService::new(f.runtime.clone());
     assert!(
         matches!(entries.stat_entry(&VirtualPath::parse("/probe")?).await,
-        Err(error) if error.storage_error().is_some_and(|error| error.kind() == StorageErrorKind::UnsupportedOperation))
+        Err(error) if error.storage_error().is_some_and(|error| error.failure() == Failure::Rejected(Rejection::Unsupported)))
     );
     let mut fields = config().into_object();
     fields.insert("label".into(), "second".into());
@@ -370,7 +368,7 @@ async fn host_lifecycle_encrypts_nested_secrets_and_passes_decrypted_open_contex
     assert!(changed.updated_at() > record.updated_at());
     assert!(
         matches!(entries.stat_entry(&VirtualPath::parse("/probe")?).await,
-        Err(error) if error.storage_error().is_some_and(|error| error.kind() == StorageErrorKind::UnsupportedOperation))
+        Err(error) if error.storage_error().is_some_and(|error| error.failure() == Failure::Rejected(Rejection::Unsupported)))
     );
     assert_eq!(f.driver.opens.load(Ordering::SeqCst), 2);
     let mut fields = config().into_object();
@@ -412,8 +410,8 @@ async fn secret_schema_without_cipher_fails_before_prepare_or_persistence() -> T
         .err()
         .ok_or("failure")?;
     assert_eq!(
-        error.storage_error().ok_or("category")?.kind(),
-        StorageErrorKind::UnsupportedOperation
+        error.lifecycle_error().ok_or("category")?.failure(),
+        LifecycleFailure::Unsupported
     );
     assert_eq!(f.driver.provisioner.prepares.load(Ordering::SeqCst), 0);
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM vfs_instance_records")
@@ -454,7 +452,7 @@ async fn schema_migration_is_per_instance_and_independent_of_record_revision() -
         .err()
         .ok_or("migration failure")?;
     assert!(
-        matches!(error,DriverError::Storage(error) if error.kind()==StorageErrorKind::Backend && !format!("{error:?}").contains("secret-migration-diagnostic"))
+        matches!(error,DriverError::Lifecycle(error) if error.failure()==LifecycleFailure::Backend && !format!("{error:?}").contains("secret-migration-diagnostic"))
     );
     assert_eq!(
         f.records
@@ -538,12 +536,9 @@ async fn async_migration_preserves_runtime_errors_and_rejects_invalid_results() 
     let reference = f.reference(created.id.clone());
     let before = f.records.get(reference.clone()).await?.ok_or("record")?;
     for kind in [
-        StorageErrorKind::Unavailable,
-        StorageErrorKind::TimedOut,
-        StorageErrorKind::Cancelled,
-        StorageErrorKind::OutcomeUnknown,
-        StorageErrorKind::StaleHandle,
-        StorageErrorKind::Backend,
+        LifecycleFailure::Unavailable,
+        LifecycleFailure::TimedOut,
+        LifecycleFailure::Backend,
     ] {
         for fail_prepare in [false, true] {
             let mut provisioner = AsyncProvisioner::new(if fail_prepare {
@@ -564,7 +559,7 @@ async fn async_migration_preserves_runtime_errors_and_rejects_invalid_results() 
                 .await
                 .err()
                 .ok_or("migration failure")?;
-            assert_eq!(error.storage_error().ok_or("category")?.kind(), kind);
+            assert_eq!(error.lifecycle_error().ok_or("category")?.failure(), kind);
             assert!(!format!("{error:?}").contains("private-plugin-diagnostic"));
             let unchanged = f.records.get(reference.clone()).await?.ok_or("record")?;
             assert_eq!(unchanged.config_json(), before.config_json());
@@ -589,8 +584,8 @@ async fn async_migration_preserves_runtime_errors_and_rejects_invalid_results() 
         .err()
         .ok_or("invalid migrated config")?;
     assert_eq!(
-        error.storage_error().ok_or("category")?.kind(),
-        StorageErrorKind::InvalidData
+        error.lifecycle_error().ok_or("category")?.failure(),
+        LifecycleFailure::InvalidRecord
     );
     let unchanged = f.records.get(reference).await?.ok_or("record")?;
     assert_eq!(unchanged.config_json(), before.config_json());
@@ -627,8 +622,8 @@ async fn async_migration_cannot_overwrite_an_update_made_while_waiting() -> Test
     provisioner.release.notify_one();
     let error = opening.await.err().ok_or("revision conflict")?;
     assert_eq!(
-        error.storage_error().ok_or("category")?.kind(),
-        StorageErrorKind::Conflict
+        error.lifecycle_error().ok_or("category")?.failure(),
+        LifecycleFailure::Conflict
     );
     let retained = f.records.get(reference.clone()).await?.ok_or("record")?;
     assert_eq!(retained.config_version(), 1);
@@ -733,7 +728,7 @@ async fn ambiguous_secret_annotations_are_rejected_before_persistence() -> TestR
         .name("Ambiguous schema".into())
         .version(semver::Version::new(1, 0, 0))
         .child_mount_policy(ChildMountPolicy::Allow)
-        .capabilities(StorageCapabilities::default())
+        .capabilities(Capabilities::default())
         .instance_config_schema(schema)
         .build();
     let registry = HostInstanceRegistry::new(
@@ -744,7 +739,7 @@ async fn ambiguous_secret_annotations_are_rejected_before_persistence() -> TestR
     );
     let error = registry.create(config()).await.err().ok_or("rejection")?;
     assert!(
-        matches!(error,DriverError::Storage(error) if error.kind()==StorageErrorKind::UnsupportedOperation)
+        matches!(error,DriverError::Lifecycle(error) if error.failure()==LifecycleFailure::Unsupported)
     );
     assert_eq!(f.driver.provisioner.prepares.load(Ordering::SeqCst), 0);
     Ok(())
@@ -759,8 +754,8 @@ fn secret_bearing_value_objects_and_errors_have_redacted_debug() -> TestResult {
         raw,
         BTreeMap::from([("private".into(), "password-value-private".into())]),
     );
-    let error = StorageError::with_source(
-        StorageErrorKind::Backend,
+    let error = LifecycleError::with_source(
+        LifecycleFailure::Backend,
         std::io::Error::other("password-value-private"),
     );
     for debug in [
@@ -865,7 +860,7 @@ async fn record_updates_reject_stale_revisions_without_overwriting() -> TestResu
     f.records.update(next.clone(), 1).await?;
     let error = f.records.update(next, 1).await.err().ok_or("conflict")?;
     assert!(
-        matches!(error,DriverError::Storage(error) if error.kind()==StorageErrorKind::Conflict)
+        matches!(error,DriverError::Lifecycle(error) if error.failure()==LifecycleFailure::Conflict)
     );
     assert_eq!(
         f.records.get(reference).await?.ok_or("record")?.revision(),
@@ -950,8 +945,8 @@ async fn registry_updates_reject_writes_that_interleave_with_the_config_snapshot
         .err()
         .ok_or("conflict")?;
     assert_eq!(
-        error.storage_error().ok_or("storage error")?.kind(),
-        StorageErrorKind::Conflict
+        error.lifecycle_error().ok_or("storage error")?.failure(),
+        LifecycleFailure::Conflict
     );
     assert_eq!(repository.reads.load(Ordering::SeqCst), 1);
     let reference = f.reference(created.id);
@@ -1021,7 +1016,7 @@ async fn optional_provisioner_defaults_are_explicit_and_side_effect_free() -> Te
     let config = config();
     assert_eq!(provisioner.migrate_config(1, config.clone()).await?, config);
     assert!(
-        matches!(provisioner.test_connection(&config).await,Err(DriverError::Storage(error)) if error.kind()==StorageErrorKind::UnsupportedOperation)
+        matches!(provisioner.test_connection(&config).await,Err(DriverError::Lifecycle(error)) if error.failure()==LifecycleFailure::Unsupported)
     );
     Ok(())
 }
@@ -1060,8 +1055,8 @@ async fn corrupt_lookahead_envelopes_fail_the_entire_page() -> TestResult {
             .err()
             .ok_or("corrupt lookahead must fail the entire page")?;
         assert_eq!(
-            error.storage_error().ok_or("storage error")?.kind(),
-            StorageErrorKind::InvalidData
+            error.lifecycle_error().ok_or("storage error")?.failure(),
+            LifecycleFailure::InvalidRecord
         );
     }
     Ok(())
@@ -1077,7 +1072,7 @@ async fn a_whole_config_secret_round_trips_through_the_persisted_envelope() -> T
         .name("Whole-config secret".into())
         .version(semver::Version::new(1, 0, 0))
         .child_mount_policy(ChildMountPolicy::Allow)
-        .capabilities(StorageCapabilities::default())
+        .capabilities(Capabilities::default())
         .instance_config_schema(root_schema)
         .build();
     let registry = HostInstanceRegistry::new(

@@ -1,14 +1,14 @@
 #![cfg(target_os = "linux")]
+use ah_vfs_storage::{BackendFailure, Failure, Rejection};
 mod common;
 
-use ah_vfs::{
-    application::port::{Driver, Storage, StorageFileReader},
-    domain::storage::{
-        EntryKind, StorageCreateDirRequest, StorageDirQuery, StorageErrorKind,
-        StorageMoveEntryRequest, StoragePath, StorageReadFileRequest, StorageRemoveEntryRequest,
-        StorageStatEntryRequest, StorageWriteFileMode, StorageWriteFileRequest,
-    },
+use ah_vfs::application::port::{Driver, Storage, StorageFileReader};
+use ah_vfs::domain::storage::{
+    StorageCreateDirRequest, StorageDirQuery, StorageMoveEntryRequest, StorageReadFileRequest,
+    StorageRemoveEntryRequest, StorageStatEntryRequest, StorageWriteFileRequest,
 };
+use ah_vfs_storage::WriteMode;
+use ah_vfs_storage::{EntryType, StoragePath};
 
 use sqlx::sqlite::SqlitePoolOptions;
 use std::{error::Error, num::NonZeroUsize, path::PathBuf, sync::Arc};
@@ -45,7 +45,7 @@ async fn fixture() -> TestResult<Fixture> {
     })
 }
 
-fn path(value: &str) -> Result<StoragePath, ah_vfs::domain::storage::StoragePathError> {
+fn path(value: &str) -> Result<StoragePath, ah_vfs_storage::PathError> {
     StoragePath::parse(value)
 }
 
@@ -70,25 +70,23 @@ async fn metadata_and_sorted_pagination_use_instance_relative_paths() -> TestRes
         .storage
         .stat_entry(StorageStatEntryRequest { path: path("")? })
         .await?;
-    assert_eq!(root.kind, EntryKind::Dir);
-    assert_eq!(root.size, None);
+    assert_eq!(root.entry_type(), EntryType::Directory);
     let file = f
         .storage
         .stat_entry(StorageStatEntryRequest {
             path: path("c.txt")?,
         })
         .await?;
-    assert_eq!(file.path.as_str(), "c.txt");
-    assert_eq!(file.kind, EntryKind::File);
-    assert_eq!(file.size, Some(3));
-    assert!(file.modified.is_some());
+    assert_eq!(file.path().as_str(), "c.txt");
+    assert_eq!(file.entry_type(), EntryType::file(Some(3)));
+    assert!(file.modified().is_some());
     assert!(matches!(
         f.storage
             .stat_entry(StorageStatEntryRequest {
                 path: path("missing")?
             })
             .await,
-        Err(error) if error.kind() == StorageErrorKind::NotFound
+        Err(error) if error.failure() == Failure::Rejected(Rejection::NotFound)
     ));
 
     let mut query = StorageDirQuery::new(path("")?);
@@ -98,12 +96,18 @@ async fn metadata_and_sorted_pagination_use_instance_relative_paths() -> TestRes
         first
             .entries
             .iter()
-            .map(|n| n.path.as_str())
+            .map(|n| n.path().as_str())
             .collect::<Vec<_>>(),
         ["a.txt", "b"]
     );
-    assert_eq!(first.entries[1].kind, EntryKind::Dir);
-    assert_eq!(first.next_after.as_deref(), Some("b"));
+    assert_eq!(first.entries[1].entry_type(), EntryType::Directory);
+    assert_eq!(
+        first
+            .next_after
+            .as_ref()
+            .map(ah_vfs_storage::EntryName::as_str),
+        Some("b")
+    );
     let second = f
         .storage
         .list_entries(StorageDirQuery {
@@ -116,7 +120,7 @@ async fn metadata_and_sorted_pagination_use_instance_relative_paths() -> TestRes
         second
             .entries
             .iter()
-            .map(|n| n.path.as_str())
+            .map(|n| n.path().as_str())
             .collect::<Vec<_>>(),
         ["c.txt", "文件"]
     );
@@ -138,20 +142,15 @@ async fn invalid_dir_queries_fail_explicitly() -> TestResult {
     query.limit = NonZeroUsize::new(1001).ok_or("zero limit")?;
     assert!(matches!(
         f.storage.list_entries(query).await,
-        Err(error) if error.kind() == StorageErrorKind::InvalidRequest
+        Err(error) if error.failure() == Failure::Rejected(Rejection::LimitExceeded)
     ));
-    let mut query = StorageDirQuery::new(path("")?);
-    query.after = Some("../outside".into());
-    assert!(matches!(
-        f.storage.list_entries(query).await,
-        Err(error) if error.kind() == StorageErrorKind::InvalidPath
-    ));
+    assert!(ah_vfs_storage::EntryName::parse("../outside").is_err());
     std::fs::write(f.root.join("file"), b"x")?;
     assert!(matches!(
         f.storage
             .list_entries(StorageDirQuery::new(path("file")?))
             .await,
-        Err(error) if error.kind() == StorageErrorKind::NotDir
+        Err(error) if error.failure() == Failure::Rejected(Rejection::NotDirectory)
     ));
     Ok(())
 }
@@ -166,7 +165,7 @@ async fn dir_creation_and_removal_preserve_root_and_nonempty_dirs() -> TestResul
                 recursive: false,
             })
             .await,
-        Err(error) if error.kind() == StorageErrorKind::NotFound
+        Err(error) if error.failure() == Failure::Rejected(Rejection::NotFound)
     ));
     let entry = f
         .storage
@@ -175,7 +174,7 @@ async fn dir_creation_and_removal_preserve_root_and_nonempty_dirs() -> TestResul
             recursive: true,
         })
         .await?;
-    assert_eq!(entry.kind, EntryKind::Dir);
+    assert_eq!(entry.entry_type(), EntryType::Directory);
     f.storage
         .create_dir(StorageCreateDirRequest {
             path: path("a/b")?,
@@ -189,13 +188,13 @@ async fn dir_creation_and_removal_preserve_root_and_nonempty_dirs() -> TestResul
                 recursive: false,
             })
             .await,
-        Err(error) if error.kind() == StorageErrorKind::AlreadyExists
+        Err(error) if error.failure() == Failure::Rejected(Rejection::AlreadyExists)
     ));
     assert!(matches!(
         f.storage
             .remove_entry(StorageRemoveEntryRequest { path: path("a")? })
             .await,
-        Err(error) if error.kind() == StorageErrorKind::DirNotEmpty
+        Err(error) if error.failure() == Failure::Rejected(Rejection::DirectoryNotEmpty)
     ));
     std::fs::write(f.root.join("a/b/file"), b"x")?;
     f.storage
@@ -217,8 +216,8 @@ async fn dir_creation_and_removal_preserve_root_and_nonempty_dirs() -> TestResul
             recursive: true,
         })
         .await?;
-    assert_eq!(root.path, path("")?);
-    assert_eq!(root.kind, EntryKind::Dir);
+    assert_eq!(root.path(), &path("")?);
+    assert_eq!(root.entry_type(), EntryType::Directory);
     assert!(matches!(
         f.storage
             .create_dir(StorageCreateDirRequest {
@@ -226,13 +225,13 @@ async fn dir_creation_and_removal_preserve_root_and_nonempty_dirs() -> TestResul
                 recursive: false,
             })
             .await,
-        Err(error) if error.kind() == StorageErrorKind::AlreadyExists
+        Err(error) if error.failure() == Failure::Rejected(Rejection::AlreadyExists)
     ));
     assert!(matches!(
         f.storage
             .remove_entry(StorageRemoveEntryRequest { path: path("")? })
             .await,
-        Err(error) if error.kind() == StorageErrorKind::RootProtected
+        Err(error) if error.failure() == Failure::Rejected(Rejection::RootProtected)
     ));
     Ok(())
 }
@@ -260,20 +259,23 @@ async fn chunked_writes_publish_only_at_commit_and_reads_honor_ranges() -> TestR
             .is_empty()
     );
     let metadata = writer.commit().await?;
-    assert_eq!(metadata.path, path("data")?);
-    assert_eq!(metadata.size, Some(bytes.len() as u64));
+    assert_eq!(metadata.path(), &path("data")?);
+    assert_eq!(
+        metadata.entry_type(),
+        EntryType::file(Some(bytes.len() as u64))
+    );
     assert_eq!(std::fs::read(f.root.join("data"))?, bytes);
     assert!(matches!(
         writer.commit().await,
-        Err(error) if error.kind() == StorageErrorKind::SessionClosed
+        Err(error) if error.failure() == Failure::Backend(BackendFailure::Closed)
     ));
     assert!(matches!(
         writer.abort().await,
-        Err(error) if error.kind() == StorageErrorKind::SessionClosed
+        Err(error) if error.failure() == Failure::Backend(BackendFailure::Closed)
     ));
     assert!(matches!(
         writer.write_chunk(b"late").await,
-        Err(error) if error.kind() == StorageErrorKind::SessionClosed
+        Err(error) if error.failure() == Failure::Backend(BackendFailure::Closed)
     ));
 
     let mut reader = f
@@ -321,14 +323,14 @@ async fn replacing_and_aborting_keep_existing_data_until_publication() -> TestRe
         f.storage
             .write_file(StorageWriteFileRequest::new(path("data")?))
             .await,
-        Err(error) if error.kind() == StorageErrorKind::AlreadyExists
+        Err(error) if error.failure() == Failure::Rejected(Rejection::AlreadyExists)
     ));
     let mut writer = f
         .storage
         .write_file(StorageWriteFileRequest {
             require_atomic_publish: false,
             path: path("data")?,
-            mode: StorageWriteFileMode::Replace,
+            mode: WriteMode::Replace,
         })
         .await?;
     writer.write_chunk(b"new").await?;
@@ -339,15 +341,15 @@ async fn replacing_and_aborting_keep_existing_data_until_publication() -> TestRe
     writer.abort().await?;
     assert!(matches!(
         writer.write_chunk(b"x").await,
-        Err(error) if error.kind() == StorageErrorKind::SessionClosed
+        Err(error) if error.failure() == Failure::Backend(BackendFailure::Closed)
     ));
     assert!(matches!(
         writer.commit().await,
-        Err(error) if error.kind() == StorageErrorKind::SessionClosed
+        Err(error) if error.failure() == Failure::Backend(BackendFailure::Closed)
     ));
     assert!(matches!(
         writer.abort().await,
-        Err(error) if error.kind() == StorageErrorKind::SessionClosed
+        Err(error) if error.failure() == Failure::Backend(BackendFailure::Closed)
     ));
     assert_eq!(
         std::fs::read(f.root.join("data"))?,
@@ -358,7 +360,7 @@ async fn replacing_and_aborting_keep_existing_data_until_publication() -> TestRe
         .write_file(StorageWriteFileRequest {
             require_atomic_publish: false,
             path: path("data")?,
-            mode: StorageWriteFileMode::Replace,
+            mode: WriteMode::Replace,
         })
         .await?;
     writer.write_chunk(b"new").await?;
@@ -368,7 +370,7 @@ async fn replacing_and_aborting_keep_existing_data_until_publication() -> TestRe
         .storage
         .write_file(StorageWriteFileRequest::new(path("empty")?))
         .await?;
-    assert_eq!(empty.commit().await?.size, Some(0));
+    assert_eq!(empty.commit().await?.entry_type(), EntryType::file(Some(0)));
     assert_eq!(std::fs::read_dir(&f.root)?.count(), 2);
     Ok(())
 }
@@ -402,10 +404,10 @@ async fn concurrent_create_new_writers_cannot_overwrite_each_other() -> TestResu
     second.write_chunk(b"second").await?;
     let (first, second) = tokio::join!(first.commit(), second.commit());
     match (first, second) {
-        (Ok(_), Err(error)) if error.kind() == StorageErrorKind::AlreadyExists => {
+        (Ok(_), Err(error)) if error.failure() == Failure::Rejected(Rejection::AlreadyExists) => {
             assert_eq!(std::fs::read(f.root.join("same"))?, b"first")
         }
-        (Err(error), Ok(_)) if error.kind() == StorageErrorKind::AlreadyExists => {
+        (Err(error), Ok(_)) if error.failure() == Failure::Rejected(Rejection::AlreadyExists) => {
             assert_eq!(std::fs::read(f.root.join("same"))?, b"second")
         }
         results => return Err(format!("unexpected commit results: {results:?}").into()),
@@ -425,11 +427,11 @@ async fn failed_commit_is_terminal_and_preserves_a_concurrently_created_target()
     std::fs::write(f.root.join("data"), b"external")?;
     assert!(matches!(
         writer.commit().await,
-        Err(error) if error.kind() == StorageErrorKind::AlreadyExists
+        Err(error) if error.failure() == Failure::Rejected(Rejection::AlreadyExists)
     ));
     assert!(matches!(
         writer.commit().await,
-        Err(error) if error.kind() == StorageErrorKind::SessionClosed
+        Err(error) if error.failure() == Failure::Backend(BackendFailure::Closed)
     ));
     assert_eq!(std::fs::read(f.root.join("data"))?, b"external");
     assert_eq!(std::fs::read_dir(&f.root)?.count(), 1);
@@ -439,11 +441,13 @@ async fn failed_commit_is_terminal_and_preserves_a_concurrently_created_target()
         .write_file(StorageWriteFileRequest {
             require_atomic_publish: false,
             path: path("directory")?,
-            mode: StorageWriteFileMode::Replace,
+            mode: WriteMode::Replace,
         })
         .await?;
     std::fs::create_dir(f.root.join("directory"))?;
-    assert!(matches!(writer.commit().await, Err(error) if error.kind() == StorageErrorKind::IsDir));
+    assert!(
+        matches!(writer.commit().await, Err(error) if error.failure() == Failure::Rejected(Rejection::IsDirectory))
+    );
     assert!(f.root.join("directory").is_dir());
     assert_eq!(std::fs::read_dir(&f.root)?.count(), 2);
     Ok(())
@@ -479,23 +483,23 @@ async fn wrong_entry_types_and_root_writes_are_rejected() -> TestResult {
             f.storage
                 .read_file(StorageReadFileRequest::new(path(name)?))
                 .await,
-            Err(error) if error.kind() == StorageErrorKind::IsDir
+            Err(error) if error.failure() == Failure::Rejected(Rejection::IsDirectory)
         ));
     }
     assert!(matches!(
         f.storage
             .write_file(StorageWriteFileRequest::new(path("")?))
             .await,
-        Err(error) if error.kind() == StorageErrorKind::RootProtected
+        Err(error) if error.failure() == Failure::Rejected(Rejection::RootProtected)
     ));
     assert!(matches!(
         f.storage
             .write_file(StorageWriteFileRequest { require_atomic_publish: false,
                 path: path("directory")?,
-                mode: StorageWriteFileMode::Replace,
+                mode: WriteMode::Replace,
             })
             .await,
-        Err(error) if error.kind() == StorageErrorKind::IsDir
+        Err(error) if error.failure() == Failure::Rejected(Rejection::IsDirectory)
     ));
     assert!(matches!(
         f.storage
@@ -504,13 +508,13 @@ async fn wrong_entry_types_and_root_writes_are_rejected() -> TestResult {
                 recursive: true,
             })
             .await,
-        Err(error) if error.kind() == StorageErrorKind::NotDir
+        Err(error) if error.failure() == Failure::Rejected(Rejection::NotDirectory)
     ));
     assert!(matches!(
         f.storage
             .read_file(StorageReadFileRequest::new(path("missing")?))
             .await,
-        Err(error) if error.kind() == StorageErrorKind::NotFound
+        Err(error) if error.failure() == Failure::Rejected(Rejection::NotFound)
     ));
     Ok(())
 }
@@ -529,7 +533,7 @@ async fn rename_handles_files_dirs_conflicts_and_replacement() -> TestResult {
                 replace: false,
             })
             .await,
-        Err(error) if error.kind() == StorageErrorKind::AlreadyExists
+        Err(error) if error.failure() == Failure::Rejected(Rejection::AlreadyExists)
     ));
     assert_eq!(std::fs::read(f.root.join("a"))?, b"a");
     assert_eq!(std::fs::read(f.root.join("b"))?, b"b");
@@ -541,7 +545,7 @@ async fn rename_handles_files_dirs_conflicts_and_replacement() -> TestResult {
             replace: true,
         })
         .await?;
-    assert_eq!(entry.path, path("b")?);
+    assert_eq!(entry.path(), &path("b")?);
     assert!(!f.root.join("a").exists());
     assert_eq!(std::fs::read(f.root.join("b"))?, b"a");
     f.storage
@@ -561,7 +565,7 @@ async fn rename_handles_files_dirs_conflicts_and_replacement() -> TestResult {
             replace: false,
         })
         .await?;
-    assert_eq!(entry.kind, EntryKind::Dir);
+    assert_eq!(entry.entry_type(), EntryType::Directory);
     assert_eq!(std::fs::read(f.root.join("new/child"))?, b"child");
     assert!(
         f.storage
@@ -581,7 +585,7 @@ async fn rename_handles_files_dirs_conflicts_and_replacement() -> TestResult {
                 replace: false,
             })
             .await,
-        Err(error) if error.kind() == StorageErrorKind::RootProtected
+        Err(error) if error.failure() == Failure::Rejected(Rejection::RootProtected)
     ));
     assert!(matches!(
         f.storage
@@ -591,7 +595,7 @@ async fn rename_handles_files_dirs_conflicts_and_replacement() -> TestResult {
                 replace: true,
             })
             .await,
-        Err(error) if error.kind() == StorageErrorKind::RootProtected
+        Err(error) if error.failure() == Failure::Rejected(Rejection::RootProtected)
     ));
     Ok(())
 }
@@ -621,13 +625,13 @@ async fn staging_names_are_hidden_and_cannot_be_accessed() -> TestResult {
         f.storage
             .stat_entry(StorageStatEntryRequest { path: path(&name)? })
             .await,
-        Err(error) if error.kind() == StorageErrorKind::PermissionDenied
+        Err(error) if error.failure() == Failure::Rejected(Rejection::AccessDenied)
     ));
     assert!(matches!(
         f.storage
             .remove_entry(StorageRemoveEntryRequest { path: path(&name)? })
             .await,
-        Err(error) if error.kind() == StorageErrorKind::PermissionDenied
+        Err(error) if error.failure() == Failure::Rejected(Rejection::AccessDenied)
     ));
     assert!(matches!(
         f.storage
@@ -636,7 +640,7 @@ async fn staging_names_are_hidden_and_cannot_be_accessed() -> TestResult {
                 recursive: true,
             })
             .await,
-        Err(error) if error.kind() == StorageErrorKind::PermissionDenied
+        Err(error) if error.failure() == Failure::Rejected(Rejection::AccessDenied)
     ));
     Ok(())
 }
@@ -656,35 +660,39 @@ async fn symlinks_are_visible_as_links_but_never_followed() -> TestResult {
             f.storage
                 .stat_entry(StorageStatEntryRequest { path: path(name)? })
                 .await?
-                .kind,
-            EntryKind::Symlink
+                .entry_type(),
+            EntryType::Symlink
         );
     }
     let page = f
         .storage
         .list_entries(StorageDirQuery::new(path("")?))
         .await?;
-    assert!(page.entries.iter().all(|n| n.kind == EntryKind::Symlink));
+    assert!(
+        page.entries
+            .iter()
+            .all(|n| n.entry_type() == EntryType::Symlink)
+    );
     assert!(matches!(
         f.storage
             .read_file(StorageReadFileRequest::new(path("leaf")?))
             .await,
-        Err(error) if error.kind() == StorageErrorKind::UnsupportedOperation
+        Err(error) if error.failure() == Failure::Rejected(Rejection::Unsupported)
     ));
     assert!(matches!(
         f.storage
             .write_file(StorageWriteFileRequest { require_atomic_publish: false,
                 path: path("leaf")?,
-                mode: StorageWriteFileMode::Replace,
+                mode: WriteMode::Replace,
             })
             .await,
-        Err(error) if error.kind() == StorageErrorKind::UnsupportedOperation
+        Err(error) if error.failure() == Failure::Rejected(Rejection::Unsupported)
     ));
     assert!(matches!(
         f.storage
             .write_file(StorageWriteFileRequest::new(path("dangling")?))
             .await,
-        Err(error) if error.kind() == StorageErrorKind::AlreadyExists
+        Err(error) if error.failure() == Failure::Rejected(Rejection::AlreadyExists)
     ));
     assert!(matches!(
         f.storage
@@ -692,7 +700,7 @@ async fn symlinks_are_visible_as_links_but_never_followed() -> TestResult {
                 path: path("linked/file")?
             })
             .await,
-        Err(error) if error.kind() == StorageErrorKind::UnsupportedOperation
+        Err(error) if error.failure() == Failure::Rejected(Rejection::Unsupported)
     ));
     assert!(
         f.storage
@@ -810,7 +818,7 @@ async fn non_utf8_dir_entries_fail_without_lossy_conversion() -> TestResult {
         f.storage
             .list_entries(StorageDirQuery::new(path("")?))
             .await,
-        Err(error) if error.kind() == StorageErrorKind::InvalidNameEncoding
+        Err(error) if error.failure() == Failure::Backend(BackendFailure::UnrepresentableName)
     ));
     Ok(())
 }
@@ -832,11 +840,45 @@ async fn new_files_are_private_and_replacement_preserves_destination_permissions
         .write_file(StorageWriteFileRequest {
             require_atomic_publish: false,
             path: path("new")?,
-            mode: StorageWriteFileMode::Replace,
+            mode: WriteMode::Replace,
         })
         .await?;
     writer.write_chunk(b"replacement").await?;
     writer.commit().await?;
     assert_eq!(std::fs::metadata(f.root.join("new"))?.mode() & 0o777, 0o640);
+    Ok(())
+}
+
+#[tokio::test]
+async fn recursive_creation_failure_preserves_cause_operation_and_parent_effects() -> TestResult {
+    use ah_vfs_storage::{MutationOutcome, Operation};
+    let f = fixture().await?;
+    let request = StorageCreateDirRequest {
+        path: path(&format!("created/{}", "x".repeat(256)))?,
+        recursive: true,
+    };
+    let error = f
+        .storage
+        .create_dir(request)
+        .await
+        .err()
+        .ok_or("native name limit accepted")?;
+    assert_eq!(error.operation(), Operation::CreateDirectory);
+    assert_eq!(error.failure(), Failure::Rejected(Rejection::NameTooLong));
+    assert_eq!(error.outcome(), MutationOutcome::Unknown);
+    assert!(f.root.join("created").is_dir());
+    assert_eq!(std::fs::read_dir(f.root.join("created"))?.count(), 0);
+
+    let error = f
+        .storage
+        .remove_entry(StorageRemoveEntryRequest {
+            path: StoragePath::root(),
+        })
+        .await
+        .err()
+        .ok_or("root removed")?;
+    assert_eq!(error.operation(), Operation::Remove);
+    assert_eq!(error.failure(), Failure::Rejected(Rejection::RootProtected));
+    assert_eq!(error.outcome(), MutationOutcome::Unchanged);
     Ok(())
 }

@@ -1,4 +1,5 @@
 //! Native plugin server SDK. No dependency on the host's Driver/Storage proxies.
+use ah_vfs_storage::{BackendFailure, ContractViolation, Failure};
 pub mod dispatch;
 mod limits;
 mod security;
@@ -6,13 +7,9 @@ mod security;
 pub mod storage_contract;
 pub use limits::ServerLimits;
 
-use ah_vfs::{
-    application::port::Driver,
-    domain::{
-        DriverError,
-        storage::{StorageError, StorageErrorKind},
-    },
-};
+use ah_vfs::application::port::Driver;
+
+use ah_vfs::application::driver_error::DriverError;
 use dispatch::Dispatcher;
 use std::{future::Future, pin::Pin, sync::Arc};
 use tokio::{
@@ -85,20 +82,23 @@ impl PluginService {
         })
     }
 }
-fn encode(reply: Result<p::Reply, DriverError>, mutates: bool) -> Result<wire::Reply, Status> {
+fn encode(reply: Result<p::Reply, DriverError>, op: &Op) -> Result<wire::Reply, Status> {
     let reply = reply.map_err(|error| match error {
-        DriverError::Storage(error) if error.kind() == StorageErrorKind::ProtocolViolation => {
-            c::response_error(mutates, error).into()
+        DriverError::Storage(error) if matches!(error.failure(), Failure::Contract(_)) => {
+            c::response_error(error.operation(), op.may_publish(), error).into()
         }
         error => error,
     });
-    Ok(p::to_reply(reply.map_err(c::failure)).unwrap_or_else(|_| {
-        p::Reply::new(p::Value::Failure(p::Failure::new(if mutates {
-            p::FailureCode::OutcomeUnknown
-        } else {
-            p::FailureCode::ProtocolViolation
-        })))
-    }))
+    Ok(
+        p::to_reply(reply.map_err(c::failure)).unwrap_or_else(|source| {
+            p::Reply::new(p::Value::Failure(c::failure(c::call_error(
+                op,
+                Failure::Contract(ContractViolation::InvalidResponse),
+                true,
+                Some(Box::new(source)),
+            ))))
+        }),
+    )
 }
 
 #[tonic::async_trait]
@@ -114,7 +114,7 @@ impl wire::plugin_server::Plugin for PluginService {
                 "Storage requires a Session stream",
             ));
         }
-        let mutates = operation.mutates();
+        let request_context = operation.clone();
         Ok(Response::new(encode(
             tokio::time::timeout(
                 self.admission.limits.request_timeout,
@@ -122,7 +122,7 @@ impl wire::plugin_server::Plugin for PluginService {
             )
             .await
             .map_err(|_| Status::deadline_exceeded("plugin operation timed out"))?,
-            mutates,
+            &request_context,
         )?))
     }
     type SessionStream = SessionStream;
@@ -146,6 +146,7 @@ impl wire::plugin_server::Plugin for PluginService {
         if !data.is_empty() {
             return Err(Status::invalid_argument("unexpected Open data"));
         }
+        let opening_context = Op::Open(open.clone());
         let opened = tokio::time::timeout(
             self.admission.limits.request_timeout,
             self.dispatcher.open_session(&generation, open),
@@ -160,7 +161,9 @@ impl wire::plugin_server::Plugin for PluginService {
             let session = match opened {
                 Ok(session) => session,
                 Err(error) => {
-                    let _ = service.send(&tx, encode(Err(error), false)).await;
+                    let _ = service
+                        .send(&tx, encode(Err(error), &opening_context))
+                        .await;
                     return;
                 }
             };
@@ -168,7 +171,10 @@ impl wire::plugin_server::Plugin for PluginService {
             if *retired.borrow() {
                 return;
             }
-            if !service.send(&tx, encode(Ok(session.opened()), false)).await {
+            if !service
+                .send(&tx, encode(Ok(session.opened()), &opening_context))
+                .await
+            {
                 return;
             }
             let (requests, mut frames) = mpsc::channel(1);
@@ -212,13 +218,13 @@ impl wire::plugin_server::Plugin for PluginService {
                         .await;
                     break;
                 }
-                let mutates = operation.mutates();
+                let request_context = operation.clone();
                 let result = tokio::select! {
                     ()=tx.closed()=>break,
                     _=retired.changed()=>break,
                     _=disconnected.changed()=>break,
                     result=tokio::time::timeout(service.admission.limits.request_timeout,session.call(operation,data))=>
-                        result.unwrap_or_else(|_|Err(StorageError::new(if mutates {StorageErrorKind::OutcomeUnknown}else {StorageErrorKind::TimedOut}).into())),
+                        result.unwrap_or_else(|_|Err(c::call_error(&request_context, Failure::Backend(BackendFailure::TimedOut), true, None).into())),
                 };
                 let broken = result
                     .as_ref()
@@ -226,14 +232,14 @@ impl wire::plugin_server::Plugin for PluginService {
                     .and_then(DriverError::storage_error)
                     .is_some_and(|error| {
                         matches!(
-                            error.kind(),
-                            StorageErrorKind::OutcomeUnknown
-                                | StorageErrorKind::StaleHandle
-                                | StorageErrorKind::Unavailable
-                                | StorageErrorKind::TimedOut
+                            error.failure(),
+                            Failure::Backend(BackendFailure::Other)
+                                | Failure::Backend(BackendFailure::Stale)
+                                | Failure::Backend(BackendFailure::Unavailable)
+                                | Failure::Backend(BackendFailure::TimedOut)
                         )
                     });
-                if !service.send(&tx, encode(result, mutates)).await || broken {
+                if !service.send(&tx, encode(result, &request_context)).await || broken {
                     break;
                 }
             }
@@ -411,11 +417,22 @@ impl Drop for AbortOnDrop {
 #[cfg(test)]
 mod response_tests {
     use super::*;
+    use ah_vfs_storage::Operation;
 
     #[test]
     fn malformed_backend_results_report_contract_bugs_without_claiming_mutations_rolled_back()
     -> Result<(), Box<dyn std::error::Error>> {
         for mutates in [false, true] {
+            let operation = if mutates {
+                Operation::Write
+            } else {
+                Operation::Read
+            };
+            let request = if mutates {
+                Op::Commit(p::Handle { handle: 1 })
+            } else {
+                Op::ReaderNext(p::Handle { handle: 1 })
+            };
             for reply in [
                 Ok(p::Reply {
                     result: None,
@@ -425,18 +442,24 @@ mod response_tests {
                     result: Some(p::Value::Bytes(p::Empty {})),
                     data: vec![0; p::MAX_DATA_BYTES + 1],
                 }),
-                Err(c::protocol_violation()),
+                Err(c::storage_protocol_violation(operation).into()),
             ] {
-                let reply = encode(reply, mutates)?;
+                let reply = encode(reply, &request)?;
                 let failure = p::from_reply(reply)?
                     .err()
                     .ok_or("invalid response accepted")?;
+                let failure = p::decode_storage_error(failure.storage.ok_or("storage context")?)?;
+                assert_eq!(failure.operation(), operation);
                 assert_eq!(
-                    failure.code(),
+                    failure.failure(),
+                    Failure::Contract(ContractViolation::InvalidResponse)
+                );
+                assert_eq!(
+                    failure.outcome(),
                     if mutates {
-                        p::FailureCode::OutcomeUnknown
+                        ah_vfs_storage::MutationOutcome::Unknown
                     } else {
-                        p::FailureCode::ProtocolViolation
+                        ah_vfs_storage::MutationOutcome::Unchanged
                     }
                 );
             }

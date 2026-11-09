@@ -1,4 +1,4 @@
-use ah_vfs::domain::storage::{StoragePath, StoragePathError};
+use ah_vfs_storage::{EntryName, PathError, StoragePath};
 use std::error::Error;
 
 #[test]
@@ -8,16 +8,24 @@ fn root_and_relative_names_preserve_their_identity() -> Result<(), Box<dyn Error
     assert!(root.is_root());
     assert_eq!(root.name(), None);
     assert_eq!(root.parent(), None);
-    assert_eq!(root.segments().count(), 0);
+    assert_eq!(root.entry_names().count(), 0);
 
-    let path = root.join("目录")?.join("file name.txt")?;
+    let path = root
+        .join(&EntryName::parse("目录")?)?
+        .join(&EntryName::parse("file name.txt")?)?;
     assert_eq!(path.as_str(), "目录/file name.txt");
-    assert_eq!(path.name(), Some("file name.txt"));
+    assert_eq!(
+        path.name().as_ref().map(EntryName::as_str),
+        Some("file name.txt")
+    );
     assert_eq!(path.parent(), Some(StoragePath::parse("目录")?));
     assert_eq!(StoragePath::parse("目录")?.parent(), Some(root));
     assert_eq!(
-        path.segments().collect::<Vec<_>>(),
-        ["目录", "file name.txt"]
+        path.entry_names().collect::<Vec<_>>(),
+        [
+            EntryName::parse("目录")?,
+            EntryName::parse("file name.txt")?
+        ]
     );
     assert_eq!(path.to_string(), "目录/file name.txt");
     assert_eq!(path.as_str().parse::<StoragePath>()?, path);
@@ -49,25 +57,25 @@ fn every_input_entry_rejects_ambiguous_and_escaping_paths() {
         assert!(StoragePath::try_from(input.to_owned()).is_err());
     }
     for name in ["", ".", "..", "/a", "a/b", "a\\b", "C:file", "a\0b"] {
-        assert!(StoragePath::root().join(name).is_err());
+        assert!(EntryName::parse(name).is_err());
     }
 }
 
 #[test]
 fn length_limit_counts_utf8_bytes_and_applies_to_join() -> Result<(), Box<dyn Error>> {
-    let maximum = "a".repeat(StoragePath::MAX_LEN);
+    let maximum = "a".repeat(ah_vfs_storage::MAX_PATH_BYTES);
     assert_eq!(StoragePath::parse(&maximum)?.as_str(), maximum);
     assert_eq!(
         StoragePath::parse(&format!("{maximum}a")),
-        Err(StoragePathError::TooLong)
+        Err(PathError::TooLong)
     );
     assert_eq!(
-        StoragePath::parse(&"文".repeat(StoragePath::MAX_LEN / 3 + 1)),
-        Err(StoragePathError::TooLong)
+        StoragePath::parse(&"文".repeat(ah_vfs_storage::MAX_PATH_BYTES / 3 + 1)),
+        Err(PathError::TooLong)
     );
     assert_eq!(
-        StoragePath::parse(&maximum)?.join("b"),
-        Err(StoragePathError::TooLong)
+        StoragePath::parse(&maximum)?.join(&EntryName::parse("b")?),
+        Err(PathError::TooLong)
     );
     Ok(())
 }

@@ -1,17 +1,19 @@
-use super::{Blob, BlobError, EntryData, MemoryEntry, Shared, error, require_dir, writable_target};
-use ah_vfs::{
-    application::port::{StorageFileWriter, StorageFuture},
-    domain::storage::{
-        Entry, StorageErrorKind, StoragePath, StorageWriteFileMode, StorageWriteFileRequest,
-    },
+use super::{
+    Blob, BlobError, EntryData, MemoryEntry, Shared, error, metadata_error, require_dir,
+    writable_target,
 };
+use ah_vfs::application::port::{StorageFileWriter, StorageFuture};
+use ah_vfs::domain::storage::StorageWriteFileRequest;
+use ah_vfs_storage::WriteMode;
+use ah_vfs_storage::{BackendFailure, Failure, Operation, Rejection, StorageError};
+use ah_vfs_storage::{Entry, StoragePath};
 use std::{sync::Arc, time::SystemTime};
 
 struct WriteSession {
     shared: Arc<Shared>,
     path: StoragePath,
     parent: Arc<ah_vfs_storage::DirectoryIdentity>,
-    mode: StorageWriteFileMode,
+    mode: WriteMode,
     blob: Blob,
 }
 
@@ -46,17 +48,19 @@ impl StorageFileWriter for MemoryFileWriter {
         Box::pin(async move {
             self.session
                 .as_mut()
-                .ok_or_else(|| error(StorageErrorKind::SessionClosed))?
+                .ok_or_else(|| error(Operation::Write, Failure::Backend(BackendFailure::Closed)))?
                 .blob
                 .append(bytes)
                 .map_err(|cause| match cause {
-                    BlobError::Quota => error(StorageErrorKind::CapacityExceeded),
-                    BlobError::Allocation(source) => {
-                        ah_vfs::domain::storage::StorageError::with_source(
-                            StorageErrorKind::CapacityExceeded,
-                            source,
-                        )
-                    }
+                    BlobError::Quota => error(
+                        Operation::Write,
+                        Failure::Backend(BackendFailure::CapacityExceeded),
+                    ),
+                    BlobError::Allocation(source) => StorageError::without_effects(
+                        Operation::Write,
+                        Failure::Backend(BackendFailure::CapacityExceeded),
+                        Some(Box::new(source)),
+                    ),
                 })
         })
     }
@@ -66,23 +70,30 @@ impl StorageFileWriter for MemoryFileWriter {
             let session = self
                 .session
                 .take()
-                .ok_or_else(|| error(StorageErrorKind::SessionClosed))?;
-            let mut entries = session.shared.lock()?;
-            let parent = session
-                .path
-                .parent()
-                .ok_or_else(|| error(StorageErrorKind::RootProtected))?;
-            let identity = require_dir(&entries, parent.as_str())
-                .map_err(|_| error(StorageErrorKind::Conflict))?;
+                .ok_or_else(|| error(Operation::Write, Failure::Backend(BackendFailure::Closed)))?;
+            let mut entries = session.shared.lock(Operation::Write)?;
+            let parent = session.path.parent().ok_or_else(|| {
+                error(
+                    Operation::Write,
+                    Failure::Rejected(Rejection::RootProtected),
+                )
+            })?;
+            let identity = require_dir(Operation::Write, &entries, parent.as_str())
+                .map_err(|_| error(Operation::Write, Failure::Rejected(Rejection::Conflict)))?;
             if !Arc::ptr_eq(identity, &session.parent) {
-                return Err(error(StorageErrorKind::Conflict));
+                return Err(error(
+                    Operation::Write,
+                    Failure::Rejected(Rejection::Conflict),
+                ));
             }
-            writable_target(&entries, &session.path, session.mode)?;
+            writable_target(Operation::Write, &entries, &session.path, session.mode)?;
             let entry = MemoryEntry {
                 data: EntryData::File(Arc::new(session.blob)),
                 modified: SystemTime::now(),
             };
-            let metadata = entry.metadata(session.path.clone());
+            let metadata = entry
+                .metadata(session.path.clone())
+                .map_err(|cause| metadata_error(Operation::Write, cause))?;
             entries.insert(session.path.as_str().into(), entry);
             Ok(metadata)
         })
@@ -92,7 +103,7 @@ impl StorageFileWriter for MemoryFileWriter {
         Box::pin(async move {
             self.session
                 .take()
-                .ok_or_else(|| error(StorageErrorKind::SessionClosed))?;
+                .ok_or_else(|| error(Operation::Write, Failure::Backend(BackendFailure::Closed)))?;
             Ok(())
         })
     }

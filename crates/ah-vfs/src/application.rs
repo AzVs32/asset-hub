@@ -1,6 +1,7 @@
 //! Virtual filesystem use cases and application boundaries.
 
 pub mod driver_catalog;
+pub mod driver_error;
 pub mod driver_info;
 pub mod dto;
 pub mod error;

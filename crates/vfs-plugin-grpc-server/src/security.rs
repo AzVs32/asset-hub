@@ -1,7 +1,5 @@
-use ah_vfs::domain::{
-    DriverError,
-    storage::{StorageError, StorageErrorKind},
-};
+use ah_vfs::application::driver_error::DriverError;
+use ah_vfs::application::driver_error::{LifecycleError, LifecycleFailure};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 use tonic::metadata::MetadataMap;
@@ -14,7 +12,7 @@ impl AuthToken {
             || token.len() > 4096
             || !token.bytes().all(|byte| byte.is_ascii_graphic())
         {
-            return Err(StorageError::new(StorageErrorKind::PermissionDenied).into());
+            return Err(LifecycleError::new(LifecycleFailure::AccessDenied).into());
         }
         Ok(Self(
             Sha256::digest(format!("Bearer {token}").as_bytes()).into(),

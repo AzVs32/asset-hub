@@ -1,15 +1,12 @@
 //! Host-owned SQLite instance records.
-use crate::{
-    application::{
-        dto::{InstanceQuery, RemoveInstanceOutcome},
-        port::{DriverFuture, InstanceRecord, InstanceRecordPage, InstanceRecordRepository},
-    },
-    domain::{
-        DriverError, DriverInstance, DriverKey, InstanceId,
-        storage::{StorageError, StorageErrorKind},
-    },
-    infrastructure::sqlite_error::database_error,
+use crate::application::driver_error::DriverError;
+use crate::application::driver_error::{LifecycleError, LifecycleFailure};
+use crate::application::dto::{InstanceQuery, RemoveInstanceOutcome};
+use crate::application::port::{
+    DriverFuture, InstanceRecord, InstanceRecordPage, InstanceRecordRepository,
 };
+use crate::domain::{DriverInstance, DriverKey, InstanceId};
+use crate::infrastructure::sqlite_error::database_error;
 use sqlx::{Row, SqlitePool, sqlite::SqliteRow};
 
 pub struct SqliteInstanceRecordRepository {
@@ -37,7 +34,7 @@ impl SqliteInstanceRecordRepository {
     }
 }
 fn invalid() -> DriverError {
-    StorageError::new(StorageErrorKind::InvalidData).into()
+    LifecycleError::new(LifecycleFailure::InvalidRecord).into()
 }
 fn decode(row: SqliteRow) -> Result<InstanceRecord, DriverError> {
     let key: String = row.try_get("driver_key").map_err(database_error)?;
@@ -117,7 +114,7 @@ impl InstanceRecordRepository for SqliteInstanceRecordRepository {
                 .bind(record.instance().driver_key().as_str()).bind(record.instance().instance_id().as_str()).bind(i64::try_from(expected_revision).map_err(|_| invalid())?)
                 .execute(&self.pool).await.map_err(database_error)?;
             if result.rows_affected() != 1 {
-                return Err(StorageError::new(StorageErrorKind::Conflict).into());
+                return Err(LifecycleError::new(LifecycleFailure::Conflict).into());
             }
             Ok(())
         })

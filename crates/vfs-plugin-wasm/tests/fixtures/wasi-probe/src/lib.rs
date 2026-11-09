@@ -6,7 +6,7 @@ wit_bindgen::generate!({
 });
 struct Probe;
 fn denied<T>(_error: T) -> p::Failure {
-    p::Failure::new(p::FailureCode::PermissionDenied)
+    p::Failure::new(p::FailureCode::LifecycleAccessDenied)
 }
 fn field<'a>(fields: &'a p::JsonObject, key: &str) -> Result<&'a str, p::Failure> {
     fields
@@ -81,7 +81,10 @@ fn run(fields: &p::JsonObject) -> Result<String, p::Failure> {
                     .and_then(|value| value.as_u64())
                     .unwrap_or(0) as usize
             ];
-            let response = vfs_plugin_guest::wasi_http::send(request.body(body).map_err(denied)?)?;
+            let response = vfs_plugin_guest::wasi_http::send(request.body(body).map_err(denied)?)
+                .map_err(|cause| {
+                p::Failure::from(vfs_plugin_guest::api::ErrorContext::lifecycle().failure(cause))
+            })?;
             String::from_utf8_lossy(response.body()).into_owned()
         }
         "cpu" => loop {
@@ -143,9 +146,7 @@ impl exports::assethub::vfs::driver::Guest for Probe {
                 }
                 Op::Open(_) => Value::Storage(p::Storage {
                     handle: 1,
-                    info: Some(p::StorageInfo {
-                        chunk_size: 1024,
-                    }),
+                    info: Some(p::StorageInfo { chunk_size: 1024 }),
                 }),
                 Op::Storage(p::StorageCall {
                     operation: Some(p::StorageOp::Stat(_)),
@@ -157,7 +158,7 @@ impl exports::assethub::vfs::driver::Guest for Probe {
                     modified: None,
                 }),
                 Op::Release(_) => Value::Unit(p::Empty {}),
-                _ => return Err(p::Failure::new(p::FailureCode::UnsupportedOperation)),
+                _ => return Err(p::Failure::new(p::FailureCode::LifecycleUnsupported)),
             };
             Ok(p::Reply::new(result))
         })();

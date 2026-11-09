@@ -1,23 +1,19 @@
+use ah_vfs_storage::{ContractViolation, Failure, Operation, Rejection, StorageError};
 #[path = "../../../tests/common/mod.rs"]
 mod common;
 use super::*;
-use crate::{
-    application::{
-        driver_info::DriverInfo,
-        dto::*,
-        error::MountRepositoryError,
-        port::{DriverFuture, MountRepositoryFuture, StorageFuture, StoragePermissions},
-        service::{EntryService, InstanceService, MountService},
-    },
-    domain::{
-        DriverKey, InstanceId,
-        namespace::{ChildMountPolicy, MountId, MountTableError, VirtualPath},
-        storage::{
-            Entry, EntryKind, StorageCapabilities, StorageError, StorageErrorKind,
-            StorageStatEntryRequest,
-        },
-    },
+use crate::application::driver_info::DriverInfo;
+use crate::application::dto::*;
+use crate::application::error::MountRepositoryError;
+use crate::application::port::{
+    DriverFuture, MountRepositoryFuture, StorageFuture, StoragePermissions,
 };
+use crate::application::service::{EntryService, InstanceService, MountService};
+use crate::domain::namespace::{ChildMountPolicy, MountId, MountTableError, VirtualPath};
+use crate::domain::storage::StorageStatEntryRequest;
+use crate::domain::{DriverKey, InstanceId};
+use ah_vfs_storage::Capabilities;
+use ah_vfs_storage::{Entry, EntryType};
 use std::{
     error::Error,
     future::{Future, pending, poll_fn},
@@ -119,11 +115,8 @@ struct TestStorage {
     current_generation: Arc<AtomicUsize>,
 }
 
-fn capabilities() -> Result<StorageCapabilities, StorageError> {
-    StorageCapabilities::builder()
-        .stat_entry(true)
-        .build()
-        .map_err(StorageError::from)
+fn capabilities() -> Result<Capabilities, StorageError> {
+    Ok(Capabilities::default().with_stat(true))
 }
 
 impl Storage for TestStorage {
@@ -141,11 +134,12 @@ impl Storage for TestStorage {
     }
     fn stat_entry(&self, request: StorageStatEntryRequest) -> StorageFuture<'_, Entry> {
         Box::pin(async move {
-            Ok(Entry {
-                path: request.path,
-                kind: EntryKind::File,
-                size: Some(1),
-                modified: None,
+            Entry::new(request.path, EntryType::file(Some(1)), None).map_err(|cause| {
+                StorageError::without_effects(
+                    Operation::Stat,
+                    Failure::Contract(ContractViolation::InvalidResponse),
+                    Some(Box::new(cause)),
+                )
             })
         })
     }
@@ -154,9 +148,15 @@ impl Storage for TestStorage {
 impl StoragePermissions for TestStorage {
     fn get_permissions(
         &self,
-        _: crate::domain::storage::StoragePath,
-    ) -> StorageFuture<'_, crate::domain::storage::EntryPermissions> {
-        Box::pin(async { Err(StorageError::new(StorageErrorKind::UnsupportedOperation)) })
+        _: ah_vfs_storage::StoragePath,
+    ) -> StorageFuture<'_, ah_vfs_storage::Permissions> {
+        Box::pin(async {
+            Err(StorageError::without_effects(
+                Operation::GetPermissions,
+                Failure::Rejected(Rejection::Unsupported),
+                None,
+            ))
+        })
     }
 }
 
@@ -213,7 +213,10 @@ impl common::Backend for TestDriver {
                 self.open_gate.notified().await;
             }
             if self.fail_open.load(Ordering::SeqCst) {
-                return Err(StorageError::new(StorageErrorKind::Unavailable).into());
+                return Err(ah_vfs::application::driver_error::LifecycleError::new(
+                    ah_vfs::application::driver_error::LifecycleFailure::Unavailable,
+                )
+                .into());
             }
             let storage: Arc<dyn Storage> = Arc::new(TestStorage {
                 generation: self.generation.load(Ordering::SeqCst),
@@ -476,10 +479,10 @@ async fn removal_and_uncertain_removal_evict_retention_without_revoking_existing
                 result
                     .err()
                     .ok_or("unknown")?
-                    .storage_error()
+                    .lifecycle_error()
                     .ok_or("domain")?
-                    .kind(),
-                StorageErrorKind::OutcomeUnknown
+                    .failure(),
+                ah_vfs::application::driver_error::LifecycleFailure::Backend
             );
         } else {
             assert_eq!(result?, RemoveInstanceOutcome::Removed);
@@ -668,7 +671,7 @@ async fn invalid_extensions_are_not_retained_as_successful_handles() -> TestResu
         .err()
         .ok_or("invalid adapter")?;
     assert!(
-        matches!(error, DriverError::Storage(error) if error.kind() == StorageErrorKind::ProtocolViolation)
+        matches!(error, DriverError::Lifecycle(error) if error.failure() == ah_vfs::application::driver_error::LifecycleFailure::InvalidDeclaration)
     );
     f.driver.invalid_extensions.store(false, Ordering::SeqCst);
     f.runtime

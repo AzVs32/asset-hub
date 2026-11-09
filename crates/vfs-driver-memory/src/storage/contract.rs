@@ -178,7 +178,7 @@ impl ContractStorage {
         let entry = nodes
             .entry(path.as_str().into())
             .or_insert_with(MemoryEntry::dir);
-        Entry::new(path, kind(entry), Some(entry.modified)).map_err(|cause| {
+        entry.metadata(path).map_err(|cause| {
             StorageError::after_dispatch(
                 op,
                 Failure::Contract(ContractViolation::InvalidEntry),
@@ -374,15 +374,9 @@ fn directory<'a>(nodes: &'a Nodes, path: &StoragePath) -> Option<&'a Arc<Directo
         _ => None,
     }
 }
-fn kind(entry: &MemoryEntry) -> EntryType {
-    match &entry.data {
-        EntryData::Dir(_) => EntryType::Directory,
-        EntryData::File(blob) => EntryType::file(Some(blob.bytes.len() as u64)),
-        EntryData::Link(_) => EntryType::Symlink,
-    }
-}
 fn metadata(path: StoragePath, entry: &MemoryEntry, op: Operation) -> Result<Entry, StorageError> {
-    Entry::new(path, kind(entry), Some(entry.modified))
+    entry
+        .metadata(path)
         .map_err(|cause| invalid(op, ContractViolation::InvalidEntry, cause))
 }
 
@@ -420,7 +414,7 @@ impl<'a, 'r> Walk<'a, 'r> {
         let path = self.segment(self.lookup.path(), &StoragePath::root(), &[], false)?;
         if let Some(entry) = self.nodes.get(path.as_str()) {
             self.lookup
-                .check_existing_target(&path, kind(entry))
+                .check_existing_target(&path, entry.entry_type())
                 .map_err(Failure::Rejected)?;
         }
         Ok(path)
@@ -489,7 +483,7 @@ impl<'a, 'r> Walk<'a, 'r> {
             }
         }
         if let Some(entry) = self.nodes.get(path.as_str()) {
-            expr.check_directory_requirement(kind(entry) == EntryType::Directory)
+            expr.check_directory_requirement(entry.entry_type() == EntryType::Directory)
                 .map_err(Failure::Rejected)?;
         }
         Ok(path)

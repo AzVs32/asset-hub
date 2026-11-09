@@ -1,9 +1,9 @@
 //! Immutable declarations owned by a driver implementation.
 
-use crate::{
-    application::dto::{DriverSettingsSchema, InstanceConfigSchema},
-    domain::{DriverKey, namespace::ChildMountPolicy, storage::StorageCapabilities},
-};
+use crate::application::dto::{DriverSettingsSchema, InstanceConfigSchema};
+use crate::domain::DriverKey;
+use crate::domain::namespace::ChildMountPolicy;
+use ah_vfs_storage::Capabilities;
 
 use bon::Builder;
 use getset::{CopyGetters, Getters};
@@ -26,7 +26,7 @@ pub struct DriverInfo {
     /// Driver-wide operations and successful-operation guarantees, shared by every
     /// instance. Backend/path limitations are operation errors, not new declarations.
     #[getset(get_copy = "pub")]
-    capabilities: StorageCapabilities,
+    capabilities: Capabilities,
     /// Stable creation metadata using the shared annotation profile.
     /// Incompatible metadata prevents registration. None disables creation.
     instance_config_schema: Option<InstanceConfigSchema>,

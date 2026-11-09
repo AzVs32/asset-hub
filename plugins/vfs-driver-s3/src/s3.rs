@@ -1,6 +1,7 @@
 //! Small SigV4 S3 client using only the component's HTTP import. Multipart writes
 //! bound memory to one part; conditional completion implements create-new.
 use super::*;
+use ah_vfs_storage::{Entry, EntryName, EntryType, PageSize, StoragePath};
 use hmac::{Hmac, Mac};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -8,6 +9,7 @@ use time::OffsetDateTime;
 
 #[derive(Clone)]
 pub(super) struct Client {
+    pub(super) context: api::ErrorContext,
     pub endpoint: String,
     pub bucket: String,
     region: String,
@@ -40,14 +42,15 @@ fn percent(value: &str, slash: bool) -> String {
     }
     out
 }
-fn hmac(key: &[u8], bytes: &[u8]) -> Result<Vec<u8>> {
-    let mut h =
-        Hmac::<Sha256>::new_from_slice(key).map_err(|_| failure(p::FailureCode::Backend))?;
+fn hmac(context: &api::ErrorContext, key: &[u8], bytes: &[u8]) -> Result<Vec<u8>> {
+    let mut h = Hmac::<Sha256>::new_from_slice(key)
+        .map_err(|_| context.failure(Failure::Backend(BackendFailure::Other)))?;
     h.update(bytes);
     Ok(h.finalize().into_bytes().to_vec())
 }
-fn xml(bytes: &[u8]) -> Result<&str> {
-    std::str::from_utf8(bytes).map_err(|_| failure(p::FailureCode::InvalidData))
+fn xml<'a>(context: &api::ErrorContext, bytes: &'a [u8]) -> Result<&'a str> {
+    std::str::from_utf8(bytes)
+        .map_err(|_| context.failure(Failure::Backend(BackendFailure::CorruptData)))
 }
 fn header(response: &http::Response<Vec<u8>>, key: &str) -> Option<String> {
     response
@@ -57,6 +60,12 @@ fn header(response: &http::Response<Vec<u8>>, key: &str) -> Option<String> {
         .map(str::to_owned)
 }
 impl Client {
+    pub(super) fn for_operation(&self, operation: Operation) -> Self {
+        let mut client = self.clone();
+        client.context = api::ErrorContext::storage(operation);
+        client
+    }
+
     pub fn parse(fields: &p::JsonObject) -> Result<Self> {
         if fields.keys().any(|k| {
             !["endpoint", "bucket", "region", "access_key", "secret_key"].contains(&k.as_str())
@@ -93,6 +102,7 @@ impl Client {
             return Err(invalid("region", p::ConfigErrorKind::InvalidValue));
         }
         Ok(Self {
+            context: api::ErrorContext::lifecycle(),
             endpoint: url.origin().ascii_serialization(),
             bucket,
             region,
@@ -108,6 +118,10 @@ impl Client {
         extra: Vec<(String, String)>,
         body: Vec<u8>,
     ) -> Result<http::Response<Vec<u8>>> {
+        let context = &self.context;
+        let publishes = (method == "DELETE" && !query.iter().any(|(key, _)| key == "uploadId"))
+            || (method == "PUT" && !query.iter().any(|(key, _)| key == "uploadId"))
+            || (method == "POST" && query.iter().any(|(key, _)| key == "uploadId"));
         let request = self.sign(
             method,
             key,
@@ -117,37 +131,25 @@ impl Client {
             i64::try_from(
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .map_err(|_| failure(p::FailureCode::Backend))?
+                    .map_err(|_| context.failure(Failure::Backend(BackendFailure::Other)))?
                     .as_secs(),
             )
-            .map_err(|_| failure(p::FailureCode::Backend))?,
+            .map_err(|_| context.failure(Failure::Backend(BackendFailure::Other)))?,
         )?;
-        let mutation = !matches!(method, "GET" | "HEAD");
-        let response = vfs_plugin_guest::wasi_http::send(request).map_err(|error| {
-            if mutation
-                && !matches!(
-                    error.code(),
-                    p::FailureCode::PermissionDenied | p::FailureCode::InvalidRequest
-                )
-            {
-                failure(p::FailureCode::OutcomeUnknown)
-            } else {
-                error
-            }
-        })?;
+        if publishes {
+            context.dispatched();
+        }
+        let response =
+            vfs_plugin_guest::wasi_http::send(request).map_err(|cause| context.failure(cause))?;
         match response.status().as_u16() {
             200..=299 => Ok(response),
-            403 => Err(failure(p::FailureCode::PermissionDenied)),
-            404 => Err(failure(p::FailureCode::NotFound)),
-            409 => Err(failure(p::FailureCode::Conflict)),
-            412 => Err(failure(p::FailureCode::AlreadyExists)),
-            429 => Err(failure(p::FailureCode::RateLimited)),
-            500..=599 => Err(failure(if mutation {
-                p::FailureCode::OutcomeUnknown
-            } else {
-                p::FailureCode::Unavailable
-            })),
-            _ => Err(failure(p::FailureCode::Backend)),
+            403 => Err(context.failure(Failure::Rejected(Rejection::AccessDenied))),
+            404 => Err(context.failure(Failure::Rejected(Rejection::NotFound))),
+            409 => Err(context.failure(Failure::Rejected(Rejection::Conflict))),
+            412 => Err(context.failure(Failure::Rejected(Rejection::AlreadyExists))),
+            429 => Err(context.failure(Failure::Backend(BackendFailure::RateLimited))),
+            500..=599 => Err(context.failure(Failure::Backend(BackendFailure::Unavailable))),
+            _ => Err(context.failure(Failure::Backend(BackendFailure::Other))),
         }
     }
     fn sign(
@@ -159,18 +161,19 @@ impl Client {
         body: Vec<u8>,
         now: i64,
     ) -> Result<http::Request<Vec<u8>>> {
+        let context = &self.context;
         let time = OffsetDateTime::from_unix_timestamp(now)
-            .map_err(|_| failure(p::FailureCode::InvalidData))?;
+            .map_err(|_| context.failure(Failure::Backend(BackendFailure::CorruptData)))?;
         let format = time::format_description::parse_borrowed::<2>(
             "[year][month][day]T[hour][minute][second]Z",
         )
-        .map_err(|_| failure(p::FailureCode::Backend))?;
+        .map_err(|_| context.failure(Failure::Backend(BackendFailure::Other)))?;
         let timestamp = time
             .format(&format)
-            .map_err(|_| failure(p::FailureCode::Backend))?;
+            .map_err(|_| context.failure(Failure::Backend(BackendFailure::Other)))?;
         let date = &timestamp[..8];
-        let url =
-            url::Url::parse(&self.endpoint).map_err(|_| failure(p::FailureCode::InvalidData))?;
+        let url = url::Url::parse(&self.endpoint)
+            .map_err(|_| context.failure(Failure::Backend(BackendFailure::CorruptData)))?;
         let host = url[url::Position::BeforeHost..url::Position::AfterPort].to_owned();
         let uri = format!("/{}/{}", self.bucket, percent(key, true));
         let mut query: Vec<_> = query
@@ -203,11 +206,15 @@ impl Client {
             "AWS4-HMAC-SHA256\n{timestamp}\n{scope}\n{}",
             hex::encode(Sha256::digest(canonical.as_bytes()))
         );
-        let k = hmac(format!("AWS4{}", self.secret).as_bytes(), date.as_bytes())?;
-        let k = hmac(&k, self.region.as_bytes())?;
-        let k = hmac(&k, b"s3")?;
-        let k = hmac(&k, b"aws4_request")?;
-        let signature = hex::encode(hmac(&k, to_sign.as_bytes())?);
+        let k = hmac(
+            context,
+            format!("AWS4{}", self.secret).as_bytes(),
+            date.as_bytes(),
+        )?;
+        let k = hmac(context, &k, self.region.as_bytes())?;
+        let k = hmac(context, &k, b"s3")?;
+        let k = hmac(context, &k, b"aws4_request")?;
+        let signature = hex::encode(hmac(context, &k, to_sign.as_bytes())?);
         headers.remove("host");
         headers.insert("authorization".into(),format!("AWS4-HMAC-SHA256 Credential={}/{scope}, SignedHeaders={signed}, Signature={signature}",self.access));
         let url = format!(
@@ -225,36 +232,42 @@ impl Client {
         }
         request
             .body(body)
-            .map_err(|_| failure(p::FailureCode::InvalidRequest))
+            .map_err(|_| context.failure(Failure::Rejected(Rejection::Conflict)))
     }
     pub fn check_bucket(&self) -> Result<()> {
         self.request("HEAD", "", vec![], vec![], vec![])?;
         Ok(())
     }
-    pub fn head(&self, name: &str) -> Result<Option<p::Entry>> {
-        path(name)?;
+    pub fn head(&self, name: &str) -> Result<Option<Entry>> {
+        let context = &self.context;
+        path(context, name)?;
         let response = match self.request("HEAD", name, vec![], vec![], vec![]) {
             Ok(r) => r,
-            Err(e) if e.code == p::FailureCode::NotFound as i32 => return Ok(None),
+            Err(e)
+                if e.storage_error().is_some_and(|error| {
+                    error.failure() == Failure::Rejected(Rejection::NotFound)
+                }) =>
+            {
+                return Ok(None);
+            }
             Err(e) => return Err(e),
         };
         let size = header(&response, "content-length")
             .and_then(|s| s.parse().ok())
-            .ok_or_else(|| failure(p::FailureCode::InvalidData))?;
+            .ok_or_else(|| context.failure(Failure::Backend(BackendFailure::CorruptData)))?;
         let modified = header(&response, "last-modified")
             .and_then(|s| {
                 OffsetDateTime::parse(&s, &time::format_description::well_known::Rfc2822).ok()
             })
-            .map(|t| p::Timestamp {
-                seconds: t.unix_timestamp(),
-                nanos: t.nanosecond(),
-            });
-        Ok(Some(p::Entry {
-            path: name.into(),
-            kind: p::EntryKind::File as i32,
-            size: Some(size),
+            .map(|time| p::decode_time(time.unix_timestamp(), time.nanosecond()))
+            .transpose()
+            .map_err(|_| context.failure(Failure::Backend(BackendFailure::CorruptData)))?;
+        Ok(Some(entry(
+            context,
+            name,
+            EntryType::file(Some(size)),
             modified,
-        }))
+        )?))
     }
     fn listing(
         &self,
@@ -263,6 +276,7 @@ impl Client {
         limit: u32,
         token: Option<&str>,
     ) -> Result<Listing> {
+        let context = &self.context;
         let mut query = vec![
             ("list-type".into(), "2".into()),
             ("delimiter".into(), "/".into()),
@@ -275,32 +289,24 @@ impl Client {
             query.push(("start-after".into(), format!("{prefix}{after}")));
         }
         let r = self.request("GET", "", query, vec![], vec![])?;
-        quick_xml::de::from_str(xml(r.body())?).map_err(|_| failure(p::FailureCode::InvalidData))
+        quick_xml::de::from_str(xml(context, r.body())?)
+            .map_err(|_| context.failure(Failure::Backend(BackendFailure::CorruptData)))
     }
-    pub fn stat(&self, name: &str) -> Result<p::Entry> {
-        path(name)?;
+    pub fn stat(&self, name: &str) -> Result<Entry> {
+        let context = &self.context;
+        path(context, name)?;
         if name.is_empty() {
-            return Ok(p::Entry {
-                path: String::new(),
-                kind: p::EntryKind::Dir as i32,
-                size: None,
-                modified: None,
-            });
+            return entry(context, "", EntryType::Directory, None);
         }
         let file = self.head(name)?;
         let prefix = format!("{name}/");
         let list = self.listing(&prefix, None, 1, None)?;
         let directory = !list.contents.is_empty() || !list.common_prefixes.is_empty();
         match (file, directory) {
-            (Some(_), true) => Err(failure(p::FailureCode::InvalidData)),
+            (Some(_), true) => Err(context.failure(Failure::Backend(BackendFailure::CorruptData))),
             (Some(file), false) => Ok(file),
-            (None, true) => Ok(p::Entry {
-                path: name.into(),
-                kind: p::EntryKind::Dir as i32,
-                size: None,
-                modified: None,
-            }),
-            (None, false) => Err(failure(p::FailureCode::NotFound)),
+            (None, true) => entry(context, name, EntryType::Directory, None),
+            (None, false) => Err(context.failure(Failure::Rejected(Rejection::NotFound))),
         }
     }
     pub fn list(
@@ -308,19 +314,22 @@ impl Client {
         name: &str,
         after: Option<&str>,
         limit: u32,
-    ) -> Result<(Vec<p::Entry>, Option<String>)> {
-        if limit == 0 || limit > 1000 {
-            return Err(failure(p::FailureCode::InvalidRequest));
+    ) -> Result<(Vec<Entry>, Option<String>)> {
+        let context = &self.context;
+        if usize::try_from(limit)
+            .ok()
+            .and_then(|limit| PageSize::new(limit).ok())
+            .is_none()
+        {
+            return Err(context.failure(Failure::Rejected(Rejection::Conflict)));
         }
-        path(name)?;
+        path(context, name)?;
         if let Some(after) = after {
-            if after.is_empty() || after.contains('/') {
-                return Err(failure(p::FailureCode::InvalidPath));
-            }
-            path(after)?;
+            EntryName::parse(after)
+                .map_err(|_| context.failure(Failure::Rejected(Rejection::UnsupportedName)))?;
         }
-        if self.stat(name)?.kind != p::EntryKind::Dir as i32 {
-            return Err(failure(p::FailureCode::NotDir));
+        if self.stat(name)?.entry_type() != EntryType::Directory {
+            return Err(context.failure(Failure::Rejected(Rejection::NotDirectory)));
         }
         let prefix = if name.is_empty() {
             String::new()
@@ -335,50 +344,43 @@ impl Client {
                 if content.key == prefix {
                     continue;
                 }
-                let child = content
-                    .key
-                    .strip_prefix(&prefix)
-                    .ok_or_else(|| failure(p::FailureCode::InvalidData))?;
+                let child = content.key.strip_prefix(&prefix).ok_or_else(|| {
+                    context.failure(Failure::Backend(BackendFailure::CorruptData))
+                })?;
                 if child.is_empty() || child.contains('/') {
-                    return Err(failure(p::FailureCode::InvalidData));
+                    return Err(context.failure(Failure::Backend(BackendFailure::CorruptData)));
                 }
-                path(&content.key)?;
+                path(context, &content.key)?;
                 if after.is_some_and(|a| child <= a) {
                     continue;
                 }
-                let entry = p::Entry {
-                    path: content.key.clone(),
-                    kind: p::EntryKind::File as i32,
-                    size: Some(content.size),
-                    modified: None,
-                };
+                let entry = entry(
+                    context,
+                    &content.key,
+                    EntryType::file(Some(content.size)),
+                    None,
+                )?;
                 if entries.insert(child.to_owned(), entry).is_some() {
-                    return Err(failure(p::FailureCode::InvalidData));
+                    return Err(context.failure(Failure::Backend(BackendFailure::CorruptData)));
                 }
             }
             for common in list.common_prefixes {
-                let key = common
-                    .prefix
-                    .strip_suffix('/')
-                    .ok_or_else(|| failure(p::FailureCode::InvalidData))?;
-                let child = key
-                    .strip_prefix(&prefix)
-                    .ok_or_else(|| failure(p::FailureCode::InvalidData))?;
+                let key = common.prefix.strip_suffix('/').ok_or_else(|| {
+                    context.failure(Failure::Backend(BackendFailure::CorruptData))
+                })?;
+                let child = key.strip_prefix(&prefix).ok_or_else(|| {
+                    context.failure(Failure::Backend(BackendFailure::CorruptData))
+                })?;
                 if child.is_empty() || child.contains('/') {
-                    return Err(failure(p::FailureCode::InvalidData));
+                    return Err(context.failure(Failure::Backend(BackendFailure::CorruptData)));
                 }
-                path(key)?;
+                path(context, key)?;
                 if after.is_some_and(|a| child <= a) {
                     continue;
                 }
-                let entry = p::Entry {
-                    path: key.into(),
-                    kind: p::EntryKind::Dir as i32,
-                    size: None,
-                    modified: None,
-                };
+                let entry = entry(context, key, EntryType::Directory, None)?;
                 if entries.insert(child.into(), entry).is_some() {
-                    return Err(failure(p::FailureCode::InvalidData));
+                    return Err(context.failure(Failure::Backend(BackendFailure::CorruptData)));
                 }
             }
             if entries.len() > limit as usize || !list.is_truncated {
@@ -386,9 +388,9 @@ impl Client {
             }
             let next = list
                 .next_continuation_token
-                .ok_or_else(|| failure(p::FailureCode::InvalidData))?;
+                .ok_or_else(|| context.failure(Failure::Backend(BackendFailure::CorruptData)))?;
             if token.as_ref() == Some(&next) {
-                return Err(failure(p::FailureCode::InvalidData));
+                return Err(context.failure(Failure::Backend(BackendFailure::CorruptData)));
             }
             token = Some(next);
         }
@@ -397,14 +399,15 @@ impl Client {
         let next = if more {
             entries
                 .last()
-                .and_then(|e| e.path.rsplit('/').next())
-                .map(str::to_owned)
+                .and_then(|entry| entry.path().name())
+                .map(|name| name.as_str().to_owned())
         } else {
             None
         };
         Ok((entries, next))
     }
     pub fn start_upload(&self, name: &str) -> Result<String> {
+        let context = &self.context;
         let r = self.request(
             "POST",
             name,
@@ -412,10 +415,10 @@ impl Client {
             vec![],
             vec![],
         )?;
-        let upload: Initiated = quick_xml::de::from_str(xml(r.body())?)
-            .map_err(|_| failure(p::FailureCode::InvalidData))?;
+        let upload: Initiated = quick_xml::de::from_str(xml(context, r.body())?)
+            .map_err(|_| context.failure(Failure::Backend(BackendFailure::CorruptData)))?;
         if upload.upload_id.is_empty() {
-            return Err(failure(p::FailureCode::InvalidData));
+            return Err(context.failure(Failure::Backend(BackendFailure::CorruptData)));
         }
         Ok(upload.upload_id)
     }
@@ -426,6 +429,7 @@ impl Client {
         part: usize,
         data: Vec<u8>,
     ) -> Result<String> {
+        let context = &self.context;
         let r = self.request(
             "PUT",
             name,
@@ -436,7 +440,8 @@ impl Client {
             vec![],
             data,
         )?;
-        header(&r, "etag").ok_or_else(|| failure(p::FailureCode::InvalidData))
+        header(&r, "etag")
+            .ok_or_else(|| context.failure(Failure::Backend(BackendFailure::CorruptData)))
     }
     pub fn abort_upload(&self, name: &str, upload: &str) -> Result<()> {
         match self.request(
@@ -447,7 +452,13 @@ impl Client {
             vec![],
         ) {
             Ok(_) => Ok(()),
-            Err(e) if e.code == p::FailureCode::NotFound as i32 => Ok(()),
+            Err(e)
+                if e.storage_error().is_some_and(|error| {
+                    error.failure() == Failure::Rejected(Rejection::NotFound)
+                }) =>
+            {
+                Ok(())
+            }
             Err(e) => Err(e),
         }
     }
@@ -458,6 +469,7 @@ impl Client {
         parts: &[String],
         replace: bool,
     ) -> Result<()> {
+        let context = &self.context;
         let mut body = String::from("<CompleteMultipartUpload>");
         for (index, etag) in parts.iter().enumerate() {
             body.push_str(&format!(
@@ -478,8 +490,8 @@ impl Client {
             headers,
             body.into_bytes(),
         )?;
-        if xml(r.body())?.contains("<Error>") {
-            return Err(failure(p::FailureCode::Backend));
+        if xml(context, r.body())?.contains("<Error>") {
+            return Err(context.failure(Failure::Backend(BackendFailure::Other)));
         }
         Ok(())
     }
@@ -510,4 +522,16 @@ struct Content {
 #[serde(rename_all = "PascalCase")]
 struct CommonPrefix {
     prefix: String,
+}
+
+fn entry(
+    context: &api::ErrorContext,
+    path: &str,
+    kind: EntryType,
+    modified: Option<std::time::SystemTime>,
+) -> Result<Entry> {
+    let path = StoragePath::parse(path)
+        .map_err(|_| context.failure(Failure::Backend(BackendFailure::UnrepresentableName)))?;
+    Entry::new(path, kind, modified)
+        .map_err(|_| context.failure(Failure::Backend(BackendFailure::CorruptData)))
 }

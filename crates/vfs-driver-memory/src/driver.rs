@@ -1,21 +1,19 @@
 use crate::{Capacity, CapacityUnit, MemoryDriverError, MemoryStorage};
-use ah_vfs::{
-    application::{
-        driver_info::DriverInfo,
-        dto::{
-            InstanceConfig, InstanceConfigSchema, instance_config_string, instance_config_u64,
-            validate_instance_config_fields,
-        },
-        port::{Driver, DriverFuture, InstanceProvisioner, OpenContext, PreparedConfig, Storage},
-    },
-    domain::{
-        DriverError, DriverKey, InstanceConfigErrorKind,
-        namespace::ChildMountPolicy,
-        storage::{
-            DirModel, FileReadSupport, FileWriteSupport, RenameSupport, StorageCapabilities,
-            StorageCapabilitiesError, StorageError, StorageErrorKind,
-        },
-    },
+use ah_vfs::application::driver_error::{DriverError, InstanceConfigErrorKind};
+use ah_vfs::application::driver_error::{LifecycleError, LifecycleFailure};
+use ah_vfs::application::driver_info::DriverInfo;
+use ah_vfs::application::dto::{
+    InstanceConfig, InstanceConfigSchema, instance_config_string, instance_config_u64,
+    validate_instance_config_fields,
+};
+use ah_vfs::application::port::{
+    Driver, DriverFuture, InstanceProvisioner, OpenContext, PreparedConfig, Storage,
+};
+use ah_vfs::domain::DriverKey;
+use ah_vfs::domain::namespace::ChildMountPolicy;
+
+use ah_vfs_storage::{
+    Capabilities, DirectorySupport, ReadSupport, RenameSupport, WriteModes, WriteSupport,
 };
 use std::{collections::BTreeMap, sync::Arc};
 use tokio::sync::Mutex;
@@ -27,25 +25,15 @@ pub struct MemoryDriver {
     opened: Mutex<BTreeMap<String, Arc<MemoryStorage>>>,
 }
 impl MemoryDriver {
-    fn supported_capabilities() -> Result<StorageCapabilities, StorageCapabilitiesError> {
-        StorageCapabilities::builder()
-            .stat_entry(true)
-            .list_entries(true)
-            .read_file(FileReadSupport::Range)
-            .write_file(FileWriteSupport {
-                create_new: true,
-                replace: true,
-                atomic_publish: true,
-            })
-            .dir_model(DirModel::Hierarchical)
-            .persistent_empty_dirs(true)
-            .create_dir(true)
-            .remove_entry(true)
-            .rename(RenameSupport {
-                no_replace: true,
-                replace: true,
-            })
-            .build()
+    fn supported_capabilities() -> Capabilities {
+        Capabilities::default()
+            .with_stat(true)
+            .with_list(true)
+            .with_read(ReadSupport::Range)
+            .with_write(WriteSupport::staged(WriteModes::Both, true))
+            .with_directories(DirectorySupport::hierarchical(true, true))
+            .with_remove(true)
+            .with_rename(RenameSupport::Both)
     }
 
     pub const KEY: &'static str = "memory";
@@ -57,7 +45,7 @@ impl MemoryDriver {
                 .version(semver::Version::new(0, 1, 0))
                 .child_mount_policy(ChildMountPolicy::Allow)
                 .maybe_instance_config_schema(instance_config_schema())
-                .capabilities(Self::supported_capabilities()?)
+                .capabilities(Self::supported_capabilities())
                 .build(),
             opened: Mutex::default(),
         })
@@ -82,7 +70,7 @@ impl Driver for MemoryDriver {
                 }
             };
             if storage.capacity() != capacity {
-                return Err(StorageError::new(StorageErrorKind::InvalidData).into());
+                return Err(LifecycleError::new(LifecycleFailure::InvalidRecord).into());
             }
             Ok(storage.clone() as Arc<dyn Storage>)
         })

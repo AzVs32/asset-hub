@@ -1,14 +1,13 @@
-use ah_vfs::{
-    application::{
-        driver_catalog::DriverCatalog, driver_info::DriverInfo, dto::*, error::DriverCatalogError,
-        port::*,
-    },
-    domain::{
-        DriverError, DriverKey,
-        namespace::ChildMountPolicy,
-        storage::{StorageCapabilities, StorageError, StorageErrorKind},
-    },
-};
+use ah_vfs::application::driver_catalog::DriverCatalog;
+use ah_vfs::application::driver_error::DriverError;
+use ah_vfs::application::driver_error::{LifecycleError, LifecycleFailure};
+use ah_vfs::application::driver_info::DriverInfo;
+use ah_vfs::application::dto::*;
+use ah_vfs::application::error::DriverCatalogError;
+use ah_vfs::application::port::*;
+use ah_vfs::domain::DriverKey;
+use ah_vfs::domain::namespace::ChildMountPolicy;
+use ah_vfs_storage::Capabilities;
 use std::{
     collections::BTreeMap,
     future::{Future, poll_fn},
@@ -20,7 +19,7 @@ use std::{
 };
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 fn unsupported() -> DriverError {
-    StorageError::new(StorageErrorKind::UnsupportedOperation).into()
+    LifecycleError::new(LifecycleFailure::Unsupported).into()
 }
 
 #[derive(Default)]
@@ -52,7 +51,7 @@ impl Plugin {
                 .name("Host-managed plugin".into())
                 .version(semver::Version::new(1, 0, 0))
                 .child_mount_policy(ChildMountPolicy::Allow)
-                .capabilities(StorageCapabilities::default())
+                .capabilities(Capabilities::default())
                 .settings_schema(BTreeMap::from([(
                     "properties".into(),
                     serde_json::json!({"database_url":{"type":"string","x-secret":true}}),
@@ -84,8 +83,8 @@ impl Driver for Plugin {
                 gate.notified().await;
             }
             if self.fail {
-                return Err(StorageError::with_source(
-                    StorageErrorKind::Unavailable,
+                return Err(LifecycleError::with_source(
+                    LifecycleFailure::Unavailable,
                     std::io::Error::other("private-database-password"),
                 )
                 .into());
@@ -231,7 +230,7 @@ async fn default_initialization_accepts_only_empty_settings_without_a_schema() -
         .name("Already assembled".into())
         .version(semver::Version::new(1, 0, 0))
         .child_mount_policy(ChildMountPolicy::Allow)
-        .capabilities(StorageCapabilities::default())
+        .capabilities(Capabilities::default())
         .build();
     let driver = DefaultPlugin {
         info,
@@ -239,7 +238,7 @@ async fn default_initialization_accepts_only_empty_settings_without_a_schema() -
     };
     driver.initialize(DriverSettings::new()).await?;
     assert!(
-        matches!(driver.initialize(settings()).await,Err(DriverError::Storage(error)) if error.kind()==StorageErrorKind::UnsupportedOperation)
+        matches!(driver.initialize(settings()).await,Err(DriverError::Lifecycle(error)) if error.failure()==ah_vfs::application::driver_error::LifecycleFailure::Unsupported)
     );
     let plugin = DefaultPlugin {
         info: Plugin::new(false, None)?.info,

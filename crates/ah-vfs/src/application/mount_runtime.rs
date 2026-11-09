@@ -1,16 +1,11 @@
 //! Process-local namespace snapshots and validated storage handles shared by services.
 
-use crate::{
-    application::{
-        driver_catalog::DriverCatalog,
-        error::EntryError,
-        port::{Driver, MountRepository, Storage, validate_storage_extensions},
-    },
-    domain::{
-        DriverError, DriverInstance,
-        namespace::{Mount, MountTable, MountTableError},
-    },
-};
+use crate::application::driver_catalog::DriverCatalog;
+use crate::application::driver_error::DriverError;
+use crate::application::error::EntryError;
+use crate::application::port::{Driver, MountRepository, Storage, validate_storage_extensions};
+use crate::domain::DriverInstance;
+use crate::domain::namespace::{Mount, MountTable, MountTableError};
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex, MutexGuard},

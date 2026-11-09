@@ -1,4 +1,5 @@
 #![cfg(target_os = "linux")]
+use ah_vfs::application::driver_error::{LifecycleError, LifecycleFailure};
 use ah_vfs::{
     application::{dto::InstanceConfig, port::DriverFuture},
     domain::InstanceId,
@@ -25,12 +26,8 @@ impl RegistryFixture for Fixture {
     }
     fn disable_storage(&self) -> DriverFuture<'_, ()> {
         Box::pin(async move {
-            std::fs::remove_dir(&self.root).map_err(|source| {
-                ah_vfs::domain::storage::StorageError::with_source(
-                    ah_vfs::domain::storage::StorageErrorKind::Backend,
-                    source,
-                )
-            })?;
+            std::fs::remove_dir(&self.root)
+                .map_err(|source| LifecycleError::with_source(LifecycleFailure::Backend, source))?;
             Ok(())
         })
     }

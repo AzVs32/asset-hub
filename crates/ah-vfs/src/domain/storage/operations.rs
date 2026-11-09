@@ -1,6 +1,8 @@
 //! Instance-local operation requests and directory query results.
 
-use super::{DEFAULT_DIR_PAGE_LIMIT, Entry, StorageError, StoragePath, validate_dir_page_limit};
+use super::{DEFAULT_DIR_PAGE_LIMIT, validate_dir_page_limit};
+use ah_vfs_storage::{Entry, EntryName, StoragePath, WriteMode};
+use ah_vfs_storage::{Failure, Operation, Rejection, StorageError};
 use std::num::NonZeroUsize;
 
 pub struct StorageStatEntryRequest {
@@ -13,7 +15,7 @@ pub struct StorageStatEntryRequest {
 /// not a snapshot; concurrent changes can affect later pages.
 pub struct StorageDirQuery {
     pub path: StoragePath,
-    pub after: Option<String>,
+    pub after: Option<EntryName>,
     /// Maximum entries per page, bounded by [`super::MAX_DIR_PAGE_LIMIT`].
     pub limit: NonZeroUsize,
 }
@@ -27,12 +29,18 @@ impl StorageDirQuery {
     }
 
     /// Validate the page limit and exclusive child-name cursor before backend I/O.
-    /// Oversized pages return InvalidRequest; invalid cursors or joined paths
-    /// return InvalidPath with their original validation error as the source.
+    /// Oversized pages return LimitExceeded; a joined address exceeding its bound
+    /// returns PathTooLong with its original validation error as the source.
     pub fn validate(&self) -> Result<(), StorageError> {
         validate_dir_page_limit(self.limit)?;
         if let Some(after) = &self.after {
-            self.path.join(after)?;
+            self.path.join(after).map_err(|cause| {
+                StorageError::without_effects(
+                    Operation::List,
+                    Failure::Rejected(Rejection::PathTooLong),
+                    Some(Box::new(cause)),
+                )
+            })?;
         }
         Ok(())
     }
@@ -40,7 +48,7 @@ impl StorageDirQuery {
 pub struct StorageDirPage {
     pub entries: Vec<Entry>,
     /// Pass as `after`; `None` means there are no more entries now.
-    pub next_after: Option<String>,
+    pub next_after: Option<EntryName>,
 }
 
 /// Read a byte range. An offset beyond EOF or zero length gives an empty stream.
@@ -59,26 +67,19 @@ impl StorageReadFileRequest {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum StorageWriteFileMode {
-    /// Fail if any destination entry exists when opening or publishing the write.
-    CreateNew,
-    /// Publish a complete replacement; an existing regular file may be replaced.
-    Replace,
-}
 /// A complete-file write staged until its writer commits publication.
 pub struct StorageWriteFileRequest {
     /// Require atomic complete-file publication. Never emulate with incremental overwrite.
     pub require_atomic_publish: bool,
     pub path: StoragePath,
-    pub mode: StorageWriteFileMode,
+    pub mode: WriteMode,
 }
 impl StorageWriteFileRequest {
     pub fn new(path: StoragePath) -> Self {
         Self {
             path,
             require_atomic_publish: false,
-            mode: StorageWriteFileMode::CreateNew,
+            mode: WriteMode::CreateNew,
         }
     }
 }

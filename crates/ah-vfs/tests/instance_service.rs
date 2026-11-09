@@ -1,24 +1,22 @@
 //! Service contracts use an opaque driver, without any concrete backend dependency.
+use ah_vfs::application::driver_error::LifecycleFailure;
 use common::Backend;
 mod common;
 
-use ah_vfs::{
-    application::{
-        driver_catalog::DriverCatalog,
-        driver_info::DriverInfo,
-        dto::{InstanceQuery, MountFilter, RemoveInstanceOutcome},
-        error::InstanceError,
-        mount_runtime::MountRuntime,
-        port::{DriverFuture, InstanceProvisioner, MountRepository, PreparedConfig, Storage},
-        service::InstanceService,
-    },
-    domain::{
-        DriverError, DriverInstance, DriverKey, InstanceId,
-        namespace::{ChildMountPolicy, Mount, VirtualPath},
-        storage::{StorageCapabilities, StorageError, StorageErrorKind},
-    },
-    infrastructure::mount_repository::SqliteMountRepository,
+use ah_vfs::application::driver_catalog::DriverCatalog;
+use ah_vfs::application::driver_error::DriverError;
+use ah_vfs::application::driver_info::DriverInfo;
+use ah_vfs::application::dto::{InstanceQuery, MountFilter, RemoveInstanceOutcome};
+use ah_vfs::application::error::InstanceError;
+use ah_vfs::application::mount_runtime::MountRuntime;
+use ah_vfs::application::port::{
+    DriverFuture, InstanceProvisioner, MountRepository, PreparedConfig, Storage,
 };
+use ah_vfs::application::service::InstanceService;
+use ah_vfs::domain::namespace::{ChildMountPolicy, Mount, VirtualPath};
+use ah_vfs::domain::{DriverInstance, DriverKey, InstanceId};
+use ah_vfs::infrastructure::mount_repository::SqliteMountRepository;
+use ah_vfs_storage::Capabilities;
 
 use std::{
     collections::BTreeMap,
@@ -58,7 +56,10 @@ impl common::Backend for OpaqueDriver {
             if id != self.id {
                 return Err(DriverError::InstanceNotFound(id));
             }
-            Err(StorageError::new(StorageErrorKind::UnsupportedOperation).into())
+            Err(ah_vfs::application::driver_error::LifecycleError::new(
+                ah_vfs::application::driver_error::LifecycleFailure::Unsupported,
+            )
+            .into())
         })
     }
 }
@@ -73,7 +74,10 @@ impl InstanceProvisioner for OpaqueDriver {
             };
             self.creations.fetch_add(1, Ordering::SeqCst);
             if !self.creation_supported {
-                return Err(StorageError::new(StorageErrorKind::UnsupportedOperation).into());
+                return Err(ah_vfs::application::driver_error::LifecycleError::new(
+                    ah_vfs::application::driver_error::LifecycleFailure::Unsupported,
+                )
+                .into());
             }
             validate_instance_config_fields(&config, &["label", "password"])?;
             instance_config_string(&config, "label")?;
@@ -93,12 +97,12 @@ struct Fixture {
 }
 
 impl Fixture {
-    async fn new(failure: Option<StorageErrorKind>) -> TestResult<Self> {
+    async fn new(failure: Option<LifecycleFailure>) -> TestResult<Self> {
         Self::new_with_creation(failure, false).await
     }
 
     async fn new_with_creation(
-        failure: Option<StorageErrorKind>,
+        failure: Option<LifecycleFailure>,
         creation_supported: bool,
     ) -> TestResult<Self> {
         let driver = Arc::new(OpaqueDriver {
@@ -112,7 +116,7 @@ impl Fixture {
             ("properties".into(), serde_json::json!({"label": {"type": "string"}, "password": {"type": "string", "writeOnly": true}})),
             ("required".into(), serde_json::json!(["label", "password"])),
         ])))
-                .capabilities(StorageCapabilities::default())
+                .capabilities(Capabilities::default())
                 .build(),
             id: InstanceId::parse("instance")?,
             opens: AtomicUsize::new(0),
@@ -334,8 +338,8 @@ async fn creation_support_is_explicit_and_checked_before_invoking_the_driver() -
         .err()
         .ok_or("unsupported")?;
     assert_eq!(
-        error.storage_error().ok_or("domain error")?.kind(),
-        StorageErrorKind::UnsupportedOperation
+        error.lifecycle_error().ok_or("lifecycle error")?.failure(),
+        ah_vfs::application::driver_error::LifecycleFailure::Unsupported
     );
     assert_eq!(f.driver.creations.load(Ordering::SeqCst), 0);
     Ok(())
@@ -375,10 +379,7 @@ async fn unknown_provider_creation_is_forwarded_without_host_field_or_type_knowl
 
 #[tokio::test]
 async fn creation_failures_are_not_retried_or_blindly_compensated() -> TestResult {
-    for kind in [
-        StorageErrorKind::Unavailable,
-        StorageErrorKind::OutcomeUnknown,
-    ] {
+    for kind in [LifecycleFailure::Unavailable, LifecycleFailure::Backend] {
         let f = Fixture::new_with_creation(Some(kind), true).await?;
         f.records.rows.lock().map_err(|_| "lock")?.clear();
         let error = f
@@ -387,8 +388,8 @@ async fn creation_failures_are_not_retried_or_blindly_compensated() -> TestResul
             .await
             .err()
             .ok_or("failure")?;
-        let storage = error.storage_error().ok_or("domain error")?;
-        assert_eq!(storage.kind(), kind);
+        let storage = error.lifecycle_error().ok_or("domain error")?;
+        assert_eq!(storage.failure(), kind);
         assert!(storage.source().is_some());
         assert!(!error.to_string().contains("backend-private-token"));
         assert_eq!(f.driver.creations.load(Ordering::SeqCst), 1);
@@ -400,7 +401,7 @@ async fn creation_failures_are_not_retried_or_blindly_compensated() -> TestResul
                 .await?
                 .instances
                 .is_empty(),
-            kind == StorageErrorKind::OutcomeUnknown
+            kind == LifecycleFailure::Backend
         );
     }
     Ok(())
@@ -409,9 +410,9 @@ async fn creation_failures_are_not_retried_or_blindly_compensated() -> TestResul
 #[tokio::test]
 async fn unsupported_and_failed_removals_preserve_domain_categories_and_sources() -> TestResult {
     for kind in [
-        StorageErrorKind::UnsupportedOperation,
-        StorageErrorKind::Unavailable,
-        StorageErrorKind::PermissionDenied,
+        LifecycleFailure::Unsupported,
+        LifecycleFailure::Unavailable,
+        LifecycleFailure::AccessDenied,
     ] {
         let f = Fixture::new(Some(kind)).await?;
         let error = f
@@ -420,8 +421,8 @@ async fn unsupported_and_failed_removals_preserve_domain_categories_and_sources(
             .await
             .err()
             .ok_or("failure")?;
-        let backend = error.storage_error().ok_or("backend error")?;
-        assert_eq!(backend.kind(), kind);
+        let backend = error.lifecycle_error().ok_or("backend error")?;
+        assert_eq!(backend.failure(), kind);
         assert!(backend.source().is_some());
         assert!(!error.to_string().contains("backend-private-token"));
         assert!(f.records.contains(&f.instance));
@@ -431,7 +432,7 @@ async fn unsupported_and_failed_removals_preserve_domain_categories_and_sources(
 
 #[tokio::test]
 async fn an_uncertain_remote_outcome_is_not_reported_as_confirmed_absence() -> TestResult {
-    let f = Fixture::new(Some(StorageErrorKind::OutcomeUnknown)).await?;
+    let f = Fixture::new(Some(LifecycleFailure::Backend)).await?;
     let error = f
         .service
         .remove_instance(&f.instance)
@@ -439,8 +440,8 @@ async fn an_uncertain_remote_outcome_is_not_reported_as_confirmed_absence() -> T
         .err()
         .ok_or("unknown outcome")?;
     assert_eq!(
-        error.storage_error().ok_or("backend")?.kind(),
-        StorageErrorKind::OutcomeUnknown
+        error.lifecycle_error().ok_or("backend")?.failure(),
+        LifecycleFailure::Backend
     );
     assert!(f.service.get_instance(&f.instance).await?.is_none());
     Ok(())

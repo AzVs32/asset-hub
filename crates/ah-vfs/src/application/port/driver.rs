@@ -1,9 +1,9 @@
 //! Driver declarations, stateless preparation and storage opening.
 
-use crate::{
-    application::{driver_info::DriverInfo, port::Storage},
-    domain::DriverError,
-};
+use crate::application::driver_error::DriverError;
+use crate::application::driver_error::{LifecycleError, LifecycleFailure};
+use crate::application::driver_info::DriverInfo;
+use crate::application::port::Storage;
 
 use std::{future::Future, pin::Pin, sync::Arc};
 
@@ -37,10 +37,7 @@ pub trait Driver: Send + Sync {
             if supported {
                 Ok(())
             } else {
-                Err(crate::domain::storage::StorageError::new(
-                    crate::domain::storage::StorageErrorKind::UnsupportedOperation,
-                )
-                .into())
+                Err(LifecycleError::new(LifecycleFailure::Unsupported).into())
             }
         })
     }
@@ -54,8 +51,7 @@ pub trait Driver: Send + Sync {
     /// the host's MountRuntime retains validated handles for repeated I/O.
     /// All instances share info().capabilities(); declared independent attribute
     /// interfaces must be present. Instance/path limitations are operation errors.
-    /// Backend
-    /// failures use DriverError::Storage and retain the same domain categories
-    /// used during I/O. Opening never selects file formats or viewers.
+    /// Opening failures use DriverError::Lifecycle and retain their original
+    /// diagnostic sources. Opening never selects file formats or viewers.
     fn open(&self, context: super::OpenContext) -> DriverFuture<'_, Arc<dyn Storage>>;
 }

@@ -1,7 +1,5 @@
-use ah_vfs::domain::{
-    DriverError,
-    storage::{StorageError, StorageErrorKind},
-};
+use ah_vfs::application::driver_error::DriverError;
+use ah_vfs::application::driver_error::{LifecycleError, LifecycleFailure};
 use std::{
     io,
     pin::Pin,
@@ -68,7 +66,7 @@ impl ServerLimits {
             || self.stream_idle_timeout.is_zero()
             || self.max_connection_age.is_some_and(|age| age.is_zero())
         {
-            return Err(StorageError::new(StorageErrorKind::InvalidRequest).into());
+            return Err(LifecycleError::new(LifecycleFailure::InvalidRequest).into());
         }
         Ok(())
     }

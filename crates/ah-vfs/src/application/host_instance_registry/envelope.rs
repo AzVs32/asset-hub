@@ -1,9 +1,7 @@
 //! Private persisted representation of encrypted parameters and public details.
 
-use crate::domain::{
-    DriverError,
-    storage::{StorageError, StorageErrorKind},
-};
+use crate::application::driver_error::DriverError;
+use crate::application::driver_error::{LifecycleError, LifecycleFailure};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
@@ -24,20 +22,24 @@ pub(super) struct Envelope {
 }
 
 fn invalid() -> DriverError {
-    StorageError::new(StorageErrorKind::InvalidData).into()
+    LifecycleError::new(LifecycleFailure::InvalidRecord).into()
 }
 
 impl Envelope {
     pub(super) fn parse(json: String) -> Result<Self, DriverError> {
-        let mut fields: serde_json::Map<String, Value> = serde_json::from_str(&json)
-            .map_err(|source| StorageError::with_source(StorageErrorKind::InvalidData, source))?;
+        let mut fields: serde_json::Map<String, Value> =
+            serde_json::from_str(&json).map_err(|source| {
+                LifecycleError::with_source(LifecycleFailure::InvalidRecord, source)
+            })?;
         let parameters = fields.remove("parameters").ok_or_else(invalid)?;
         let paths: Vec<String> = serde_json::from_value(
             fields.remove("secret_paths").ok_or_else(invalid)?,
         )
-        .map_err(|source| StorageError::with_source(StorageErrorKind::InvalidData, source))?;
+        .map_err(|source| LifecycleError::with_source(LifecycleFailure::InvalidRecord, source))?;
         let details = serde_json::from_value(fields.remove("details").ok_or_else(invalid)?)
-            .map_err(|source| StorageError::with_source(StorageErrorKind::InvalidData, source))?;
+            .map_err(|source| {
+                LifecycleError::with_source(LifecycleFailure::InvalidRecord, source)
+            })?;
         let secrets = Self::validate_secrets(&parameters, paths)?;
         Ok(Self {
             json,
@@ -59,7 +61,7 @@ impl Envelope {
             "secret_paths": paths,
             "details": details,
         }))
-        .map_err(|source| StorageError::with_source(StorageErrorKind::InvalidData, source))?;
+        .map_err(|source| LifecycleError::with_source(LifecycleFailure::InvalidRecord, source))?;
         Ok(Self {
             json,
             parameters,
@@ -87,7 +89,7 @@ impl Envelope {
             let ciphertext =
                 serde_json::from_value(parameters.pointer(&path).ok_or_else(invalid)?.clone())
                     .map_err(|source| {
-                        StorageError::with_source(StorageErrorKind::InvalidData, source)
+                        LifecycleError::with_source(LifecycleFailure::InvalidRecord, source)
                     })?;
             secrets.push(EncryptedSecret { path, ciphertext });
         }
@@ -124,8 +126,8 @@ mod tests {
         let error = Envelope::parse("private malformed record".into())
             .err()
             .ok_or("malformed record accepted")?;
-        let storage = error.storage_error().ok_or("storage error")?;
-        assert_eq!(storage.kind(), StorageErrorKind::InvalidData);
+        let storage = error.lifecycle_error().ok_or("storage error")?;
+        assert_eq!(storage.failure(), LifecycleFailure::InvalidRecord);
         assert!(
             storage
                 .source()

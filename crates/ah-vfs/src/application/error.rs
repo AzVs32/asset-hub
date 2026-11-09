@@ -1,10 +1,9 @@
 //! Errors returned by virtual filesystem application services.
 
-use crate::domain::{
-    DriverError, DriverInstance, DriverKey,
-    namespace::{MountId, MountTableError, VirtualPath},
-    storage::StorageError,
-};
+use crate::application::driver_error::DriverError;
+use crate::domain::namespace::{MountId, MountTableError, VirtualPath};
+use crate::domain::{DriverInstance, DriverKey};
+use ah_vfs_storage::StorageError;
 use thiserror::Error;
 
 /// Failures when changing driver registrations.
@@ -15,9 +14,9 @@ pub enum DriverCatalogError {
     #[error("driver '{0}' is not registered")]
     NotRegistered(DriverKey),
     #[error("driver initialization failed")]
-    Initialization(#[source] crate::domain::DriverError),
+    Initialization(#[source] crate::application::driver_error::DriverError),
     #[error("driver declaration is incompatible with the host")]
-    InvalidDeclaration(#[source] crate::domain::DriverError),
+    InvalidDeclaration(#[source] crate::application::driver_error::DriverError),
 }
 
 impl std::fmt::Debug for DriverCatalogError {
@@ -82,10 +81,9 @@ pub enum InstanceError {
 }
 
 impl InstanceError {
-    /// Inspect the backend category without depending on a concrete driver error.
-    pub fn storage_error(&self) -> Option<&StorageError> {
+    pub fn lifecycle_error(&self) -> Option<&crate::application::driver_error::LifecycleError> {
         match self {
-            Self::Driver(error) => error.storage_error(),
+            Self::Driver(error) => error.lifecycle_error(),
             _ => None,
         }
     }
@@ -94,6 +92,8 @@ impl InstanceError {
 /// Namespace routing, mount-boundary and backend access failures.
 #[derive(Debug, Error)]
 pub enum EntryError {
+    #[error(transparent)]
+    InvalidReadRange(#[from] ah_vfs_storage::RangeError),
     #[error(transparent)]
     Table(#[from] MountTableError),
     #[error(transparent)]
@@ -106,6 +106,8 @@ pub enum EntryError {
     Storage(#[from] StorageError),
     #[error(transparent)]
     InvalidPath(#[from] crate::domain::namespace::VirtualPathError),
+    #[error(transparent)]
+    InvalidStorageAddress(#[from] ah_vfs_storage::PathError),
     #[error("'{0}' is a mount point or contains mounts; entry operations cannot modify it")]
     MountBoundary(VirtualPath),
     #[error("moving entries between different mounts is not supported")]
@@ -115,7 +117,7 @@ pub enum EntryError {
 }
 
 impl EntryError {
-    /// Inspect the domain storage failure from either instance opening or I/O.
+    /// Inspect the domain storage failure from I/O.
     /// Namespace and mount failures have no backend storage classification.
     pub fn storage_error(&self) -> Option<&StorageError> {
         match self {
@@ -127,9 +129,9 @@ impl EntryError {
 }
 impl MountError {
     /// Preserve normalized instance-opening failures through mount workflows.
-    pub fn storage_error(&self) -> Option<&StorageError> {
+    pub fn lifecycle_error(&self) -> Option<&crate::application::driver_error::LifecycleError> {
         match self {
-            Self::Driver(error) => error.storage_error(),
+            Self::Driver(error) => error.lifecycle_error(),
             _ => None,
         }
     }

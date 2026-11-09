@@ -1,10 +1,8 @@
 #![cfg(target_os = "windows")]
 #![allow(dead_code)]
 
-use ah_vfs::{
-    application::dto::InstanceConfig,
-    domain::{DriverError, InstanceConfigErrorKind},
-};
+use ah_vfs::application::driver_error::{DriverError, InstanceConfigErrorKind};
+use ah_vfs::application::dto::InstanceConfig;
 use std::path::Path;
 
 pub async fn pool() -> Result<sqlx::SqlitePool, Box<dyn std::error::Error>> {

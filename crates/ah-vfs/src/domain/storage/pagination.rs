@@ -1,6 +1,6 @@
 //! Shared bounds for live directory pagination.
 
-use super::{StorageError, StorageErrorKind};
+use ah_vfs_storage::{Failure, Operation, Rejection, StorageError};
 use std::num::NonZeroUsize;
 
 /// Default maximum number of entries returned by a directory query.
@@ -16,10 +16,14 @@ pub const MAX_DIR_PAGE_LIMIT: NonZeroUsize = match NonZeroUsize::new(1000) {
 };
 
 /// Reject oversized directory pages before accessing backend entries.
-/// Zero is excluded by the input type; an oversized limit returns InvalidRequest.
+/// Zero is excluded by the input type; an oversized limit returns LimitExceeded.
 pub fn validate_dir_page_limit(limit: NonZeroUsize) -> Result<(), StorageError> {
     if limit > MAX_DIR_PAGE_LIMIT {
-        return Err(StorageError::new(StorageErrorKind::InvalidRequest));
+        return Err(StorageError::without_effects(
+            Operation::List,
+            Failure::Rejected(Rejection::LimitExceeded),
+            None,
+        ));
     }
     Ok(())
 }

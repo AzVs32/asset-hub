@@ -1,28 +1,22 @@
-//! From this plugin's directory, build the guest with `cargo build --locked --target
-//! wasm32-wasip2` before explicitly running these external-server tests.
+//! Build the guest with `cargo build --locked --release --target wasm32-wasip2`
+//! before running these tests. The multipart test uses the default host fuel budget.
+use ah_vfs_storage::{Failure, Rejection};
 mod common;
-use ah_vfs::{
-    application::{
-        driver_catalog::DriverCatalog,
-        dto::*,
-        mount_runtime::MountRuntime,
-        port::*,
-        service::{EntryService, InstanceService, MountService},
-    },
-    domain::{
-        DriverInstance, InstanceId,
-        namespace::VirtualPath,
-        storage::{
-            DirModel, StorageDirQuery, StorageErrorKind, StorageMoveEntryRequest, StoragePath,
-            StorageReadFileRequest, StorageStatEntryRequest, StorageWriteFileMode,
-            StorageWriteFileRequest,
-        },
-    },
-    infrastructure::{
-        instance_record_repository::SqliteInstanceRecordRepository,
-        mount_repository::SqliteMountRepository,
-    },
+use ah_vfs::application::driver_catalog::DriverCatalog;
+use ah_vfs::application::dto::*;
+use ah_vfs::application::mount_runtime::MountRuntime;
+use ah_vfs::application::port::*;
+use ah_vfs::application::service::{EntryService, InstanceService, MountService};
+use ah_vfs::domain::namespace::VirtualPath;
+use ah_vfs::domain::storage::{
+    StorageDirQuery, StorageMoveEntryRequest, StorageReadFileRequest, StorageStatEntryRequest,
+    StorageWriteFileRequest,
 };
+use ah_vfs::domain::{DriverInstance, InstanceId};
+use ah_vfs::infrastructure::instance_record_repository::SqliteInstanceRecordRepository;
+use ah_vfs::infrastructure::mount_repository::SqliteMountRepository;
+use ah_vfs_storage::StoragePath;
+use ah_vfs_storage::WriteMode;
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
 use std::{
@@ -99,7 +93,7 @@ async fn component(origins: Vec<String>) -> Result<Arc<PluginDriver>> {
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| {
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("target/wasm32-wasip2/debug/vfs_driver_s3.wasm")
+                .join("target/wasm32-wasip2/release/vfs_driver_s3.wasm")
         });
     let bytes = std::fs::read(path)?;
     Ok(Arc::new(
@@ -276,8 +270,17 @@ async fn s3_component_runs_through_host_records_mounts_and_streams() -> Result {
                 config.clone(),
             ))
             .await?;
-        assert_eq!(driver.info().capabilities().dir_model(), DirModel::Prefix);
-        assert!(!driver.info().capabilities().rename().replace);
+        assert!(matches!(
+            driver.info().capabilities().directories(),
+            ah_vfs_storage::DirectorySupport::Prefix { .. }
+        ));
+        assert!(
+            !driver
+                .info()
+                .capabilities()
+                .rename()
+                .supports(ah_vfs_storage::RenameMode::Replace)
+        );
         let mut pending = storage
             .write_file(StorageWriteFileRequest::new(StoragePath::parse("staged")?))
             .await?;
@@ -290,8 +293,8 @@ async fn s3_component_runs_through_host_records_mounts_and_streams() -> Result {
                 .await
                 .err()
                 .ok_or("unpublished")?
-                .kind(),
-            StorageErrorKind::NotFound
+                .failure(),
+            Failure::Rejected(Rejection::NotFound)
         );
         pending.abort().await?;
         put(storage.as_ref(), "目录/文件", b"portable object bytes").await?;
@@ -325,7 +328,11 @@ async fn s3_component_runs_through_host_records_mounts_and_streams() -> Result {
                     limit: page_query.limit,
                 })
                 .await?;
-            names.extend(page.entries.into_iter().map(|e| e.path.as_str().to_owned()));
+            names.extend(
+                page.entries
+                    .into_iter()
+                    .map(|e| e.path().as_str().to_owned()),
+            );
             if page.next_after.is_none() {
                 break;
             }
@@ -335,7 +342,7 @@ async fn s3_component_runs_through_host_records_mounts_and_streams() -> Result {
         let mut writer = entries
             .write_file(WriteFileRequest {
                 path: VirtualPath::parse("/through-vfs")?,
-                mode: StorageWriteFileMode::CreateNew,
+                mode: WriteMode::CreateNew,
                 require_atomic_publish: true,
             })
             .await?;
@@ -363,8 +370,8 @@ async fn s3_component_runs_through_host_records_mounts_and_streams() -> Result {
         conflict.write_chunk(b"loser").await?;
         winner.commit().await?;
         assert_eq!(
-            conflict.commit().await.err().ok_or("conflict")?.kind(),
-            StorageErrorKind::AlreadyExists
+            conflict.commit().await.err().ok_or("conflict")?.failure(),
+            Failure::Rejected(Rejection::AlreadyExists)
         );
         let error = storage
             .move_entry(StorageMoveEntryRequest {
@@ -375,8 +382,9 @@ async fn s3_component_runs_through_host_records_mounts_and_streams() -> Result {
             .await
             .err()
             .ok_or("unsupported rename")?;
-        assert_eq!(error.kind(), StorageErrorKind::UnsupportedOperation);
-        let denied = component(vec![]).await?;
+        assert_eq!(error.failure(), Failure::Rejected(Rejection::Unsupported));
+        // Grant HTTP so the component can load, but exclude the fixture origin.
+        let denied = component(vec!["http://127.0.0.1:1".into()]).await?;
         let mut catalog = DriverCatalog::new();
         catalog.register(denied.clone(), Default::default()).await?;
         let error = denied
@@ -385,8 +393,8 @@ async fn s3_component_runs_through_host_records_mounts_and_streams() -> Result {
             .err()
             .ok_or("network must be denied")?;
         assert_eq!(
-            error.storage_error().ok_or("category")?.kind(),
-            StorageErrorKind::PermissionDenied
+            error.lifecycle_error().ok_or("category")?.failure(),
+            ah_vfs::application::driver_error::LifecycleFailure::AccessDenied
         );
         drop(records);
         Ok(())

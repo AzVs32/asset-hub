@@ -1,13 +1,13 @@
 //! Storage behavior shared by independent driver test suites.
 
-use crate::{
-    application::port::{Storage, StorageFileReader},
-    domain::storage::{
-        DEFAULT_DIR_PAGE_LIMIT, EntryKind, MAX_DIR_PAGE_LIMIT, RenameSupport,
-        StorageCreateDirRequest, StorageDirQuery, StorageErrorKind, StorageMoveEntryRequest,
-        StoragePath, StorageReadFileRequest, StorageStatEntryRequest, StorageWriteFileRequest,
-    },
+use crate::application::port::{Storage, StorageFileReader};
+use crate::domain::storage::{
+    MAX_DIR_PAGE_LIMIT, StorageCreateDirRequest, StorageDirQuery, StorageMoveEntryRequest,
+    StorageReadFileRequest, StorageStatEntryRequest, StorageWriteFileRequest,
 };
+use ah_vfs_storage::RenameSupport;
+use ah_vfs_storage::{EntryType, StoragePath};
+use ah_vfs_storage::{Failure, Rejection};
 use std::num::NonZeroUsize;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -61,7 +61,7 @@ async fn exists(storage: &dyn Storage, name: &str) -> TestResult<bool> {
         .await
     {
         Ok(_) => Ok(true),
-        Err(error) if error.kind() == StorageErrorKind::NotFound => Ok(false),
+        Err(error) if error.failure() == Failure::Rejected(Rejection::NotFound) => Ok(false),
         Err(error) => Err(error.into()),
     }
 }
@@ -118,8 +118,8 @@ pub async fn assert_range_read_contract(storage: &dyn Storage) -> TestResult {
 
     // Empty ranges still validate the target instead of hiding missing files or dirs.
     for (name, expected) in [
-        ("missing", StorageErrorKind::NotFound),
-        ("dir", StorageErrorKind::IsDir),
+        ("missing", Failure::Rejected(Rejection::NotFound)),
+        ("dir", Failure::Rejected(Rejection::IsDirectory)),
     ] {
         for length in [None, Some(0)] {
             let error = storage
@@ -131,7 +131,7 @@ pub async fn assert_range_read_contract(storage: &dyn Storage) -> TestResult {
                 .await
                 .err()
                 .ok_or("expected invalid read target")?;
-            assert_eq!(error.kind(), expected);
+            assert_eq!(error.failure(), expected);
         }
     }
     Ok(())
@@ -145,12 +145,24 @@ pub async fn assert_create_dir_contract(storage: &dyn Storage) -> TestResult {
     put(storage, "dir/child", b"retained child").await?;
 
     for (name, recursive, expected) in [
-        ("file", true, StorageErrorKind::NotDir),
-        ("file/child", true, StorageErrorKind::NotDir),
-        ("file/child", false, StorageErrorKind::NotDir),
-        ("file", false, StorageErrorKind::AlreadyExists),
-        ("dir", false, StorageErrorKind::AlreadyExists),
-        ("missing/child", false, StorageErrorKind::NotFound),
+        ("file", true, Failure::Rejected(Rejection::NotDirectory)),
+        (
+            "file/child",
+            true,
+            Failure::Rejected(Rejection::NotDirectory),
+        ),
+        (
+            "file/child",
+            false,
+            Failure::Rejected(Rejection::NotDirectory),
+        ),
+        ("file", false, Failure::Rejected(Rejection::AlreadyExists)),
+        ("dir", false, Failure::Rejected(Rejection::AlreadyExists)),
+        (
+            "missing/child",
+            false,
+            Failure::Rejected(Rejection::NotFound),
+        ),
     ] {
         let error = storage
             .create_dir(StorageCreateDirRequest {
@@ -160,7 +172,7 @@ pub async fn assert_create_dir_contract(storage: &dyn Storage) -> TestResult {
             .await
             .err()
             .ok_or("expected create_dir failure")?;
-        assert_eq!(error.kind(), expected, "{name}: recursive={recursive}");
+        assert_eq!(error.failure(), expected, "{name}: recursive={recursive}");
     }
     assert!(!exists(storage, "missing").await?);
 
@@ -174,15 +186,14 @@ pub async fn assert_create_dir_contract(storage: &dyn Storage) -> TestResult {
                 recursive: true,
             })
             .await?;
-        assert_eq!(entry.path, before.path);
-        assert_eq!(entry.kind, EntryKind::Dir);
-        assert_eq!(entry.size, before.size);
-        assert_eq!(entry.modified, before.modified);
+        assert_eq!(entry.path(), before.path());
+        assert_eq!(entry.entry_type(), EntryType::Directory);
+        assert_eq!(entry.modified(), before.modified());
         let after = storage
             .stat_entry(StorageStatEntryRequest { path: path(name)? })
             .await?;
-        assert_eq!(after.kind, before.kind);
-        assert_eq!(after.modified, before.modified);
+        assert_eq!(after.entry_type(), before.entry_type());
+        assert_eq!(after.modified(), before.modified());
 
         let error = storage
             .create_dir(StorageCreateDirRequest {
@@ -192,7 +203,7 @@ pub async fn assert_create_dir_contract(storage: &dyn Storage) -> TestResult {
             .await
             .err()
             .ok_or("expected existing directory")?;
-        assert_eq!(error.kind(), StorageErrorKind::AlreadyExists);
+        assert_eq!(error.failure(), Failure::Rejected(Rejection::AlreadyExists));
     }
     assert_eq!(get(storage, "file").await?, b"retained file");
     assert_eq!(get(storage, "dir/child").await?, b"retained child");
@@ -203,15 +214,15 @@ pub async fn assert_create_dir_contract(storage: &dyn Storage) -> TestResult {
             recursive: true,
         })
         .await?;
-    assert_eq!(entry.path, path("new/parents/leaf")?);
-    assert_eq!(entry.kind, EntryKind::Dir);
+    assert_eq!(entry.path(), &path("new/parents/leaf")?);
+    assert_eq!(entry.entry_type(), EntryType::Directory);
     for name in ["new", "new/parents", "new/parents/leaf"] {
         assert_eq!(
             storage
                 .stat_entry(StorageStatEntryRequest { path: path(name)? })
                 .await?
-                .kind,
-            EntryKind::Dir
+                .entry_type(),
+            EntryType::Directory
         );
     }
     let entry = storage
@@ -220,7 +231,7 @@ pub async fn assert_create_dir_contract(storage: &dyn Storage) -> TestResult {
             recursive: false,
         })
         .await?;
-    assert_eq!(entry.kind, EntryKind::Dir);
+    assert_eq!(entry.entry_type(), EntryType::Directory);
     Ok(())
 }
 
@@ -231,7 +242,7 @@ pub async fn assert_pagination_contract(storage: &dyn Storage) -> TestResult {
     for name in ["", "missing"] {
         let query = StorageDirQuery {
             path: path(name)?,
-            after: Some("../invalid".into()),
+            after: None,
             limit: oversized,
         };
         let error = storage
@@ -239,25 +250,14 @@ pub async fn assert_pagination_contract(storage: &dyn Storage) -> TestResult {
             .await
             .err()
             .ok_or("expected oversized page")?;
-        assert_eq!(error.kind(), StorageErrorKind::InvalidRequest);
+        assert_eq!(error.failure(), Failure::Rejected(Rejection::LimitExceeded));
         for after in ["", ".", "..", "a/b", "a\\b", "a:b", "a\0b"] {
-            let query = StorageDirQuery {
-                path: path(name)?,
-                after: Some(after.into()),
-                limit: DEFAULT_DIR_PAGE_LIMIT,
-            };
-            let error = storage
-                .list_entries(query)
-                .await
-                .err()
-                .ok_or("expected invalid cursor")?;
-            assert_eq!(error.kind(), StorageErrorKind::InvalidPath);
-            assert!(std::error::Error::source(&error).is_some());
+            assert!(ah_vfs_storage::EntryName::parse(after).is_err());
         }
     }
     let query = StorageDirQuery {
-        path: path(&"x".repeat(StoragePath::MAX_LEN))?,
-        after: Some("child".into()),
+        path: path(&"x".repeat(ah_vfs_storage::MAX_PATH_BYTES))?,
+        after: Some(ah_vfs_storage::EntryName::parse("child")?),
         limit: MAX_DIR_PAGE_LIMIT,
     };
     let error = storage
@@ -265,7 +265,7 @@ pub async fn assert_pagination_contract(storage: &dyn Storage) -> TestResult {
         .await
         .err()
         .ok_or("expected path overflow")?;
-    assert_eq!(error.kind(), StorageErrorKind::InvalidPath);
+    assert_eq!(error.failure(), Failure::Rejected(Rejection::PathTooLong));
 
     for name in ["a", "b", "文件"] {
         put(storage, name, b"").await?;
@@ -278,8 +278,13 @@ pub async fn assert_pagination_contract(storage: &dyn Storage) -> TestResult {
         })
         .await?;
     assert_eq!(page.entries.len(), 1);
-    assert_eq!(page.entries[0].path, path("a")?);
-    assert_eq!(page.next_after.as_deref(), Some("a"));
+    assert_eq!(page.entries[0].path(), &path("a")?);
+    assert_eq!(
+        page.next_after
+            .as_ref()
+            .map(ah_vfs_storage::EntryName::as_str),
+        Some("a")
+    );
     let page = storage
         .list_entries(StorageDirQuery {
             path: path("")?,
@@ -290,7 +295,7 @@ pub async fn assert_pagination_contract(storage: &dyn Storage) -> TestResult {
     assert_eq!(
         page.entries
             .iter()
-            .map(|entry| entry.path.as_str())
+            .map(|entry| entry.path().as_str())
             .collect::<Vec<_>>(),
         ["b", "文件"]
     );
@@ -310,9 +315,9 @@ pub async fn assert_same_path_rename_contract(
 
     for replace in [false, true] {
         let supported = if replace {
-            support.replace
+            support.supports(ah_vfs_storage::RenameMode::Replace)
         } else {
-            support.no_replace
+            support.supports(ah_vfs_storage::RenameMode::NoReplace)
         };
         if !supported {
             continue;
@@ -330,23 +335,24 @@ pub async fn assert_same_path_rename_contract(
                 .await;
             if replace {
                 let entry = result?;
-                assert_eq!(entry.path, before.path);
-                assert_eq!(entry.kind, before.kind);
-                assert_eq!(entry.size, before.size);
-                assert_eq!(entry.modified, before.modified);
+                assert_eq!(entry.path(), before.path());
+                assert_eq!(entry.entry_type(), before.entry_type());
+                assert_eq!(entry.modified(), before.modified());
             } else {
                 assert_eq!(
-                    result.err().ok_or("expected existing destination")?.kind(),
-                    StorageErrorKind::AlreadyExists
+                    result
+                        .err()
+                        .ok_or("expected existing destination")?
+                        .failure(),
+                    Failure::Rejected(Rejection::AlreadyExists)
                 );
             }
             let after = storage
                 .stat_entry(StorageStatEntryRequest { path: path(name)? })
                 .await?;
-            assert_eq!(after.path, before.path);
-            assert_eq!(after.kind, before.kind);
-            assert_eq!(after.size, before.size);
-            assert_eq!(after.modified, before.modified);
+            assert_eq!(after.path(), before.path());
+            assert_eq!(after.entry_type(), before.entry_type());
+            assert_eq!(after.modified(), before.modified());
             assert_eq!(get(storage, "file").await?, b"file content");
             assert_eq!(get(storage, "dir/child").await?, b"child content");
         }
@@ -360,7 +366,7 @@ pub async fn assert_same_path_rename_contract(
             .await
             .err()
             .ok_or("expected missing source")?;
-        assert_eq!(error.kind(), StorageErrorKind::NotFound);
+        assert_eq!(error.failure(), Failure::Rejected(Rejection::NotFound));
         assert!(!exists(storage, "missing").await?);
 
         let error = storage
@@ -372,7 +378,7 @@ pub async fn assert_same_path_rename_contract(
             .await
             .err()
             .ok_or("expected protected root")?;
-        assert_eq!(error.kind(), StorageErrorKind::RootProtected);
+        assert_eq!(error.failure(), Failure::Rejected(Rejection::RootProtected));
     }
     Ok(())
 }

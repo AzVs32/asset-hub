@@ -1,11 +1,10 @@
+use ah_vfs::application::driver_error::LifecycleFailure;
 mod common;
-use ah_vfs::{
-    application::{
-        dto::{InstanceConfig, InstanceQuery, RemoveInstanceOutcome},
-        port::Driver,
-    },
-    domain::{DriverError, InstanceId, storage::StorageErrorKind},
-};
+use ah_vfs::application::dto::{InstanceConfig, InstanceQuery, RemoveInstanceOutcome};
+use ah_vfs::application::port::Driver;
+use ah_vfs::domain::InstanceId;
+
+use ah_vfs::application::driver_error::DriverError;
 use common::*;
 use std::sync::Arc;
 use vfs_driver_memory::{CapacityUnit, MemoryDriver};
@@ -200,7 +199,7 @@ async fn immutable_capacity_updates_and_missing_or_closed_host_records_are_rejec
         memory_config(2, CapacityUnit::MiB),
     ] {
         assert!(
-            matches!(registry.update(instance.id.clone(),config).await,Err(DriverError::Storage(error)) if error.kind()==StorageErrorKind::InvalidRequest)
+            matches!(registry.update(instance.id.clone(),config).await,Err(DriverError::Lifecycle(error)) if error.failure()==LifecycleFailure::InvalidRequest)
         );
     }
     assert!(matches!(
@@ -209,7 +208,7 @@ async fn immutable_capacity_updates_and_missing_or_closed_host_records_are_rejec
     ));
     pool.close().await;
     assert!(
-        matches!(registry.open_context(instance.id).await,Err(DriverError::Storage(error)) if error.kind()==StorageErrorKind::Unavailable && std::error::Error::source(&error).is_some())
+        matches!(registry.open_context(instance.id).await,Err(DriverError::Lifecycle(error)) if error.failure()==LifecycleFailure::Unavailable && std::error::Error::source(&error).is_some())
     );
     Ok(())
 }

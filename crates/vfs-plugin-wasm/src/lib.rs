@@ -1,11 +1,11 @@
 //! Protobuf-over-WIT adapter with WASIp2 services and explicit per-plugin authority.
+use ah_vfs_storage::{BackendFailure, ContractViolation, Failure, Rejection};
 mod dns;
 mod grants;
 mod http;
-use ah_vfs::domain::{
-    DriverError, InstanceId,
-    storage::{StorageError, StorageErrorKind},
-};
+use ah_vfs::domain::InstanceId;
+
+use ah_vfs::application::driver_error::{DriverError, LifecycleError, LifecycleFailure};
 use grants::NetworkPolicy;
 pub use grants::{DirectoryGrant, ExecutionLimits, HostGrants, HttpGrants};
 use std::{
@@ -114,11 +114,10 @@ struct State {
     _capacity: OwnedSemaphorePermit,
 }
 impl State {
-    fn resource(&self, kind: p::ResourceKind, handle: u64) -> Result<(), DriverError> {
-        let resource = self
-            .resources
-            .get(&handle)
-            .ok_or_else(|| StorageError::new(StorageErrorKind::SessionClosed))?;
+    fn resource(&self, op: &Op, kind: p::ResourceKind, handle: u64) -> Result<(), DriverError> {
+        let resource = self.resources.get(&handle).ok_or_else(|| {
+            c::call_error(op, Failure::Backend(BackendFailure::Closed), false, None)
+        })?;
         if resource.kind != kind {
             return Err(c::protocol_violation());
         }
@@ -126,18 +125,25 @@ impl State {
     }
     fn invalid_reply(&mut self, op: &Op) -> DriverError {
         self.faulted = true;
-        c::response_error(op.mutates(), c::storage_protocol_violation()).into()
+        c::call_error(
+            op,
+            Failure::Contract(ContractViolation::InvalidResponse),
+            true,
+            None,
+        )
     }
     async fn invoke(&mut self, op: &Op, data: Vec<u8>) -> Result<p::Reply, DriverError> {
         let bytes = p::encode_request(&self.generation, op, data).map_err(|error| {
-            StorageError::with_source(
+            c::call_error(
+                op,
                 match error {
-                    p::CodecError::TooLarge => StorageErrorKind::TooLarge,
+                    p::CodecError::TooLarge => Failure::Rejected(Rejection::LimitExceeded),
                     p::CodecError::InvalidData | p::CodecError::Decode(_) => {
-                        StorageErrorKind::InvalidRequest
+                        Failure::Contract(ContractViolation::InvalidResponse)
                     }
                 },
-                error,
+                false,
+                Some(Box::new(error)),
             )
         })?;
         let response = match self
@@ -152,14 +158,20 @@ impl State {
                 let kind = if self.store.data().exhausted
                     || error.downcast_ref::<wasmtime::Trap>() == Some(&wasmtime::Trap::OutOfFuel)
                 {
-                    StorageErrorKind::CapacityExceeded
+                    Failure::Backend(BackendFailure::CapacityExceeded)
                 } else if error.downcast_ref::<wasmtime::Trap>() == Some(&wasmtime::Trap::Interrupt)
                 {
-                    StorageErrorKind::TimedOut
+                    Failure::Backend(BackendFailure::TimedOut)
                 } else {
-                    StorageErrorKind::StaleHandle
+                    Failure::Backend(BackendFailure::Stale)
                 };
-                return Err(StorageError::with_source(kind, std::io::Error::other(error)).into());
+                return Err(c::call_error(
+                    op,
+                    kind,
+                    true,
+                    Some(Box::new(std::io::Error::other(error))),
+                )
+                .into());
             }
         };
         let id = match op {
@@ -169,9 +181,11 @@ impl State {
         let reply = p::decode_reply(&response)
             .map_err(|source| {
                 self.faulted = true;
-                c::response_error(
-                    op.mutates(),
-                    c::storage_protocol_violation_with_source(source),
+                c::call_error(
+                    op,
+                    Failure::Contract(ContractViolation::InvalidResponse),
+                    true,
+                    Some(Box::new(source)),
                 )
             })?
             .map_err(|failure| c::driver_error(failure, id))?;
@@ -193,28 +207,34 @@ impl State {
             return if previous == settings {
                 Ok(p::Reply::unit())
             } else {
-                Err(StorageError::new(StorageErrorKind::Conflict).into())
+                Err(LifecycleError::new(LifecycleFailure::Conflict).into())
             };
         }
         if !matches!(op, Op::Describe(p::Empty {}) | Op::Initialize(_))
             && self.initialized.is_none()
         {
-            return Err(StorageError::new(StorageErrorKind::Unavailable).into());
+            return Err(c::call_error(
+                &op,
+                Failure::Backend(BackendFailure::Unavailable),
+                false,
+                None,
+            )
+            .into());
         }
         match &op {
             Op::Storage(p::StorageCall { handle, .. })
             | Op::Read(p::Read { handle, .. })
             | Op::Write(p::Write { handle, .. }) => {
-                self.resource(p::ResourceKind::Storage, *handle)?
+                self.resource(&op, p::ResourceKind::Storage, *handle)?
             }
             Op::ReaderNext(p::Handle { handle }) => {
-                self.resource(p::ResourceKind::Reader, *handle)?
+                self.resource(&op, p::ResourceKind::Reader, *handle)?
             }
             Op::WriterChunk(p::Handle { handle }) => {
-                self.resource(p::ResourceKind::Writer, *handle)?
+                self.resource(&op, p::ResourceKind::Writer, *handle)?
             }
             Op::Commit(p::Handle { handle }) | Op::Abort(p::Handle { handle }) => {
-                self.resource(p::ResourceKind::Writer, *handle)?;
+                self.resource(&op, p::ResourceKind::Writer, *handle)?;
                 self.resources.remove(handle);
             }
             Op::Release(p::ResourceRef { handle, kind }) => {
@@ -232,7 +252,13 @@ impl State {
         if matches!(op, Op::Open(_) | Op::Read(_) | Op::Write(_))
             && self.resources.len() >= p::MAX_RESOURCES
         {
-            return Err(StorageError::new(StorageErrorKind::CapacityExceeded).into());
+            return Err(c::call_error(
+                &op,
+                Failure::Backend(BackendFailure::CapacityExceeded),
+                false,
+                None,
+            )
+            .into());
         }
         let result = self.invoke(&op, data).await;
         if let Op::ReaderNext(p::Handle { handle }) = &op
@@ -250,9 +276,9 @@ impl State {
             // other implementations and never reopens or advances a stream.
             if !self.faulted
                 && result.as_ref().err().is_none_or(|error| {
-                    error
-                        .storage_error()
-                        .is_none_or(|error| error.kind() != StorageErrorKind::StaleHandle)
+                    error.storage_error().is_none_or(|error| {
+                        error.failure() != Failure::Backend(BackendFailure::Stale)
+                    })
                 })
             {
                 self.invoke(
@@ -319,7 +345,7 @@ impl InstanceFactory {
         let capacity = capacity
             .clone()
             .try_acquire_owned()
-            .map_err(|_| StorageError::new(StorageErrorKind::CapacityExceeded))?;
+            .map_err(|_| LifecycleError::new(LifecycleFailure::CapacityExceeded))?;
         let mut builder = WasiCtx::builder();
         let network = self.network.clone();
         #[cfg(test)]
@@ -339,7 +365,7 @@ impl InstanceFactory {
                     name,
                     value
                         .to_str()
-                        .ok_or_else(|| StorageError::new(StorageErrorKind::InvalidRequest))?,
+                        .ok_or_else(|| LifecycleError::new(LifecycleFailure::InvalidRequest))?,
                 );
             }
         }
@@ -352,8 +378,8 @@ impl InstanceFactory {
             builder
                 .preopened_dir(&directory.host, &directory.guest, perms)
                 .map_err(|error| {
-                    StorageError::with_source(
-                        StorageErrorKind::InvalidRequest,
+                    LifecycleError::with_source(
+                        LifecycleFailure::InvalidRequest,
                         std::io::Error::other(error),
                     )
                 })?;
@@ -379,12 +405,15 @@ impl InstanceFactory {
         let mut store = Store::new(self.pre.engine(), host);
         store.limiter(|host| host);
         store.set_fuel(self.grants.limits.fuel).map_err(|source| {
-            StorageError::with_source(StorageErrorKind::Backend, std::io::Error::other(source))
+            LifecycleError::with_source(LifecycleFailure::Backend, std::io::Error::other(source))
         })?;
         store
             .fuel_async_yield_interval(Some(100_000))
             .map_err(|source| {
-                StorageError::with_source(StorageErrorKind::Backend, std::io::Error::other(source))
+                LifecycleError::with_source(
+                    LifecycleFailure::Backend,
+                    std::io::Error::other(source),
+                )
             })?;
         store.set_epoch_deadline(self.grants.limits.timeout_ms.div_ceil(10));
         let bindings = tokio::time::timeout(
@@ -392,10 +421,10 @@ impl InstanceFactory {
             self.pre.instantiate_async(&mut store),
         )
         .await
-        .map_err(|_| StorageError::new(StorageErrorKind::TimedOut))?
+        .map_err(|_| LifecycleError::new(LifecycleFailure::TimedOut))?
         .map_err(|error| {
-            StorageError::with_source(
-                StorageErrorKind::ProtocolViolation,
+            LifecycleError::with_source(
+                LifecycleFailure::InvalidDeclaration,
                 std::io::Error::other(error),
             )
         })?;
@@ -438,65 +467,75 @@ impl Drop for Execution<'_> {
 impl Instance {
     async fn call(&self, generation: &str, op: Op, data: Vec<u8>) -> Result<p::Reply, DriverError> {
         if data.len() > p::MAX_DATA_BYTES {
-            return Err(StorageError::new(StorageErrorKind::TooLarge).into());
+            return Err(c::call_error(
+                &op,
+                Failure::Rejected(Rejection::LimitExceeded),
+                false,
+                None,
+            ));
         }
         let state = tokio::time::timeout(self.limits.timeout(), self.state.lock())
             .await
-            .map_err(|_| StorageError::new(StorageErrorKind::TimedOut))?;
+            .map_err(|_| {
+                c::call_error(&op, Failure::Backend(BackendFailure::TimedOut), false, None)
+            })?;
         let mut execution = Execution {
             state,
             disconnected: &self.disconnected,
         };
-        let state = execution
-            .state
-            .as_mut()
-            .ok_or_else(|| StorageError::new(StorageErrorKind::StaleHandle))?;
+        let state = execution.state.as_mut().ok_or_else(|| {
+            c::call_error(&op, Failure::Backend(BackendFailure::Stale), false, None)
+        })?;
         if state.poisoned || (!matches!(op, Op::Describe(_)) && generation != state.generation) {
-            return Err(StorageError::new(StorageErrorKind::StaleHandle).into());
+            return Err(c::call_error(
+                &op,
+                Failure::Backend(BackendFailure::Stale),
+                false,
+                None,
+            ));
         }
         state.store.set_fuel(self.limits.fuel).map_err(|source| {
-            StorageError::with_source(StorageErrorKind::Backend, std::io::Error::other(source))
+            c::call_error(
+                &op,
+                Failure::Backend(BackendFailure::Other),
+                false,
+                Some(Box::new(std::io::Error::other(source))),
+            )
         })?;
         state
             .store
             .set_epoch_deadline(self.limits.timeout_ms.div_ceil(10));
         state.poisoned = true;
-        let mutates = op.mutates();
-        match tokio::time::timeout(self.limits.timeout(), state.execute(op, data)).await {
-            Ok(Err(error))
-                if state.faulted
-                    || error
-                        .storage_error()
-                        .is_some_and(|error| error.kind() == StorageErrorKind::StaleHandle) =>
-            {
-                if mutates {
-                    Err(StorageError::new(StorageErrorKind::OutcomeUnknown).into())
-                } else {
-                    Err(error)
-                }
-            }
+        match tokio::time::timeout(self.limits.timeout(), state.execute(op.clone(), data)).await {
             Ok(result) => {
                 state.poisoned = state.faulted
-                    || result
-                        .as_ref()
-                        .err()
-                        .and_then(DriverError::storage_error)
-                        .is_some_and(|error| {
+                    || result.as_ref().err().is_some_and(|error| {
+                        error.storage_error().is_some_and(|error| {
                             matches!(
-                                error.kind(),
-                                StorageErrorKind::TimedOut
-                                    | StorageErrorKind::Unavailable
-                                    | StorageErrorKind::OutcomeUnknown
+                                error.failure(),
+                                Failure::Backend(
+                                    BackendFailure::TimedOut
+                                        | BackendFailure::Unavailable
+                                        | BackendFailure::Stale
+                                )
                             )
-                        });
+                        }) || error.lifecycle_error().is_some_and(|error| {
+                            matches!(
+                                error.failure(),
+                                LifecycleFailure::TimedOut
+                                    | LifecycleFailure::Unavailable
+                                    | LifecycleFailure::Stale
+                            )
+                        })
+                    });
                 result
             }
-            Err(_) => Err(StorageError::new(if mutates {
-                StorageErrorKind::OutcomeUnknown
-            } else {
-                StorageErrorKind::TimedOut
-            })
-            .into()),
+            Err(_) => Err(c::call_error(
+                &op,
+                Failure::Backend(BackendFailure::TimedOut),
+                true,
+                None,
+            )),
         }
     }
 }
@@ -533,7 +572,7 @@ impl Transport for ControlTransport {
     fn call<'a>(&'a self, generation: &'a str, op: Op, data: Vec<u8>) -> TransportFuture<'a> {
         Box::pin(async move {
             if op.is_resource() || matches!(op, Op::Open(_)) {
-                return Err(StorageError::new(StorageErrorKind::InvalidRequest).into());
+                return Err(LifecycleError::new(LifecycleFailure::InvalidRequest).into());
             }
             let settings = match &op {
                 Op::Initialize(p::Initialize { settings }) => settings.clone(),
@@ -556,7 +595,7 @@ impl Transport for ControlTransport {
     fn open_session<'a>(&'a self, generation: &'a str, open: p::Open) -> Option<OpenFuture<'a>> {
         Some(Box::pin(async move {
             if self.instance.disconnected.load(Ordering::Acquire) {
-                return Err(StorageError::new(StorageErrorKind::StaleHandle).into());
+                return Err(LifecycleError::new(LifecycleFailure::Stale).into());
             }
             // This snapshot never waits for execution in the control Store.
             let (mut expected, settings) = {
@@ -567,16 +606,16 @@ impl Transport for ControlTransport {
                 let description = bootstrap
                     .description
                     .clone()
-                    .ok_or_else(|| StorageError::new(StorageErrorKind::Unavailable))?;
+                    .ok_or_else(|| LifecycleError::new(LifecycleFailure::Unavailable))?;
                 if description.generation != generation {
-                    return Err(StorageError::new(StorageErrorKind::StaleHandle).into());
+                    return Err(LifecycleError::new(LifecycleFailure::Stale).into());
                 }
                 (
                     description,
                     bootstrap
                         .settings
                         .clone()
-                        .ok_or_else(|| StorageError::new(StorageErrorKind::Unavailable))?,
+                        .ok_or_else(|| LifecycleError::new(LifecycleFailure::Unavailable))?,
                 )
             };
             let instance = self.factory.instantiate(&self.factory.storages).await?;
@@ -613,10 +652,10 @@ impl Transport for ControlTransport {
                     // A fresh storage Store can fail without invalidating the
                     // control instance or its cached bootstrap information.
                     if error
-                        .storage_error()
-                        .is_some_and(|error| error.kind() == StorageErrorKind::StaleHandle)
+                        .lifecycle_error()
+                        .is_some_and(|error| error.failure() == LifecycleFailure::Stale)
                     {
-                        StorageError::new(StorageErrorKind::Unavailable).into()
+                        LifecycleError::new(LifecycleFailure::Unavailable).into()
                     } else {
                         error
                     }
@@ -650,7 +689,7 @@ impl Transport for StorageTransport {
     fn call<'a>(&'a self, generation: &'a str, op: Op, data: Vec<u8>) -> TransportFuture<'a> {
         Box::pin(async move {
             if !op.is_resource() {
-                return Err(StorageError::new(StorageErrorKind::InvalidRequest).into());
+                return Err(LifecycleError::new(LifecycleFailure::InvalidRequest).into());
             }
             self.instance.call(generation, op, data).await
         })
@@ -667,7 +706,7 @@ impl WasmTransport {
             .consume_fuel(true)
             .epoch_interruption(true);
         let engine = Engine::new(&config).map_err(|source| {
-            StorageError::with_source(StorageErrorKind::Backend, std::io::Error::other(source))
+            LifecycleError::with_source(LifecycleFailure::Backend, std::io::Error::other(source))
         })?;
         let compile_engine = engine.clone();
         let component = tokio::task::spawn_blocking(move || {
@@ -675,13 +714,13 @@ impl WasmTransport {
                 .map_err(|source| c::protocol_violation_with_source(std::io::Error::other(source)))
         })
         .await
-        .map_err(|source| StorageError::with_source(StorageErrorKind::Unavailable, source))??;
+        .map_err(|source| LifecycleError::with_source(LifecycleFailure::Unavailable, source))??;
         let mut linker = Linker::new(&engine);
         wasmtime_wasi::p2::add_to_linker_async(&mut linker).map_err(|source| {
-            StorageError::with_source(StorageErrorKind::Backend, std::io::Error::other(source))
+            LifecycleError::with_source(LifecycleFailure::Backend, std::io::Error::other(source))
         })?;
         wasmtime_wasi_http::p2::add_only_http_to_linker_async(&mut linker).map_err(|source| {
-            StorageError::with_source(StorageErrorKind::Backend, std::io::Error::other(source))
+            LifecycleError::with_source(LifecycleFailure::Backend, std::io::Error::other(source))
         })?;
         linker.allow_shadowing(true);
         wasmtime_wasi::p2::bindings::sockets::ip_name_lookup::add_to_linker::<
@@ -689,14 +728,11 @@ impl WasmTransport {
             wasmtime::component::HasSelf<Host>,
         >(&mut linker, |host| host)
         .map_err(|source| {
-            StorageError::with_source(StorageErrorKind::Backend, std::io::Error::other(source))
+            LifecycleError::with_source(LifecycleFailure::Backend, std::io::Error::other(source))
         })?;
         linker.allow_shadowing(false);
         let pre = PluginPre::new(linker.instantiate_pre(&component).map_err(|error| {
-            StorageError::with_source(
-                StorageErrorKind::UnsupportedOperation,
-                std::io::Error::other(error),
-            )
+            LifecycleError::with_source(LifecycleFailure::Unsupported, std::io::Error::other(error))
         })?)
         .map_err(|source| c::protocol_violation_with_source(std::io::Error::other(source)))?;
         let ticker = tokio::spawn(async move {

@@ -20,10 +20,11 @@
 mod config;
 pub use config::{GrpcTls, PluginConfig, PluginSource, PluginSpec, VfsConfig};
 
-use ah_vfs::{
-    application::{driver_catalog::DriverCatalog, error::DriverCatalogError, port::Driver},
-    domain::{DriverError, DriverKey},
-};
+use ah_vfs::application::driver_catalog::DriverCatalog;
+use ah_vfs::application::driver_error::DriverError;
+use ah_vfs::application::error::DriverCatalogError;
+use ah_vfs::application::port::Driver;
+use ah_vfs::domain::DriverKey;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,

@@ -1,17 +1,22 @@
 //! Shared protobuf messages, validation and VFS protocol semantics.
 pub mod wire {
-    include!(concat!(env!("OUT_DIR"), "/assethub.vfs.v3.rs"));
+    include!(concat!(env!("OUT_DIR"), "/assethub.vfs.v4.rs"));
 }
 pub use wire::*;
 pub use wire::{reply::Result as Value, request::Operation, storage_call::Operation as StorageOp};
 mod codec;
+mod values;
 pub use codec::*;
+pub use values::{
+    EntryValueError, decode_capabilities, decode_entry, decode_time, encode_capabilities,
+    encode_entry, encode_time,
+};
 /// Protoc descriptor set for language-independent tooling and generators.
 pub const FILE_DESCRIPTOR_SET: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/plugin.bin"));
 /// JSON values at application/configuration boundaries, never a wire message.
 pub type JsonObject = std::collections::BTreeMap<String, serde_json::Value>;
 
-pub const PROTOCOL_MAJOR: u32 = 3;
+pub const PROTOCOL_MAJOR: u32 = 4;
 pub const PROTOCOL_MINOR: u32 = 0;
 pub const MAX_CONTROL_BYTES: usize = 1024 * 1024;
 pub const MAX_DATA_BYTES: usize = 8 * 1024 * 1024;
@@ -107,6 +112,7 @@ impl Failure {
             code: code as i32,
             field: None,
             config_kind: None,
+            storage: None,
         }
     }
 }
@@ -184,26 +190,44 @@ impl Operation {
             },
         }
     }
-    /// Ambiguous failures cannot prove that these mutations were rolled back.
-    pub fn mutates(&self) -> bool {
+}
+
+mod failure;
+pub use failure::{decode_storage_error, encode_storage_error};
+
+impl StorageOp {
+    pub fn storage_operation(&self) -> ah_vfs_storage::Operation {
+        use ah_vfs_storage::Operation as D;
         match self {
-            Self::Initialize(_)
-            | Self::Write(_)
-            | Self::WriterChunk(_)
-            | Self::Commit(_)
-            | Self::Abort(_) => true,
-            Self::Storage(call) => matches!(
-                call.operation,
-                Some(
-                    StorageOp::CreateDir(_)
-                        | StorageOp::Remove(_)
-                        | StorageOp::Move(_)
-                        | StorageOp::SetPermissions(_)
-                        | StorageOp::SetXattr(_)
-                        | StorageOp::RemoveXattr(_)
-                )
-            ),
-            _ => false,
+            Self::Stat(_) => D::Stat,
+            Self::List(_) => D::List,
+            Self::CreateDir(_) => D::CreateDirectory,
+            Self::Remove(_) => D::Remove,
+            Self::Move(_) => D::Rename,
+            Self::GetPermissions(_) => D::GetPermissions,
+            Self::SetPermissions(_) => D::SetPermissions,
+            Self::ListXattrs(_) => D::ListXattrs,
+            Self::GetXattr(_) => D::GetXattr,
+            Self::SetXattr(_) => D::SetXattr,
+            Self::RemoveXattr(_) => D::RemoveXattr,
         }
+    }
+}
+impl Operation {
+    pub fn storage_operation(&self) -> Option<ah_vfs_storage::Operation> {
+        use ah_vfs_storage::Operation as D;
+        match self {
+            Self::Storage(call) => call.operation.as_ref().map(StorageOp::storage_operation),
+            Self::Read(_) | Self::ReaderNext(_) => Some(D::Read),
+            Self::Write(_) | Self::WriterChunk(_) | Self::Commit(_) | Self::Abort(_) => {
+                Some(D::Write)
+            }
+            _ => None,
+        }
+    }
+    /// Private staging and abort cannot publish covered state.
+    pub fn may_publish(&self) -> bool {
+        matches!(self, Self::Commit(_))
+            || matches!(self, Self::Storage(call) if call.operation.as_ref().is_some_and(|op| op.storage_operation().may_mutate()))
     }
 }

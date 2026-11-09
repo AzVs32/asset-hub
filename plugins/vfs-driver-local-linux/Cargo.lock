@@ -30,6 +30,7 @@ name = "ah-vfs"
 version = "0.1.0"
 dependencies = [
  "ah-id",
+ "ah-vfs-storage",
  "bon",
  "derive_more",
  "getset",
@@ -38,6 +39,14 @@ dependencies = [
  "sqlx",
  "thiserror",
  "tokio",
+]
+
+[[package]]
+name = "ah-vfs-storage"
+version = "0.1.0"
+dependencies = [
+ "getset",
+ "thiserror",
 ]
 
 [[package]]
@@ -2072,6 +2081,7 @@ version = "0.1.0"
 dependencies = [
  "ah-id",
  "ah-vfs",
+ "ah-vfs-storage",
  "cap-fs-ext",
  "cap-std",
  "rustix",
@@ -2091,6 +2101,7 @@ name = "vfs-plugin-codec"
 version = "0.1.0"
 dependencies = [
  "ah-vfs",
+ "ah-vfs-storage",
  "semver",
  "vfs-plugin-protocol",
 ]
@@ -2100,6 +2111,7 @@ name = "vfs-plugin-grpc"
 version = "0.1.0"
 dependencies = [
  "ah-vfs",
+ "ah-vfs-storage",
  "tokio",
  "tokio-stream",
  "tonic",
@@ -2115,6 +2127,7 @@ name = "vfs-plugin-grpc-server"
 version = "0.1.0"
 dependencies = [
  "ah-vfs",
+ "ah-vfs-storage",
  "futures-util",
  "sha2",
  "subtle",
@@ -2142,6 +2155,7 @@ name = "vfs-plugin-host"
 version = "0.1.0"
 dependencies = [
  "ah-vfs",
+ "ah-vfs-storage",
  "tokio",
  "vfs-plugin-codec",
  "vfs-plugin-protocol",
@@ -2151,10 +2165,12 @@ dependencies = [
 name = "vfs-plugin-protocol"
 version = "0.1.0"
 dependencies = [
+ "ah-vfs-storage",
  "prost",
  "prost-build",
  "protoc-bin-vendored",
  "serde_json",
+ "thiserror",
 ]
 
 [[package]]

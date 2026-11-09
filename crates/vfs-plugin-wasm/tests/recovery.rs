@@ -1,13 +1,12 @@
-use ah_vfs::{
-    application::port::*,
-    domain::{
-        DriverError, InstanceId,
-        storage::{
-            Entry, StorageError, StorageErrorKind, StoragePath, StorageReadFileRequest,
-            StorageStatEntryRequest, StorageWriteFileRequest,
-        },
-    },
+use ah_vfs::application::driver_error::DriverError;
+use ah_vfs::application::driver_error::LifecycleFailure;
+use ah_vfs::application::port::*;
+use ah_vfs::domain::InstanceId;
+use ah_vfs::domain::storage::{
+    StorageReadFileRequest, StorageStatEntryRequest, StorageWriteFileRequest,
 };
+use ah_vfs_storage::{BackendFailure, Failure, Operation, Rejection, StorageError};
+use ah_vfs_storage::{Entry, StoragePath};
 use std::{future::poll_fn, sync::Arc, task::Poll, time::Duration};
 use vfs_plugin_host::{PluginDriver, Transport, TransportFactory};
 use vfs_plugin_protocol::{self as p, Operation as Op, Value};
@@ -162,12 +161,18 @@ async fn open(driver: &PluginDriver, id: &str) -> Result<Arc<dyn Storage>> {
 async fn stat(storage: &dyn Storage, path: &str) -> std::result::Result<Entry, StorageError> {
     storage
         .stat_entry(StorageStatEntryRequest {
-            path: StoragePath::parse(path)?,
+            path: StoragePath::parse(path).map_err(|cause| {
+                StorageError::without_effects(
+                    Operation::Stat,
+                    Failure::Rejected(Rejection::UnsupportedName),
+                    Some(Box::new(cause)),
+                )
+            })?,
         })
         .await
 }
-fn kind(error: DriverError) -> Result<StorageErrorKind> {
-    Ok(error.storage_error().ok_or("storage error")?.kind())
+fn kind(error: DriverError) -> Result<LifecycleFailure> {
+    Ok(error.lifecycle_error().ok_or("lifecycle error")?.failure())
 }
 
 #[tokio::test]
@@ -189,7 +194,7 @@ async fn control_trap_uses_a_new_factory_instance_and_reinitializes_settings() -
             .err()
             .ok_or("trap")?
         )?,
-        StorageErrorKind::StaleHandle
+        LifecycleFailure::Stale
     );
     assert!(
         old.disconnected()
@@ -207,13 +212,16 @@ async fn control_trap_uses_a_new_factory_instance_and_reinitializes_settings() -
     let provisioner = driver.provisioner();
     assert!(provisioner.prepare(Default::default()).await.is_err());
     assert!(!retained.is_stale());
-    assert_eq!(stat(retained.as_ref(), "file").await?.size, Some(1));
+    assert_eq!(
+        stat(retained.as_ref(), "file").await?.entry_type(),
+        ah_vfs_storage::EntryType::file(Some(1))
+    );
     provisioner.test_connection(&Default::default()).await?;
     assert_eq!(
         stat(open(&driver, "recovered").await?.as_ref(), "file")
             .await?
-            .size,
-        Some(1)
+            .entry_type(),
+        ah_vfs_storage::EntryType::file(Some(1))
     );
     Ok(())
 }
@@ -232,15 +240,21 @@ async fn storage_timeout_is_local_and_other_stores_make_progress_concurrently() 
         Poll::Ready(())
     })
     .await;
-    assert_eq!(stat(healthy.as_ref(), "file").await?.size, Some(1));
+    assert_eq!(
+        stat(healthy.as_ref(), "file").await?.entry_type(),
+        ah_vfs_storage::EntryType::file(Some(1))
+    );
     let third = open(&driver, "third").await?;
-    assert_eq!(stat(third.as_ref(), "file").await?.size, Some(1));
+    assert_eq!(
+        stat(third.as_ref(), "file").await?.entry_type(),
+        ah_vfs_storage::EntryType::file(Some(1))
+    );
     assert!(!healthy.is_stale());
     assert!(!stalled.is_stale());
     tokio::time::advance(Duration::from_secs(31)).await;
     assert_eq!(
-        call.await.err().ok_or("timeout")?.kind(),
-        StorageErrorKind::TimedOut
+        call.await.err().ok_or("timeout")?.failure(),
+        Failure::Backend(BackendFailure::TimedOut)
     );
     assert!(stalled.is_stale());
     assert!(!healthy.is_stale());
@@ -250,12 +264,18 @@ async fn storage_timeout_is_local_and_other_stores_make_progress_concurrently() 
             .await
             .err()
             .ok_or("old reader")?
-            .kind(),
-        StorageErrorKind::StaleHandle
+            .failure(),
+        Failure::Backend(BackendFailure::Stale)
     );
-    assert_eq!(stat(healthy.as_ref(), "file").await?.size, Some(1));
+    assert_eq!(
+        stat(healthy.as_ref(), "file").await?.entry_type(),
+        ah_vfs_storage::EntryType::file(Some(1))
+    );
     let reopened = open(&driver, "stalled").await?;
-    assert_eq!(stat(reopened.as_ref(), "file").await?.size, Some(1));
+    assert_eq!(
+        stat(reopened.as_ref(), "file").await?.entry_type(),
+        ah_vfs_storage::EntryType::file(Some(1))
+    );
     assert!(stalled.is_stale());
     Ok(())
 }
@@ -270,8 +290,8 @@ async fn traps_and_cancellation_retire_only_the_owning_store() -> Result {
             .await
             .err()
             .ok_or("trap")?
-            .kind(),
-        StorageErrorKind::StaleHandle
+            .failure(),
+        Failure::Backend(BackendFailure::Stale)
     );
     assert!(trapped.is_stale());
     assert!(!healthy.is_stale());
@@ -285,12 +305,15 @@ async fn traps_and_cancellation_retire_only_the_owning_store() -> Result {
     drop(call);
     assert!(cancelled.is_stale());
     assert!(!healthy.is_stale());
-    assert_eq!(stat(healthy.as_ref(), "file").await?.size, Some(1));
+    assert_eq!(
+        stat(healthy.as_ref(), "file").await?.entry_type(),
+        ah_vfs_storage::EntryType::file(Some(1))
+    );
     assert_eq!(
         stat(open(&driver, "trapped").await?.as_ref(), "file")
             .await?
-            .size,
-        Some(1)
+            .entry_type(),
+        ah_vfs_storage::EntryType::file(Some(1))
     );
     Ok(())
 }
@@ -304,17 +327,20 @@ async fn uncertain_commit_is_terminal_and_does_not_poison_other_storages() -> Re
         .write_file(StorageWriteFileRequest::new(StoragePath::parse("file")?))
         .await?;
     writer.write_chunk(b"pending").await?;
+    let error = writer.commit().await.err().ok_or("commit trap")?;
+    assert_eq!(error.operation(), Operation::Write);
+    assert_eq!(error.failure(), Failure::Backend(BackendFailure::Stale));
+    assert_eq!(error.outcome(), ah_vfs_storage::MutationOutcome::Unknown);
     assert_eq!(
-        writer.commit().await.err().ok_or("commit trap")?.kind(),
-        StorageErrorKind::OutcomeUnknown
-    );
-    assert_eq!(
-        writer.commit().await.err().ok_or("terminal")?.kind(),
-        StorageErrorKind::SessionClosed
+        writer.commit().await.err().ok_or("terminal")?.failure(),
+        Failure::Backend(BackendFailure::Closed)
     );
     assert!(storage.is_stale());
     assert!(!healthy.is_stale());
-    assert_eq!(stat(healthy.as_ref(), "file").await?.size, Some(1));
+    assert_eq!(
+        stat(healthy.as_ref(), "file").await?.entry_type(),
+        ah_vfs_storage::EntryType::file(Some(1))
+    );
     Ok(())
 }
 
@@ -330,8 +356,8 @@ async fn poisoned_stores_release_capacity_even_when_stale_proxies_are_retained()
     assert_eq!(
         stat(open(&driver, "fresh").await?.as_ref(), "file")
             .await?
-            .size,
-        Some(1)
+            .entry_type(),
+        ah_vfs_storage::EntryType::file(Some(1))
     );
     assert!(retained.iter().all(|storage| storage.is_stale()));
     Ok(())
@@ -352,7 +378,7 @@ async fn live_store_capacity_is_bounded_and_returned_when_storage_is_dropped() -
         .await
         .err()
         .ok_or("capacity")?;
-    assert_eq!(kind(error)?, StorageErrorKind::CapacityExceeded);
+    assert_eq!(kind(error)?, LifecycleFailure::CapacityExceeded);
     retained.pop();
     let replacement_id = InstanceId::parse("replacement")?;
     let replacement = tokio::time::timeout(Duration::from_secs(1), async {
@@ -363,8 +389,8 @@ async fn live_store_capacity_is_bounded_and_returned_when_storage_is_dropped() -
             {
                 Ok(storage) => return Ok::<_, DriverError>(storage),
                 Err(error)
-                    if error.storage_error().is_some_and(|error| {
-                        error.kind() == StorageErrorKind::CapacityExceeded
+                    if error.lifecycle_error().is_some_and(|error| {
+                        error.failure() == LifecycleFailure::CapacityExceeded
                     }) =>
                 {
                     tokio::task::yield_now().await
@@ -374,7 +400,10 @@ async fn live_store_capacity_is_bounded_and_returned_when_storage_is_dropped() -
         }
     })
     .await??;
-    assert_eq!(stat(replacement.as_ref(), "file").await?.size, Some(1));
+    assert_eq!(
+        stat(replacement.as_ref(), "file").await?.entry_type(),
+        ah_vfs_storage::EntryType::file(Some(1))
+    );
     Ok(())
 }
 
@@ -399,7 +428,7 @@ async fn control_timeout_and_cancellation_require_a_fresh_control_instance() -> 
     tokio::time::advance(Duration::from_secs(31)).await;
     assert_eq!(
         kind(call.await.err().ok_or("timeout")?)?,
-        StorageErrorKind::TimedOut
+        LifecycleFailure::TimedOut
     );
     assert!(generation(control.as_ref()).await.is_err());
     let fresh = factory.clone().connect().await?;
@@ -441,7 +470,7 @@ async fn initialize_acknowledges_identical_settings_without_reexecuting_the_gues
         .await
         .err()
         .ok_or("settings conflict")?;
-    assert_eq!(kind(error)?, StorageErrorKind::Conflict);
+    assert_eq!(kind(error)?, LifecycleFailure::Conflict);
     probe(control.as_ref(), &generation).await?;
     Ok(())
 }
@@ -476,19 +505,22 @@ async fn failed_storage_open_does_not_replace_a_healthy_control_instance() -> Re
         .await
         .err()
         .ok_or("opening trap")?;
-    assert_eq!(kind(error)?, StorageErrorKind::Unavailable);
+    assert_eq!(kind(error)?, LifecycleFailure::Unavailable);
     assert_eq!(
         factory
             .connections
             .load(std::sync::atomic::Ordering::SeqCst),
         1
     );
-    assert_eq!(stat(healthy.as_ref(), "file").await?.size, Some(1));
+    assert_eq!(
+        stat(healthy.as_ref(), "file").await?.entry_type(),
+        ah_vfs_storage::EntryType::file(Some(1))
+    );
     assert_eq!(
         stat(open(&driver, "fresh").await?.as_ref(), "file")
             .await?
-            .size,
-        Some(1)
+            .entry_type(),
+        ah_vfs_storage::EntryType::file(Some(1))
     );
     assert!(!healthy.is_stale());
     Ok(())
@@ -498,7 +530,10 @@ async fn storage_and_reader_keep_the_compiled_factory_alive_after_driver_drop() 
     let driver = driver(factory("i32.const 16", INITIALIZE, STAT, "i32.const 48").await?).await?;
     let storage = open(&driver, "retained").await?;
     drop(driver);
-    assert_eq!(stat(storage.as_ref(), "file").await?.size, Some(1));
+    assert_eq!(
+        stat(storage.as_ref(), "file").await?.entry_type(),
+        ah_vfs_storage::EntryType::file(Some(1))
+    );
     let mut reader = storage
         .read_file(StorageReadFileRequest::new(StoragePath::parse("file")?))
         .await?;

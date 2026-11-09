@@ -1,8 +1,7 @@
 //! Host-side gRPC transport. Plugin servers depend on vfs-plugin-grpc-server.
-use ah_vfs::domain::{
-    DriverError,
-    storage::{StorageError, StorageErrorKind},
-};
+
+use ah_vfs::application::driver_error::{DriverError, LifecycleError, LifecycleFailure};
+use ah_vfs_storage::{BackendFailure, ContractViolation, Failure, Rejection};
 use std::{
     net::IpAddr,
     sync::{
@@ -56,7 +55,7 @@ impl GrpcTransport {
     ) -> Result<Self, DriverError> {
         let mut endpoint = endpoint_config(&endpoint)?;
         if tls.is_some() && endpoint.uri().scheme_str() != Some("https") {
-            return Err(StorageError::new(StorageErrorKind::InvalidRequest).into());
+            return Err(LifecycleError::new(LifecycleFailure::InvalidRequest).into());
         }
         let tls = tls.or_else(|| {
             (endpoint.uri().scheme_str() == Some("https"))
@@ -64,7 +63,7 @@ impl GrpcTransport {
         });
         if let Some(tls) = tls {
             endpoint = endpoint.tls_config(tls).map_err(|source| {
-                StorageError::with_source(StorageErrorKind::InvalidRequest, source)
+                LifecycleError::with_source(LifecycleFailure::InvalidRequest, source)
             })?;
         }
         Self::connect_endpoint(endpoint, token).await
@@ -78,7 +77,7 @@ impl GrpcTransport {
             .connect_timeout(Duration::from_secs(10))
             .connect()
             .await
-            .map_err(|source| StorageError::with_source(StorageErrorKind::Unavailable, source))?;
+            .map_err(|source| LifecycleError::with_source(LifecycleFailure::Unavailable, source))?;
         Ok(Self::from_channel(channel, token))
     }
     // An opaque Channel cannot prove which endpoint or TLS policy it uses.
@@ -100,11 +99,11 @@ impl GrpcTransport {
     }
     fn encode(generation: &str, op: &Op, data: Vec<u8>) -> Result<wire::Request, DriverError> {
         p::to_request(generation, op, data).map_err(|error| {
-            StorageError::with_source(
+            LifecycleError::with_source(
                 match error {
-                    p::CodecError::TooLarge => StorageErrorKind::TooLarge,
+                    p::CodecError::TooLarge => LifecycleFailure::CapacityExceeded,
                     p::CodecError::InvalidData | p::CodecError::Decode(_) => {
-                        StorageErrorKind::InvalidRequest
+                        LifecycleFailure::InvalidRequest
                     }
                 },
                 error,
@@ -115,9 +114,9 @@ impl GrpcTransport {
 }
 fn endpoint_config(raw: &str) -> Result<Endpoint, DriverError> {
     let url = url::Url::parse(raw)
-        .map_err(|source| StorageError::with_source(StorageErrorKind::InvalidRequest, source))?;
+        .map_err(|source| LifecycleError::with_source(LifecycleFailure::InvalidRequest, source))?;
     let endpoint = Endpoint::from_shared(raw.to_owned())
-        .map_err(|source| StorageError::with_source(StorageErrorKind::InvalidRequest, source))?;
+        .map_err(|source| LifecycleError::with_source(LifecycleFailure::InvalidRequest, source))?;
     if !matches!(endpoint.uri().scheme_str(), Some("http" | "https"))
         || url.host_str().is_none()
         || !url.username().is_empty()
@@ -126,7 +125,7 @@ fn endpoint_config(raw: &str) -> Result<Endpoint, DriverError> {
         || url.query().is_some()
         || url.fragment().is_some()
     {
-        return Err(StorageError::new(StorageErrorKind::InvalidRequest).into());
+        return Err(LifecycleError::new(LifecycleFailure::InvalidRequest).into());
     }
     if endpoint.uri().scheme_str() == Some("http") {
         // Check the exact URI passed to the connector, without DNS resolution or
@@ -134,13 +133,13 @@ fn endpoint_config(raw: &str) -> Result<Endpoint, DriverError> {
         let host = endpoint
             .uri()
             .host()
-            .ok_or_else(|| StorageError::new(StorageErrorKind::InvalidRequest))?;
+            .ok_or_else(|| LifecycleError::new(LifecycleFailure::InvalidRequest))?;
         let host = host
             .strip_prefix('[')
             .and_then(|host| host.strip_suffix(']'))
             .unwrap_or(host);
         if !host.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback()) {
-            return Err(StorageError::new(StorageErrorKind::PermissionDenied).into());
+            return Err(LifecycleError::new(LifecycleFailure::AccessDenied).into());
         }
     }
     Ok(endpoint)
@@ -148,37 +147,47 @@ fn endpoint_config(raw: &str) -> Result<Endpoint, DriverError> {
 fn bearer_token(token: &str) -> Result<MetadataValue<Ascii>, DriverError> {
     if token.is_empty() || token.len() > 4096 || !token.bytes().all(|byte| byte.is_ascii_graphic())
     {
-        return Err(StorageError::new(StorageErrorKind::PermissionDenied).into());
+        return Err(LifecycleError::new(LifecycleFailure::AccessDenied).into());
     }
     let mut value = MetadataValue::try_from(format!("Bearer {token}"))
-        .map_err(|source| StorageError::with_source(StorageErrorKind::InvalidRequest, source))?;
+        .map_err(|source| LifecycleError::with_source(LifecycleFailure::InvalidRequest, source))?;
     value.set_sensitive(true);
     Ok(value)
 }
-fn transport_error(status: Status, mutates: bool) -> DriverError {
-    let kind = match status.code() {
-        tonic::Code::Unauthenticated => StorageErrorKind::PermissionDenied,
-        _ if mutates => StorageErrorKind::OutcomeUnknown,
-        tonic::Code::PermissionDenied => StorageErrorKind::PermissionDenied,
-        tonic::Code::InvalidArgument => StorageErrorKind::InvalidRequest,
-        tonic::Code::ResourceExhausted => StorageErrorKind::TooLarge,
-        tonic::Code::DeadlineExceeded => StorageErrorKind::TimedOut,
-        tonic::Code::Cancelled => StorageErrorKind::Cancelled,
-        _ => StorageErrorKind::Unavailable,
+fn transport_error(status: Status, op: &Op) -> DriverError {
+    let failure = match status.code() {
+        tonic::Code::Unauthenticated | tonic::Code::PermissionDenied => {
+            Failure::Rejected(Rejection::AccessDenied)
+        }
+        tonic::Code::InvalidArgument => Failure::Contract(ContractViolation::InvalidResponse),
+        tonic::Code::ResourceExhausted => Failure::Rejected(Rejection::LimitExceeded),
+        tonic::Code::DeadlineExceeded => Failure::Backend(BackendFailure::TimedOut),
+        tonic::Code::Cancelled => Failure::Backend(BackendFailure::Cancelled),
+        _ => Failure::Backend(BackendFailure::Unavailable),
     };
-    StorageError::with_source(kind, status).into()
+    // A transport status is not evidence of rollback for a dispatched mutation.
+    c::call_error(op, failure, true, Some(Box::new(status)))
 }
 fn decode(reply: wire::Reply, op: &Op) -> Result<p::Reply, DriverError> {
-    let invalid = || c::response_error(op.mutates(), c::storage_protocol_violation());
+    let invalid = || {
+        c::call_error(
+            op,
+            Failure::Contract(ContractViolation::InvalidResponse),
+            true,
+            None,
+        )
+    };
     let id = match op {
         Op::Open(p::Open { id, .. }) => Some(id.as_str()),
         _ => None,
     };
     let reply = p::from_reply(reply)
         .map_err(|source| {
-            c::response_error(
-                op.mutates(),
-                c::storage_protocol_violation_with_source(source),
+            c::call_error(
+                op,
+                Failure::Contract(ContractViolation::InvalidResponse),
+                true,
+                Some(Box::new(source)),
             )
         })?
         .map_err(|error| c::driver_error(error, id))?;
@@ -187,7 +196,7 @@ fn decode(reply: wire::Reply, op: &Op) -> Result<p::Reply, DriverError> {
         .as_ref()
         .is_some_and(|value| op.accepts_reply(value))
     {
-        return Err(invalid().into());
+        return Err(invalid());
     }
     Ok(reply)
 }
@@ -237,20 +246,20 @@ impl Transport for GrpcTransport {
                 .await
                 .map_err(|_| {
                     peer.disconnect();
-                    StorageError::new(StorageErrorKind::TimedOut)
+                    LifecycleError::new(LifecycleFailure::TimedOut)
                 })?
-                .map_err(|status| peer.failed(status))?
+                .map_err(|status| peer.failed(status, &operation))?
                 .into_inner();
             let reply = tokio::time::timeout(self.timeout, incoming.message())
                 .await
                 .map_err(|_| {
                     peer.disconnect();
-                    StorageError::new(StorageErrorKind::TimedOut)
+                    LifecycleError::new(LifecycleFailure::TimedOut)
                 })?
-                .map_err(|status| peer.failed(status))?
+                .map_err(|status| peer.failed(status, &operation))?
                 .ok_or_else(|| {
                     peer.disconnect();
-                    StorageError::new(StorageErrorKind::Unavailable)
+                    LifecycleError::new(LifecycleFailure::Unavailable)
                 })?;
             let Value::Storage(storage) = decode(reply, &operation)?
                 .into_value()
@@ -287,14 +296,14 @@ impl Transport for GrpcTransport {
     fn call<'a>(&'a self, generation: &'a str, op: Op, data: Vec<u8>) -> TransportFuture<'a> {
         Box::pin(async move {
             if op.is_resource() || matches!(op, Op::Open(_)) {
-                return Err(StorageError::new(StorageErrorKind::InvalidRequest).into());
+                return Err(LifecycleError::new(LifecycleFailure::InvalidRequest).into());
             }
             let call = Self::encode(generation, &op, data)?;
             let mut client = self.client.clone();
             let reply = client
                 .invoke(self.request(call))
                 .await
-                .map_err(|s| transport_error(s, op.mutates()))?
+                .map_err(|s| transport_error(s, &op))?
                 .into_inner();
             let reply = decode(reply, &op)?;
             if let Some(Value::Description(description)) = &reply.result {
@@ -322,14 +331,14 @@ struct Peer {
     connection: Arc<Mutex<ConnectionState>>,
 }
 impl Peer {
-    fn failed(&self, status: Status) -> DriverError {
-        let error = transport_error(status, false);
-        if error.storage_error().is_some_and(|error| {
+    fn failed(&self, status: Status, op: &Op) -> DriverError {
+        let error = transport_error(status, op);
+        if error.lifecycle_error().is_some_and(|error| {
             matches!(
-                error.kind(),
-                StorageErrorKind::Unavailable
-                    | StorageErrorKind::TimedOut
-                    | StorageErrorKind::Cancelled
+                error.failure(),
+                LifecycleFailure::Unavailable
+                    | LifecycleFailure::TimedOut
+                    | LifecycleFailure::Cancelled
             )
         }) {
             self.disconnect();
@@ -381,24 +390,42 @@ impl Transport for SessionTransport {
     ) -> TransportFuture<'a> {
         Box::pin(async move {
             if generation != self.generation || self.disconnected.load(Ordering::Acquire) {
-                return Err(StorageError::new(StorageErrorKind::StaleHandle).into());
+                return Err(c::call_error(
+                    &operation,
+                    Failure::Backend(BackendFailure::Stale),
+                    false,
+                    None,
+                )
+                .into());
             }
             if !operation.is_resource() {
-                return Err(StorageError::new(StorageErrorKind::InvalidRequest).into());
+                return Err(LifecycleError::new(LifecycleFailure::InvalidRequest).into());
             }
             let request = GrpcTransport::encode("", &operation, data)?;
             let (reply, received) = oneshot::channel();
             self.pending
                 .send(Pending {
                     request,
-                    operation,
+                    operation: operation.clone(),
                     reply,
                 })
                 .await
-                .map_err(|_| StorageError::new(StorageErrorKind::StaleHandle))?;
-            received
-                .await
-                .map_err(|_| StorageError::new(StorageErrorKind::StaleHandle))?
+                .map_err(|_| {
+                    c::call_error(
+                        &operation,
+                        Failure::Backend(BackendFailure::Stale),
+                        false,
+                        None,
+                    )
+                })?;
+            received.await.map_err(|_| {
+                c::call_error(
+                    &operation,
+                    Failure::Backend(BackendFailure::Stale),
+                    true,
+                    None,
+                )
+            })?
         })
     }
 }
@@ -431,26 +458,25 @@ async fn run_session(
         let result = tokio::select! {
             ()=pending.reply.closed()=>break,
             result=tokio::time::timeout(timeout, async {
-                outgoing.send(pending.request).await.map_err(|_|transport_error(Status::unavailable("session closed"),pending.operation.mutates()))?;
-                let reply=incoming.message().await.map_err(|s|transport_error(s,pending.operation.mutates()))?
-                    .ok_or_else(||transport_error(Status::unavailable("session closed"),pending.operation.mutates()))?;
+                outgoing.send(pending.request).await.map_err(|_|transport_error(Status::unavailable("session closed"),&pending.operation))?;
+                let reply=incoming.message().await.map_err(|s|transport_error(s,&pending.operation))?
+                    .ok_or_else(||transport_error(Status::unavailable("session closed"),&pending.operation))?;
                 decode(reply,&pending.operation)
-            })=>result.unwrap_or_else(|_|Err(StorageError::new(if pending.operation.mutates() {StorageErrorKind::OutcomeUnknown}else {StorageErrorKind::TimedOut}).into())),
+            })=>result.unwrap_or_else(|_|Err(c::call_error(&pending.operation, Failure::Backend(BackendFailure::TimedOut), true, None).into())),
         };
-        let broken = result
-            .as_ref()
-            .err()
-            .and_then(DriverError::storage_error)
-            .is_some_and(|error| {
-                matches!(
-                    error.kind(),
-                    StorageErrorKind::OutcomeUnknown
-                        | StorageErrorKind::StaleHandle
-                        | StorageErrorKind::Unavailable
-                        | StorageErrorKind::TimedOut
-                        | StorageErrorKind::ProtocolViolation
-                )
-            });
+        let broken = result.as_ref().err().is_some_and(|error| {
+            error.lifecycle_error().is_some()
+                || error.storage_error().is_some_and(|error| {
+                    matches!(
+                        error.failure(),
+                        Failure::Backend(
+                            BackendFailure::Stale
+                                | BackendFailure::Unavailable
+                                | BackendFailure::TimedOut
+                        ) | Failure::Contract(_)
+                    )
+                })
+        });
         let _ = pending.reply.send(result);
         if broken {
             peer.disconnect();
@@ -488,8 +514,8 @@ mod tests {
                 .err()
                 .ok_or("plaintext endpoint")?;
             assert_eq!(
-                error.storage_error().ok_or("category")?.kind(),
-                StorageErrorKind::PermissionDenied
+                error.lifecycle_error().ok_or("category")?.failure(),
+                LifecycleFailure::AccessDenied
             );
         }
         for endpoint in [
@@ -511,8 +537,8 @@ mod tests {
             .err()
             .ok_or("insecure connection")?;
         assert_eq!(
-            error.storage_error().ok_or("category")?.kind(),
-            StorageErrorKind::PermissionDenied
+            error.lifecycle_error().ok_or("category")?.failure(),
+            LifecycleFailure::AccessDenied
         );
         let endpoint = Endpoint::from_static("http://192.0.2.1:7443");
         let error = GrpcTransport::connect_endpoint(endpoint, "test-token")
@@ -520,8 +546,8 @@ mod tests {
             .err()
             .ok_or("insecure endpoint")?;
         assert_eq!(
-            error.storage_error().ok_or("category")?.kind(),
-            StorageErrorKind::PermissionDenied
+            error.lifecycle_error().ok_or("category")?.failure(),
+            LifecycleFailure::AccessDenied
         );
         assert!(
             GrpcTransport::connect_with_tls(

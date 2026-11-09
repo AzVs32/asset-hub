@@ -1,21 +1,16 @@
 use ah_vfs::application::mount_runtime::MountRuntime;
 mod common;
 
-use ah_vfs::{
-    application::{
-        driver_catalog::DriverCatalog,
-        driver_info::DriverInfo,
-        dto::MountFilter,
-        error::MountRepositoryError,
-        port::{DriverFuture, MountRepository, Storage},
-        service::MountService,
-    },
-    domain::{
-        DriverError, DriverInstance, DriverKey, InstanceId,
-        namespace::{ChildMountPolicy, Mount, MountId, VirtualPath},
-    },
-    infrastructure::mount_repository::SqliteMountRepository,
-};
+use ah_vfs::application::driver_catalog::DriverCatalog;
+use ah_vfs::application::driver_error::DriverError;
+use ah_vfs::application::driver_info::DriverInfo;
+use ah_vfs::application::dto::MountFilter;
+use ah_vfs::application::error::MountRepositoryError;
+use ah_vfs::application::port::{DriverFuture, MountRepository, Storage};
+use ah_vfs::application::service::MountService;
+use ah_vfs::domain::namespace::{ChildMountPolicy, Mount, MountId, VirtualPath};
+use ah_vfs::domain::{DriverInstance, DriverKey, InstanceId};
+use ah_vfs::infrastructure::mount_repository::SqliteMountRepository;
 
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use std::{error::Error, path::Path, sync::Arc};
@@ -398,7 +393,7 @@ async fn mount_service_initializes_and_restores_using_real_sqlite() -> TestResul
             &mut catalog,
             common::managed(Arc::new(UnopenedDriver(
                 DriverInfo::builder()
-                    .capabilities(ah_vfs::domain::storage::StorageCapabilities::default())
+                    .capabilities(ah_vfs_storage::Capabilities::default())
                     .key(DriverKey::parse("builtin.local")?)
                     .name("Local test driver".into())
                     .version(semver::Version::new(0, 1, 0))

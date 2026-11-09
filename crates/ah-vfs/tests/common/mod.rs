@@ -1,11 +1,10 @@
 #![allow(dead_code)]
-use ah_vfs::{
-    application::{driver_info::DriverInfo, dto::*, port::*},
-    domain::{
-        DriverError, DriverInstance, DriverKey, InstanceId,
-        storage::{StorageError, StorageErrorKind},
-    },
-};
+use ah_vfs::application::driver_error::DriverError;
+use ah_vfs::application::driver_error::{LifecycleError, LifecycleFailure};
+use ah_vfs::application::driver_info::DriverInfo;
+use ah_vfs::application::dto::*;
+use ah_vfs::application::port::*;
+use ah_vfs::domain::{DriverInstance, DriverKey, InstanceId};
 use std::{
     collections::{BTreeMap, HashMap},
     future::pending,
@@ -68,13 +67,13 @@ pub fn register(
         std::task::Poll::Ready(result) => result,
         std::task::Poll::Pending => Err(
             ah_vfs::application::error::DriverCatalogError::Initialization(failure(
-                StorageErrorKind::UnsupportedOperation,
+                LifecycleFailure::Unsupported,
             )),
         ),
     }
 }
-fn failure(kind: StorageErrorKind) -> DriverError {
-    StorageError::with_source(kind, std::io::Error::other("backend-private-token")).into()
+fn failure(kind: LifecycleFailure) -> DriverError {
+    LifecycleError::with_source(kind, std::io::Error::other("backend-private-token")).into()
 }
 
 /// Host-owned records with isolated persistence fault injection.
@@ -82,7 +81,7 @@ fn failure(kind: StorageErrorKind) -> DriverError {
 pub struct Records {
     pub rows: Mutex<HashMap<DriverInstance, InstanceRecord>>,
     pub removals: AtomicUsize,
-    pub failure: Option<StorageErrorKind>,
+    pub failure: Option<LifecycleFailure>,
     pub suspend_remove: AtomicBool,
     pub uncertain_remove: AtomicBool,
 }
@@ -125,7 +124,7 @@ impl InstanceRecordRepository for Records {
             Ok(self
                 .rows
                 .lock()
-                .map_err(|_| failure(StorageErrorKind::Backend))?
+                .map_err(|_| failure(LifecycleFailure::Backend))?
                 .get(&reference)
                 .cloned())
         })
@@ -139,7 +138,7 @@ impl InstanceRecordRepository for Records {
             let rows = self
                 .rows
                 .lock()
-                .map_err(|_| failure(StorageErrorKind::Backend))?;
+                .map_err(|_| failure(LifecycleFailure::Backend))?;
             let mut records: Vec<_> = rows
                 .values()
                 .filter(|r| {
@@ -169,10 +168,10 @@ impl InstanceRecordRepository for Records {
     }
     fn insert(&self, record: InstanceRecord) -> DriverFuture<'_, ()> {
         Box::pin(async move {
-            if self.failure.is_none() || self.failure == Some(StorageErrorKind::OutcomeUnknown) {
+            if self.failure.is_none() || self.failure == Some(LifecycleFailure::Backend) {
                 self.rows
                     .lock()
-                    .map_err(|_| failure(StorageErrorKind::Backend))?
+                    .map_err(|_| failure(LifecycleFailure::Backend))?
                     .insert(record.instance().clone(), record);
             }
             if let Some(kind) = self.failure {
@@ -186,12 +185,12 @@ impl InstanceRecordRepository for Records {
             let mut rows = self
                 .rows
                 .lock()
-                .map_err(|_| failure(StorageErrorKind::Backend))?;
+                .map_err(|_| failure(LifecycleFailure::Backend))?;
             if rows
                 .get(record.instance())
                 .is_none_or(|old| old.revision() != revision)
             {
-                return Err(failure(StorageErrorKind::Conflict));
+                return Err(failure(LifecycleFailure::Conflict));
             }
             rows.insert(record.instance().clone(), record);
             Ok(())
@@ -204,13 +203,13 @@ impl InstanceRecordRepository for Records {
                 pending::<()>().await;
             }
             if self.uncertain_remove.load(Ordering::SeqCst) {
-                return Err(failure(StorageErrorKind::OutcomeUnknown));
+                return Err(failure(LifecycleFailure::Backend));
             }
-            if self.failure.is_none() || self.failure == Some(StorageErrorKind::OutcomeUnknown) {
+            if self.failure.is_none() || self.failure == Some(LifecycleFailure::Backend) {
                 let removed = self
                     .rows
                     .lock()
-                    .map_err(|_| failure(StorageErrorKind::Backend))?
+                    .map_err(|_| failure(LifecycleFailure::Backend))?
                     .remove(&reference)
                     .is_some();
                 if self.failure.is_none() {
@@ -221,7 +220,7 @@ impl InstanceRecordRepository for Records {
                     });
                 }
             }
-            Err(failure(self.failure.unwrap_or(StorageErrorKind::Backend)))
+            Err(failure(self.failure.unwrap_or(LifecycleFailure::Backend)))
         })
     }
 }

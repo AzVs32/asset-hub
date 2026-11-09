@@ -1,27 +1,24 @@
 use ah_vfs::application::mount_runtime::MountRuntime;
+use ah_vfs_storage::{ContractViolation, Failure, Operation, Rejection, StorageError};
 mod common;
 
-use ah_vfs::{
-    application::{
-        driver_catalog::DriverCatalog,
-        driver_info::DriverInfo,
-        dto::*,
-        error::EntryError,
-        port::{DriverFuture, Storage, StorageFileReader, StorageFileWriter, StorageFuture},
-        service::{EntryService, MountService},
-    },
-    domain::{
-        DriverInstance, DriverKey, InstanceId,
-        namespace::{ChildMountPolicy, VirtualPath},
-        storage::{
-            Entry, EntryKind, StorageCreateDirRequest, StorageDirPage, StorageDirQuery,
-            StorageError, StorageErrorKind, StorageMoveEntryRequest, StoragePath,
-            StorageReadFileRequest, StorageRemoveEntryRequest, StorageStatEntryRequest,
-            StorageWriteFileRequest,
-        },
-    },
-    infrastructure::mount_repository::SqliteMountRepository,
+use ah_vfs::application::driver_catalog::DriverCatalog;
+use ah_vfs::application::driver_info::DriverInfo;
+use ah_vfs::application::dto::*;
+use ah_vfs::application::error::EntryError;
+use ah_vfs::application::port::{
+    DriverFuture, Storage, StorageFileReader, StorageFileWriter, StorageFuture,
 };
+use ah_vfs::application::service::{EntryService, MountService};
+use ah_vfs::domain::namespace::{ChildMountPolicy, VirtualPath};
+use ah_vfs::domain::storage::{
+    StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageMoveEntryRequest,
+    StorageReadFileRequest, StorageRemoveEntryRequest, StorageStatEntryRequest,
+    StorageWriteFileRequest,
+};
+use ah_vfs::domain::{DriverInstance, DriverKey, InstanceId};
+use ah_vfs::infrastructure::mount_repository::SqliteMountRepository;
+use ah_vfs_storage::{Entry, EntryType, StoragePath};
 
 use std::{error::Error, num::NonZeroUsize, sync::Arc};
 
@@ -43,8 +40,14 @@ struct TestStorage {
     response: Response,
 }
 
-fn unsupported<T: Send + 'static>() -> StorageFuture<'static, T> {
-    Box::pin(async { Err(StorageError::new(StorageErrorKind::UnsupportedOperation)) })
+fn unsupported<T: Send + 'static>(operation: Operation) -> StorageFuture<'static, T> {
+    Box::pin(async move {
+        Err(StorageError::without_effects(
+            operation,
+            Failure::Rejected(Rejection::Unsupported),
+            None,
+        ))
+    })
 }
 
 impl common::Backend for TestDriver {
@@ -65,26 +68,34 @@ impl common::Backend for TestDriver {
     }
 }
 
+fn invalid_metadata(
+    operation: Operation,
+    cause: impl Error + Send + Sync + 'static,
+) -> StorageError {
+    StorageError::without_effects(
+        operation,
+        Failure::Contract(ContractViolation::InvalidResponse),
+        Some(Box::new(cause)),
+    )
+}
+
 impl Storage for TestStorage {
     fn chunk_size(&self) -> NonZeroUsize {
         NonZeroUsize::MIN
     }
     fn stat_entry(&self, request: StorageStatEntryRequest) -> StorageFuture<'_, Entry> {
         Box::pin(async move {
-            Ok(Entry {
-                kind: if request.path.is_root() {
-                    EntryKind::Dir
-                } else {
-                    EntryKind::File
-                },
-                path: request.path,
-                size: Some(if self.instance.as_str() == "leaf" {
+            let kind = if request.path.is_root() {
+                EntryType::Directory
+            } else {
+                EntryType::file(Some(if self.instance.as_str() == "leaf" {
                     42
                 } else {
                     7
-                }),
-                modified: None,
-            })
+                }))
+            };
+            Entry::new(request.path, kind, None)
+                .map_err(|cause| invalid_metadata(Operation::Stat, cause))
         })
     }
     fn list_entries(&self, query: StorageDirQuery) -> StorageFuture<'_, StorageDirPage> {
@@ -99,15 +110,16 @@ impl Storage for TestStorage {
                 entries: names
                     .into_iter()
                     .map(|name| {
-                        Ok(Entry {
-                            path: StoragePath::parse(name)?,
-                            kind: EntryKind::File,
-                            size: Some(1),
-                            modified: None,
-                        })
+                        let path = StoragePath::parse(name)
+                            .map_err(|cause| invalid_metadata(Operation::List, cause))?;
+                        Entry::new(path, EntryType::file(Some(1)), None)
+                            .map_err(|cause| invalid_metadata(Operation::List, cause))
                     })
                     .collect::<Result<_, StorageError>>()?,
-                next_after: next.map(str::to_owned),
+                next_after: next
+                    .map(ah_vfs_storage::EntryName::parse)
+                    .transpose()
+                    .map_err(|cause| invalid_metadata(Operation::List, cause))?,
             })
         })
     }
@@ -115,22 +127,22 @@ impl Storage for TestStorage {
         &self,
         _: StorageReadFileRequest,
     ) -> StorageFuture<'_, Box<dyn StorageFileReader>> {
-        unsupported()
+        unsupported(Operation::Read)
     }
     fn write_file(
         &self,
         _: StorageWriteFileRequest,
     ) -> StorageFuture<'_, Box<dyn StorageFileWriter>> {
-        unsupported()
+        unsupported(Operation::Write)
     }
     fn create_dir(&self, _: StorageCreateDirRequest) -> StorageFuture<'_, Entry> {
-        unsupported()
+        unsupported(Operation::CreateDirectory)
     }
     fn remove_entry(&self, _: StorageRemoveEntryRequest) -> StorageFuture<'_, ()> {
-        unsupported()
+        unsupported(Operation::Remove)
     }
     fn move_entry(&self, _: StorageMoveEntryRequest) -> StorageFuture<'_, Entry> {
-        unsupported()
+        unsupported(Operation::Rename)
     }
 }
 
@@ -142,10 +154,9 @@ async fn services(response: Response) -> TestResult<(EntryService, MountService)
         common::managed(Arc::new(TestDriver {
             info: DriverInfo::builder()
                 .capabilities(
-                    ah_vfs::domain::storage::StorageCapabilities::builder()
-                        .stat_entry(true)
-                        .list_entries(true)
-                        .build()?,
+                    ah_vfs_storage::Capabilities::default()
+                        .with_stat(true)
+                        .with_list(true),
                 )
                 .key(key.clone())
                 .name("Test".into())
@@ -186,13 +197,13 @@ async fn resolves_the_deepest_driver_instance_and_maps_metadata_to_virtual_paths
         .stat_entry(&VirtualPath::parse("/docs/inside")?)
         .await?;
     assert_eq!(entry.path.as_str(), "/docs/inside");
-    assert_eq!(entry.size, Some(42));
+    assert_eq!(entry.kind, EntryType::file(Some(42)));
     assert_eq!(
         files
             .stat_entry(&VirtualPath::parse("/docs-old")?)
             .await?
-            .size,
-        Some(7)
+            .kind,
+        EntryType::file(Some(7))
     );
     Ok(())
 }
@@ -263,13 +274,13 @@ async fn mount_points_and_synthetic_dirs_keep_distinct_namespace_behavior() -> T
     let ancestor = VirtualPath::parse("/docs")?;
     let root = files.stat_entry(&VirtualPath::root()).await?;
     assert_eq!(root.origin, EntryOrigin::MountPoint { enabled: true });
-    assert_eq!(root.size, Some(7));
+    assert_eq!(root.kind, EntryType::Directory);
     let synthetic = files.stat_entry(&ancestor).await?;
     assert_eq!(synthetic.origin, EntryOrigin::SyntheticDir);
-    assert_eq!(synthetic.kind, EntryKind::Dir);
+    assert_eq!(synthetic.kind, EntryType::Directory);
     let leaf = files.stat_entry(&nested).await?;
     assert_eq!(leaf.origin, EntryOrigin::MountPoint { enabled: true });
-    assert_eq!(leaf.size, Some(42));
+    assert_eq!(leaf.kind, EntryType::Directory);
 
     for path in [VirtualPath::root(), ancestor.clone(), nested.clone()] {
         let error = files
@@ -282,8 +293,8 @@ async fn mount_points_and_synthetic_dirs_keep_distinct_namespace_behavior() -> T
             .err()
             .ok_or("namespace dir is not a file")?;
         assert_eq!(
-            error.storage_error().ok_or("storage error")?.kind(),
-            StorageErrorKind::IsDir
+            error.storage_error().ok_or("storage error")?.failure(),
+            Failure::Rejected(Rejection::IsDirectory)
         );
         assert!(matches!(
             files.create_dir(CreateDirRequest { path: path.clone(), recursive: true }).await,

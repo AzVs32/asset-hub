@@ -1,25 +1,20 @@
 #![cfg(target_os = "linux")]
 use ah_vfs::application::mount_runtime::MountRuntime;
+use ah_vfs_storage::{Failure, Rejection};
 mod common;
 
 #[cfg(unix)]
-use ah_vfs::{
-    application::{
-        driver_catalog::DriverCatalog,
-        error::EntryError,
-        port::{Driver, Storage},
-        service::{EntryService, MountService},
-    },
-    domain::{
-        DriverError, DriverInstance, DriverKey, InstanceId,
-        namespace::VirtualPath,
-        storage::{
-            EntryPermissions, FileReadSupport, StorageErrorKind, StoragePath,
-            StorageStatEntryRequest, StorageWriteFileRequest, XattrName, XattrWriteMode,
-        },
-    },
-    infrastructure::mount_repository::SqliteMountRepository,
-};
+use ah_vfs::application::driver_catalog::DriverCatalog;
+use ah_vfs::application::driver_error::DriverError;
+use ah_vfs::application::error::EntryError;
+use ah_vfs::application::port::{Driver, Storage};
+use ah_vfs::application::service::{EntryService, MountService};
+use ah_vfs::domain::namespace::VirtualPath;
+use ah_vfs::domain::storage::{StorageStatEntryRequest, StorageWriteFileRequest};
+use ah_vfs::domain::{DriverInstance, DriverKey, InstanceId};
+use ah_vfs::infrastructure::mount_repository::SqliteMountRepository;
+use ah_vfs_storage::{Permissions, StoragePath, XattrName, XattrWriteMode};
+use ah_vfs_storage::{ReadSupport, RenameMode};
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use std::num::NonZeroUsize;
@@ -84,14 +79,14 @@ async fn service(f: &Fixture) -> Result<EntryService, Box<dyn Error>> {
 async fn instance_support_matches_driver_and_atomic_publication_is_honored() -> TestResult {
     let f = fixture().await?;
     let caps = f.driver.info().capabilities();
-    assert_eq!(caps.read_file(), FileReadSupport::Range);
+    assert_eq!(caps.read(), ReadSupport::Range);
     assert_eq!(
         caps.permissions().can_read(),
         f.storage.permissions().is_some()
     );
     assert_eq!(caps.xattrs().can_read(), f.storage.xattrs().is_some());
     assert_eq!(
-        caps.rename().no_replace,
+        caps.rename().supports(RenameMode::NoReplace),
         cfg!(any(target_os = "linux", target_os = "android"))
     );
     let mut request = StorageWriteFileRequest::new(path("new")?);
@@ -115,7 +110,7 @@ async fn io_and_opening_errors_keep_categories_and_original_sources() -> TestRes
         .await
         .err()
         .ok_or("expected missing entry")?;
-    assert_eq!(error.kind(), StorageErrorKind::NotFound);
+    assert_eq!(error.failure(), Failure::Rejected(Rejection::NotFound));
     assert!(
         error
             .source()
@@ -130,7 +125,7 @@ async fn io_and_opening_errors_keep_categories_and_original_sources() -> TestRes
         .err()
         .ok_or("expected closed pool failure")?;
     assert!(
-        matches!(&error, DriverError::Storage(error) if error.kind() == StorageErrorKind::Unavailable)
+        matches!(&error, DriverError::Lifecycle(error) if error.failure() == ah_vfs::application::driver_error::LifecycleFailure::Unavailable)
     );
     assert!(error.source().is_some());
     assert_eq!(
@@ -139,8 +134,8 @@ async fn io_and_opening_errors_keep_categories_and_original_sources() -> TestRes
                 path: path("file")?
             })
             .await?
-            .size,
-        Some(8)
+            .entry_type(),
+        ah_vfs_storage::EntryType::file(Some(8))
     );
     Ok(())
 }
@@ -156,7 +151,7 @@ async fn unavailable_root_is_normalized_before_returning_from_driver_open() -> T
         .err()
         .ok_or("expected missing root")?;
     assert!(
-        matches!(&error, DriverError::Storage(error) if error.kind() == StorageErrorKind::NotFound)
+        matches!(&error, DriverError::Lifecycle(error) if error.failure() == ah_vfs::application::driver_error::LifecycleFailure::Backend)
     );
     assert!(error.source().is_some());
     Ok(())
@@ -171,7 +166,7 @@ async fn permissions_round_trip_through_vfs_and_protect_mount_boundaries() -> Te
     for target in ["/file", "/dir"] {
         let target = VirtualPath::parse(target)?;
         entries
-            .set_permissions(&target, EntryPermissions::new(0o750)?)
+            .set_permissions(&target, Permissions::new(0o750)?)
             .await?;
         assert_eq!(entries.get_permissions(&target).await?.bits(), 0o750);
     }
@@ -181,7 +176,7 @@ async fn permissions_round_trip_through_vfs_and_protect_mount_boundaries() -> Te
     );
     assert!(matches!(
         entries
-            .set_permissions(&VirtualPath::root(), EntryPermissions::new(0o700)?)
+            .set_permissions(&VirtualPath::root(), Permissions::new(0o700)?)
             .await,
         Err(EntryError::MountBoundary(_))
     ));
@@ -208,7 +203,7 @@ async fn xattrs_support_binary_empty_and_bounded_values_with_atomic_existence_po
     if result.as_ref().err().is_some_and(|error| {
         error
             .storage_error()
-            .is_some_and(|error| error.kind() == StorageErrorKind::UnsupportedOperation)
+            .is_some_and(|error| error.failure() == Failure::Rejected(Rejection::Unsupported))
     }) {
         assert!(f.storage.xattrs().is_some());
         return Ok(());
@@ -219,13 +214,13 @@ async fn xattrs_support_binary_empty_and_bounded_values_with_atomic_existence_po
         [0, 255, 1, 0]
     );
     assert!(
-        matches!(entries.set_xattr(&target, name.clone(), vec![], XattrWriteMode::CreateNew).await, Err(error) if error.storage_error().is_some_and(|e| e.kind() == StorageErrorKind::AlreadyExists))
+        matches!(entries.set_xattr(&target, name.clone(), vec![], XattrWriteMode::CreateNew).await, Err(error) if error.storage_error().is_some_and(|e| e.failure() == Failure::Rejected(Rejection::AlreadyExists)))
     );
     assert!(
-        matches!(entries.get_xattr(&target, name.clone(), NonZeroUsize::MIN).await, Err(error) if error.storage_error().is_some_and(|e| e.kind() == StorageErrorKind::TooLarge))
+        matches!(entries.get_xattr(&target, name.clone(), NonZeroUsize::MIN).await, Err(error) if error.storage_error().is_some_and(|e| e.failure() == Failure::Rejected(Rejection::LimitExceeded)))
     );
     assert!(
-        matches!(entries.list_xattrs(&target, NonZeroUsize::MIN).await, Err(error) if error.storage_error().is_some_and(|e| e.kind() == StorageErrorKind::TooLarge))
+        matches!(entries.list_xattrs(&target, NonZeroUsize::MIN).await, Err(error) if error.storage_error().is_some_and(|e| e.failure() == Failure::Rejected(Rejection::LimitExceeded)))
     );
     let names = entries.list_xattrs(&target, limit).await?;
     assert!(names.contains(&name));
@@ -245,13 +240,13 @@ async fn xattrs_support_binary_empty_and_bounded_values_with_atomic_existence_po
     );
     entries.remove_xattr(&target, name.clone()).await?;
     assert!(
-        matches!(entries.get_xattr(&target, name.clone(), limit).await, Err(error) if error.storage_error().is_some_and(|e| e.kind() == StorageErrorKind::AttributeNotFound))
+        matches!(entries.get_xattr(&target, name.clone(), limit).await, Err(error) if error.storage_error().is_some_and(|e| e.failure() == Failure::Rejected(Rejection::AttributeNotFound)))
     );
     assert!(
-        matches!(entries.set_xattr(&target, name.clone(), vec![1], XattrWriteMode::Replace).await, Err(error) if error.storage_error().is_some_and(|e| e.kind() == StorageErrorKind::AttributeNotFound))
+        matches!(entries.set_xattr(&target, name.clone(), vec![1], XattrWriteMode::Replace).await, Err(error) if error.storage_error().is_some_and(|e| e.failure() == Failure::Rejected(Rejection::AttributeNotFound)))
     );
     assert!(
-        matches!(entries.remove_xattr(&target, name.clone()).await, Err(error) if error.storage_error().is_some_and(|e| e.kind() == StorageErrorKind::AttributeNotFound))
+        matches!(entries.remove_xattr(&target, name.clone()).await, Err(error) if error.storage_error().is_some_and(|e| e.failure() == Failure::Rejected(Rejection::AttributeNotFound)))
     );
     let dir = VirtualPath::parse("/dir")?;
     entries
@@ -286,7 +281,7 @@ async fn attribute_access_never_follows_file_or_parent_symlinks() -> TestResult 
         assert!(permissions.get_permissions(path(name)?).await.is_err());
         assert!(
             permissions
-                .set_permissions(path(name)?, EntryPermissions::new(0o700)?)
+                .set_permissions(path(name)?, Permissions::new(0o700)?)
                 .await
                 .is_err()
         );

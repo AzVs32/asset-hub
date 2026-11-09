@@ -1,16 +1,14 @@
 //! Native server dispatch with stream-owned, bounded Storage resources.
-use ah_vfs::{
-    application::port::*,
-    domain::{
-        DriverError, InstanceId,
-        storage::{
-            EntryPermissions, StorageCreateDirRequest, StorageDirQuery, StorageError,
-            StorageErrorKind, StorageMoveEntryRequest, StoragePath, StorageReadFileRequest,
-            StorageRemoveEntryRequest, StorageStatEntryRequest, StorageWriteFileMode,
-            StorageWriteFileRequest, XattrName, XattrWriteMode,
-        },
-    },
+use ah_vfs::application::driver_error::{DriverError, LifecycleError, LifecycleFailure};
+use ah_vfs::application::port::*;
+use ah_vfs::domain::InstanceId;
+use ah_vfs::domain::storage::{
+    StorageCreateDirRequest, StorageDirQuery, StorageMoveEntryRequest, StorageReadFileRequest,
+    StorageRemoveEntryRequest, StorageStatEntryRequest, StorageWriteFileRequest,
 };
+use ah_vfs_storage::WriteMode;
+use ah_vfs_storage::{BackendFailure, Failure, Operation, Rejection, StorageError};
+use ah_vfs_storage::{Permissions, StoragePath, XattrName, XattrWriteMode};
 use futures_util::FutureExt;
 use std::{
     collections::HashMap,
@@ -49,43 +47,62 @@ impl Resources {
             None
         }
     }
-    fn allocate(&mut self) -> Result<u64, DriverError> {
+    fn allocate(&mut self, operation: Operation) -> Result<u64, DriverError> {
         if usize::from(self.storage.is_some()) + self.readers.len() + self.writers.len()
             >= p::MAX_RESOURCES
         {
-            return Err(StorageError::new(StorageErrorKind::CapacityExceeded).into());
+            return Err(StorageError::without_effects(
+                operation,
+                Failure::Backend(BackendFailure::CapacityExceeded),
+                None,
+            )
+            .into());
         }
-        self.next = self
-            .next
-            .checked_add(1)
-            .ok_or_else(|| StorageError::new(StorageErrorKind::CapacityExceeded))?;
+        self.next = self.next.checked_add(1).ok_or_else(|| {
+            StorageError::without_effects(
+                operation,
+                Failure::Backend(BackendFailure::CapacityExceeded),
+                None,
+            )
+        })?;
         Ok(self.next)
     }
 }
-fn missing() -> DriverError {
-    StorageError::new(StorageErrorKind::SessionClosed).into()
+fn missing(operation: Operation) -> DriverError {
+    StorageError::without_effects(operation, Failure::Backend(BackendFailure::Closed), None).into()
 }
 fn path(s: &str) -> Result<StoragePath, DriverError> {
-    StoragePath::parse(s).map_err(|e| StorageError::from(e).into())
+    StoragePath::parse(s).map_err(|cause| {
+        LifecycleError::with_source(LifecycleFailure::InvalidRequest, cause).into()
+    })
 }
 // Attribute validation errors acquire request semantics only at this boundary.
-fn permissions(mode: u32) -> Result<EntryPermissions, DriverError> {
-    EntryPermissions::new(mode).map_err(|error| StorageError::from(error).into())
+fn permissions(mode: u32) -> Result<Permissions, DriverError> {
+    Permissions::new(mode).map_err(|error| {
+        LifecycleError::with_source(LifecycleFailure::InvalidRequest, error).into()
+    })
 }
 fn xattr_name(name: &str) -> Result<XattrName, DriverError> {
-    XattrName::parse(name).map_err(|error| StorageError::from(error).into())
+    XattrName::parse(name).map_err(|error| {
+        LifecycleError::with_source(LifecycleFailure::InvalidRequest, error).into()
+    })
 }
 fn id(s: &str) -> Result<InstanceId, DriverError> {
-    InstanceId::parse(s)
-        .map_err(|error| StorageError::with_source(StorageErrorKind::InvalidRequest, error).into())
+    InstanceId::parse(s).map_err(|error| {
+        LifecycleError::with_source(LifecycleFailure::InvalidRequest, error).into()
+    })
 }
 fn unsupported() -> DriverError {
-    StorageError::new(StorageErrorKind::UnsupportedOperation).into()
+    LifecycleError::new(LifecycleFailure::Unsupported).into()
 }
-fn get<T: Clone>(map: &HashMap<u64, Slot<T>>, handle: u64) -> Result<T, DriverError> {
+fn get<T: Clone>(
+    operation: Operation,
+    map: &HashMap<u64, Slot<T>>,
+    handle: u64,
+) -> Result<T, DriverError> {
     map.get(&handle)
         .map(|slot| slot.value.clone())
-        .ok_or_else(missing)
+        .ok_or_else(|| missing(operation))
 }
 /// Constructs a fresh backend after a panic; never return the failed driver again.
 pub type DriverFactory = dyn Fn() -> DriverFuture<'static, Arc<dyn Driver>> + Send + Sync;
@@ -139,7 +156,7 @@ impl Dispatcher {
         let _recovery = self.recovery.lock().await;
         self.running()?;
         if Arc::ptr_eq(&driver, &self.snapshot().driver) {
-            return Err(StorageError::new(StorageErrorKind::Conflict).into());
+            return Err(LifecycleError::new(LifecycleFailure::Conflict).into());
         }
         self.publish(Arc::new(Generation::new(driver)?));
         Ok(())
@@ -154,7 +171,7 @@ impl Dispatcher {
     }
     fn running(&self) -> Result<(), DriverError> {
         if self.stopped.load(Ordering::Acquire) {
-            Err(StorageError::new(StorageErrorKind::Unavailable).into())
+            Err(LifecycleError::new(LifecycleFailure::Unavailable).into())
         } else {
             Ok(())
         }
@@ -185,13 +202,13 @@ impl Dispatcher {
                 let replacement = AssertUnwindSafe(async {
                     let driver = factory().await?;
                     if Arc::ptr_eq(&driver, &current.driver) {
-                        return Err(StorageError::new(StorageErrorKind::Conflict).into());
+                        return Err(LifecycleError::new(LifecycleFailure::Conflict).into());
                     }
                     Generation::new(driver)
                 })
                 .catch_unwind()
                 .await
-                .map_err(|_| StorageError::new(StorageErrorKind::Unavailable))??;
+                .map_err(|_| LifecycleError::new(LifecycleFailure::Unavailable))??;
                 current = Arc::new(replacement);
                 self.publish(current.clone());
             }
@@ -223,9 +240,8 @@ impl Generation {
     fn new(driver: Arc<dyn Driver>) -> Result<Self, DriverError> {
         let generation = InstanceId::generate().as_str().to_owned();
         let description = c::describe(driver.as_ref(), generation);
-        p::negotiate(&description, &[]).map_err(|source| {
-            StorageError::with_source(StorageErrorKind::UnsupportedOperation, source)
-        })?;
+        p::negotiate(&description, &[])
+            .map_err(|source| LifecycleError::with_source(LifecycleFailure::Unsupported, source))?;
         c::driver_info(&description)?;
         let (retired, _) = watch::channel(false);
         Ok(Self {
@@ -243,7 +259,7 @@ impl Generation {
     }
     fn reserve(&self) -> Result<OwnedSemaphorePermit, DriverError> {
         self.capacity.clone().try_acquire_owned().map_err(|source| {
-            StorageError::with_source(StorageErrorKind::CapacityExceeded, source).into()
+            LifecycleError::with_source(LifecycleFailure::CapacityExceeded, source).into()
         })
     }
     pub fn generation(&self) -> &str {
@@ -259,9 +275,9 @@ impl Generation {
         data: Vec<u8>,
     ) -> Result<p::Reply, DriverError> {
         if self.poisoned.load(Ordering::Acquire) {
-            return Err(StorageError::new(StorageErrorKind::StaleHandle).into());
+            return Err(LifecycleError::new(LifecycleFailure::Stale).into());
         }
-        let mutates = op.mutates();
+        let request_context = op.clone();
         // An unwinding backend must not reset the RPC stream and masquerade as
         // caller cancellation. Never expose its panic payload or replay a write.
         AssertUnwindSafe(self.call_inner(generation, op, data))
@@ -271,11 +287,12 @@ impl Generation {
                 // Retained handles must never resume against possibly corrupted
                 // backend state. Retiring the generation closes its active streams.
                 self.retire();
-                Err(StorageError::new(if mutates {
-                    StorageErrorKind::OutcomeUnknown
-                } else {
-                    StorageErrorKind::Unavailable
-                })
+                Err(c::call_error(
+                    &request_context,
+                    Failure::Backend(BackendFailure::Unavailable),
+                    true,
+                    None,
+                )
                 .into())
             })
     }
@@ -286,7 +303,7 @@ impl Generation {
         data: Vec<u8>,
     ) -> Result<p::Reply, DriverError> {
         if data.len() > p::MAX_DATA_BYTES {
-            return Err(StorageError::new(StorageErrorKind::TooLarge).into());
+            return Err(LifecycleError::new(LifecycleFailure::CapacityExceeded).into());
         }
         if matches!(op, Op::Describe(p::Empty {})) {
             return Ok(p::Reply::new(Value::Description(
@@ -294,10 +311,10 @@ impl Generation {
             )));
         }
         if generation != self.generation() {
-            return Err(StorageError::new(StorageErrorKind::StaleHandle).into());
+            return Err(LifecycleError::new(LifecycleFailure::Stale).into());
         }
         if !data.is_empty() {
-            return Err(StorageError::new(StorageErrorKind::InvalidRequest).into());
+            return Err(LifecycleError::new(LifecycleFailure::InvalidRequest).into());
         }
         if let Op::Initialize(p::Initialize {
             settings: Some(settings),
@@ -308,7 +325,7 @@ impl Generation {
                 return if previous == &settings {
                     Ok(p::Reply::unit())
                 } else {
-                    Err(StorageError::new(StorageErrorKind::Conflict).into())
+                    Err(LifecycleError::new(LifecycleFailure::Conflict).into())
                 };
             }
             let mut guard = InitializationGuard {
@@ -325,7 +342,7 @@ impl Generation {
             return Ok(p::Reply::unit());
         }
         if self.initialized.lock().await.is_none() {
-            return Err(StorageError::new(StorageErrorKind::Unavailable).into());
+            return Err(LifecycleError::new(LifecycleFailure::Unavailable).into());
         }
         let value = match op {
             Op::Prepare(p::Config {
@@ -370,15 +387,15 @@ impl Generation {
         open: p::Open,
     ) -> Result<Session, DriverError> {
         if generation != self.generation() || self.poisoned.load(Ordering::Acquire) {
-            return Err(StorageError::new(StorageErrorKind::StaleHandle).into());
+            return Err(LifecycleError::new(LifecycleFailure::Stale).into());
         }
         if self.initialized.lock().await.is_none() {
-            return Err(StorageError::new(StorageErrorKind::Unavailable).into());
+            return Err(LifecycleError::new(LifecycleFailure::Unavailable).into());
         }
         let p::Open { id: raw, config } = open;
         AssertUnwindSafe(async {
             let config =
-                config.ok_or_else(|| StorageError::new(StorageErrorKind::InvalidRequest))?;
+                config.ok_or_else(|| LifecycleError::new(LifecycleFailure::InvalidRequest))?;
             let context = OpenContext::new(id(&raw)?, c::request_object(Some(config))?.into());
             let capacity = self.reserve()?;
             let storage = self.driver.open(context).await?;
@@ -406,7 +423,7 @@ impl Generation {
         .await
         .unwrap_or_else(|_| {
             self.retire();
-            Err(StorageError::new(StorageErrorKind::Unavailable).into())
+            Err(LifecycleError::new(LifecycleFailure::Unavailable).into())
         })
     }
 }
@@ -427,9 +444,13 @@ impl Session {
     pub fn retired(&self) -> watch::Receiver<bool> {
         self.generation.retired.subscribe()
     }
-    async fn storage(&self, handle: u64) -> Result<Arc<dyn Storage>, DriverError> {
+    async fn storage(
+        &self,
+        operation: Operation,
+        handle: u64,
+    ) -> Result<Arc<dyn Storage>, DriverError> {
         if handle != 1 {
-            return Err(missing());
+            return Err(missing(operation));
         }
         self.resources
             .lock()
@@ -437,23 +458,29 @@ impl Session {
             .storage
             .as_ref()
             .map(|slot| slot.value.clone())
-            .ok_or_else(missing)
+            .ok_or_else(|| missing(operation))
     }
     pub async fn call(&self, op: Op, data: Vec<u8>) -> Result<p::Reply, DriverError> {
         if self.generation.poisoned.load(Ordering::Acquire) {
-            return Err(StorageError::new(StorageErrorKind::StaleHandle).into());
+            return Err(c::call_error(
+                &op,
+                Failure::Backend(BackendFailure::Stale),
+                false,
+                None,
+            ));
         }
-        let mutates = op.mutates();
+        let request_context = op.clone();
         AssertUnwindSafe(self.call_inner(op, data))
             .catch_unwind()
             .await
             .unwrap_or_else(|_| {
                 self.generation.retire();
-                Err(StorageError::new(if mutates {
-                    StorageErrorKind::OutcomeUnknown
-                } else {
-                    StorageErrorKind::Unavailable
-                })
+                Err(c::call_error(
+                    &request_context,
+                    Failure::Backend(BackendFailure::Unavailable),
+                    true,
+                    None,
+                )
                 .into())
             })
     }
@@ -464,7 +491,11 @@ impl Session {
                 operation: Some(request),
             }) => {
                 return self
-                    .storage_op(self.storage(handle).await?, request, data)
+                    .storage_op(
+                        self.storage(request.storage_operation(), handle).await?,
+                        request,
+                        data,
+                    )
                     .await;
             }
             Op::Read(p::Read {
@@ -473,9 +504,15 @@ impl Session {
                 offset,
                 length,
             }) => {
-                let capacity = self.generation.reserve()?;
+                let capacity = self.generation.reserve().map_err(|source| {
+                    StorageError::without_effects(
+                        Operation::Read,
+                        Failure::Backend(BackendFailure::CapacityExceeded),
+                        Some(Box::new(source)),
+                    )
+                })?;
                 let reader = self
-                    .storage(handle)
+                    .storage(Operation::Read, handle)
                     .await?
                     .read_file(StorageReadFileRequest {
                         path: path(&raw)?,
@@ -484,7 +521,7 @@ impl Session {
                     })
                     .await?;
                 let mut resources = self.resources.lock().await;
-                let handle = resources.allocate()?;
+                let handle = resources.allocate(Operation::Read)?;
                 resources.readers.insert(
                     handle,
                     Slot {
@@ -500,22 +537,28 @@ impl Session {
                 replace,
                 atomic,
             }) => {
-                let capacity = self.generation.reserve()?;
+                let capacity = self.generation.reserve().map_err(|source| {
+                    StorageError::without_effects(
+                        Operation::Write,
+                        Failure::Backend(BackendFailure::CapacityExceeded),
+                        Some(Box::new(source)),
+                    )
+                })?;
                 let writer = self
-                    .storage(handle)
+                    .storage(Operation::Write, handle)
                     .await?
                     .write_file(StorageWriteFileRequest {
                         path: path(&raw)?,
                         mode: if replace {
-                            StorageWriteFileMode::Replace
+                            WriteMode::Replace
                         } else {
-                            StorageWriteFileMode::CreateNew
+                            WriteMode::CreateNew
                         },
                         require_atomic_publish: atomic,
                     })
                     .await?;
                 let mut resources = self.resources.lock().await;
-                let handle = resources.allocate()?;
+                let handle = resources.allocate(Operation::Write)?;
                 resources.writers.insert(
                     handle,
                     Slot {
@@ -526,7 +569,11 @@ impl Session {
                 Value::Writer(p::Handle { handle })
             }
             Op::ReaderNext(p::Handle { handle }) => {
-                let reader = get(&self.resources.lock().await.readers, handle)?;
+                let reader = get(
+                    Operation::Read,
+                    &self.resources.lock().await.readers,
+                    handle,
+                )?;
                 let result = reader.lock().await.next_chunk().await;
                 match result {
                     Ok(Some(data)) if !data.is_empty() && data.len() <= p::MAX_DATA_BYTES => {
@@ -541,7 +588,7 @@ impl Session {
                     }
                     Ok(_) => {
                         self.resources.lock().await.readers.remove(&handle);
-                        return Err(c::protocol_violation());
+                        return Err(c::storage_protocol_violation(Operation::Read).into());
                     }
                     Err(error) => {
                         self.resources.lock().await.readers.remove(&handle);
@@ -550,7 +597,11 @@ impl Session {
                 }
             }
             Op::WriterChunk(p::Handle { handle }) => {
-                let writer = get(&self.resources.lock().await.writers, handle)?;
+                let writer = get(
+                    Operation::Write,
+                    &self.resources.lock().await.writers,
+                    handle,
+                )?;
                 writer.lock().await.write_chunk(&data).await?;
                 Value::Unit(p::Empty {})
             }
@@ -561,9 +612,9 @@ impl Session {
                     .await
                     .writers
                     .remove(&handle)
-                    .ok_or_else(missing)?;
+                    .ok_or_else(|| missing(Operation::Write))?;
                 let entry = writer.value.lock().await.commit().await?;
-                Value::Entry(c::entry(entry)?)
+                Value::Entry(c::entry(Operation::Write, entry)?)
             }
             Op::Abort(p::Handle { handle }) => {
                 let writer = self
@@ -572,7 +623,7 @@ impl Session {
                     .await
                     .writers
                     .remove(&handle)
-                    .ok_or_else(missing)?;
+                    .ok_or_else(|| missing(Operation::Write))?;
                 writer.value.lock().await.abort().await?;
                 Value::Unit(p::Empty {})
             }
@@ -582,10 +633,10 @@ impl Session {
                     .kind(handle)
                     .is_some_and(|actual| actual as i32 != kind)
                 {
-                    return Err(StorageError::new(StorageErrorKind::InvalidRequest).into());
+                    return Err(LifecycleError::new(LifecycleFailure::InvalidRequest).into());
                 }
                 match p::ResourceKind::try_from(kind).map_err(|source| {
-                    StorageError::with_source(StorageErrorKind::InvalidRequest, source)
+                    LifecycleError::with_source(LifecycleFailure::InvalidRequest, source)
                 })? {
                     p::ResourceKind::Storage => {
                         if handle == 1 {
@@ -598,11 +649,11 @@ impl Session {
                     p::ResourceKind::Writer => {
                         resources.writers.remove(&handle);
                     }
-                    _ => return Err(StorageError::new(StorageErrorKind::InvalidRequest).into()),
+                    _ => return Err(LifecycleError::new(LifecycleFailure::InvalidRequest).into()),
                 }
                 Value::Unit(p::Empty {})
             }
-            _ => return Err(StorageError::new(StorageErrorKind::InvalidRequest).into()),
+            _ => return Err(LifecycleError::new(LifecycleFailure::InvalidRequest).into()),
         };
         Ok(p::Reply::new(value))
     }
@@ -612,8 +663,10 @@ impl Session {
         op: p::StorageOp,
         data: Vec<u8>,
     ) -> Result<p::Reply, DriverError> {
+        let operation = op.storage_operation();
         let value = match op {
             p::StorageOp::Stat(p::Path { path: raw }) => Value::Entry(c::entry(
+                operation,
                 s.stat_entry(StorageStatEntryRequest { path: path(&raw)? })
                     .await?,
             )?),
@@ -624,7 +677,13 @@ impl Session {
             }) => {
                 let q = StorageDirQuery {
                     path: path(&raw)?,
-                    after,
+                    after: after
+                        .as_deref()
+                        .map(ah_vfs_storage::EntryName::parse)
+                        .transpose()
+                        .map_err(|cause| {
+                            LifecycleError::with_source(LifecycleFailure::InvalidRequest, cause)
+                        })?,
                     limit: c::limit(limit)?,
                 };
                 q.validate()?;
@@ -633,15 +692,16 @@ impl Session {
                     entries: page
                         .entries
                         .into_iter()
-                        .map(c::entry)
+                        .map(|entry| c::entry(operation, entry))
                         .collect::<Result<_, _>>()?,
-                    next_after: page.next_after,
+                    next_after: page.next_after.map(|name| name.as_str().into()),
                 })
             }
             p::StorageOp::CreateDir(p::CreateDir {
                 path: raw,
                 recursive,
             }) => Value::Entry(c::entry(
+                operation,
                 s.create_dir(StorageCreateDirRequest {
                     path: path(&raw)?,
                     recursive,
@@ -658,6 +718,7 @@ impl Session {
                 destination,
                 replace,
             }) => Value::Entry(c::entry(
+                operation,
                 s.move_entry(StorageMoveEntryRequest {
                     source: path(&source)?,
                     destination: path(&destination)?,
@@ -669,7 +730,13 @@ impl Session {
                 Value::Permissions(p::Permissions {
                     mode: s
                         .permissions()
-                        .ok_or_else(unsupported)?
+                        .ok_or_else(|| {
+                            StorageError::without_effects(
+                                operation,
+                                Failure::Rejected(Rejection::Unsupported),
+                                None,
+                            )
+                        })?
                         .get_permissions(path(&raw)?)
                         .await?
                         .bits(),
@@ -677,7 +744,13 @@ impl Session {
             }
             p::StorageOp::SetPermissions(p::SetPermissions { path: raw, mode }) => {
                 s.permissions()
-                    .ok_or_else(unsupported)?
+                    .ok_or_else(|| {
+                        StorageError::without_effects(
+                            operation,
+                            Failure::Rejected(Rejection::Unsupported),
+                            None,
+                        )
+                    })?
                     .set_permissions(path(&raw)?, permissions(mode)?)
                     .await?;
                 Value::Unit(p::Empty {})
@@ -688,7 +761,13 @@ impl Session {
             }) => Value::Names(p::Names {
                 names: s
                     .xattrs()
-                    .ok_or_else(unsupported)?
+                    .ok_or_else(|| {
+                        StorageError::without_effects(
+                            operation,
+                            Failure::Rejected(Rejection::Unsupported),
+                            None,
+                        )
+                    })?
                     .list_xattrs(path(&raw)?, c::limit(max_bytes)?)
                     .await?
                     .into_iter()
@@ -704,7 +783,13 @@ impl Session {
                     result: Some(Value::Bytes(p::Empty {})),
                     data: s
                         .xattrs()
-                        .ok_or_else(unsupported)?
+                        .ok_or_else(|| {
+                            StorageError::without_effects(
+                                operation,
+                                Failure::Rejected(Rejection::Unsupported),
+                                None,
+                            )
+                        })?
                         .get_xattr(path(&raw)?, xattr_name(&name)?, c::limit(max_bytes)?)
                         .await?,
                 });
@@ -718,17 +803,29 @@ impl Session {
                     Ok(p::XattrWriteMode::Upsert) => XattrWriteMode::Upsert,
                     Ok(p::XattrWriteMode::CreateNew) => XattrWriteMode::CreateNew,
                     Ok(p::XattrWriteMode::Replace) => XattrWriteMode::Replace,
-                    _ => return Err(StorageError::new(StorageErrorKind::InvalidRequest).into()),
+                    _ => return Err(LifecycleError::new(LifecycleFailure::InvalidRequest).into()),
                 };
                 s.xattrs()
-                    .ok_or_else(unsupported)?
+                    .ok_or_else(|| {
+                        StorageError::without_effects(
+                            operation,
+                            Failure::Rejected(Rejection::Unsupported),
+                            None,
+                        )
+                    })?
                     .set_xattr(path(&raw)?, xattr_name(&name)?, data, mode)
                     .await?;
                 Value::Unit(p::Empty {})
             }
             p::StorageOp::RemoveXattr(p::RemoveXattr { path: raw, name }) => {
                 s.xattrs()
-                    .ok_or_else(unsupported)?
+                    .ok_or_else(|| {
+                        StorageError::without_effects(
+                            operation,
+                            Failure::Rejected(Rejection::Unsupported),
+                            None,
+                        )
+                    })?
                     .remove_xattr(path(&raw)?, xattr_name(&name)?)
                     .await?;
                 Value::Unit(p::Empty {})
@@ -741,14 +838,14 @@ impl Session {
 #[cfg(test)]
 mod attribute_validation_tests {
     use super::*;
-    use ah_vfs::domain::storage::{EntryPermissionsError, XattrNameError};
+    use ah_vfs_storage::{PermissionsError, XattrNameError};
     use std::error::Error;
 
     #[test]
     fn request_ids_keep_the_value_validation_cause() -> Result<(), Box<dyn Error>> {
         let error = id("bad id").err().ok_or("invalid ID accepted")?;
-        let storage = error.storage_error().ok_or("storage category")?;
-        assert_eq!(storage.kind(), StorageErrorKind::InvalidRequest);
+        let storage = error.lifecycle_error().ok_or("storage category")?;
+        assert_eq!(storage.failure(), LifecycleFailure::InvalidRequest);
         assert!(
             storage
                 .source()
@@ -763,13 +860,13 @@ mod attribute_validation_tests {
         let error = permissions(0o100644)
             .err()
             .ok_or("accepted entry type bits")?;
-        let storage = error.storage_error().ok_or("missing storage category")?;
-        assert_eq!(storage.kind(), StorageErrorKind::InvalidRequest);
+        let storage = error.lifecycle_error().ok_or("missing storage category")?;
+        assert_eq!(storage.failure(), LifecycleFailure::InvalidRequest);
         assert_eq!(
             storage
                 .source()
-                .and_then(|e| e.downcast_ref::<EntryPermissionsError>()),
-            Some(&EntryPermissionsError::InvalidBits)
+                .and_then(|e| e.downcast_ref::<PermissionsError>()),
+            Some(&PermissionsError::InvalidBits)
         );
         assert_eq!(permissions(0o7640)?.bits(), 0o7640);
         Ok(())
@@ -779,12 +876,15 @@ mod attribute_validation_tests {
     fn request_xattr_names_keep_each_validation_cause() -> Result<(), Box<dyn Error>> {
         for (name, expected) in [
             (String::new(), XattrNameError::Empty),
-            ("a".repeat(XattrName::MAX_LEN + 1), XattrNameError::TooLong),
-            ("user.\0name".to_owned(), XattrNameError::InvalidCharacter),
+            (
+                "a".repeat(XattrName::MAX_BYTES + 1),
+                XattrNameError::TooLong,
+            ),
+            ("user.\0name".to_owned(), XattrNameError::Nul),
         ] {
             let error = xattr_name(&name).err().ok_or("accepted invalid name")?;
-            let storage = error.storage_error().ok_or("missing storage category")?;
-            assert_eq!(storage.kind(), StorageErrorKind::InvalidRequest);
+            let storage = error.lifecycle_error().ok_or("missing storage category")?;
+            assert_eq!(storage.failure(), LifecycleFailure::InvalidRequest);
             assert_eq!(
                 storage
                     .source()

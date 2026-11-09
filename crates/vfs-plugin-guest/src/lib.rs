@@ -6,7 +6,8 @@ pub mod wasi_http;
 
 pub mod api {
     use super::*;
-    pub type Failure = p::Failure;
+    pub use crate::error::Failure;
+    pub use crate::error_context::ErrorContext;
     pub type Result<T> = std::result::Result<T, Failure>;
     pub trait Guest {
         fn describe() -> p::Description;
@@ -89,7 +90,7 @@ impl<D: api::Guest> Dispatcher<D> {
         }
     }
     pub fn call(&mut self, bytes: &[u8]) -> Vec<u8> {
-        let mut mutates = false;
+        let mut context = api::ErrorContext::lifecycle();
         let mut allocates = false;
         let result = p::decode_request(bytes)
             .map_err(|error| {
@@ -100,8 +101,12 @@ impl<D: api::Guest> Dispatcher<D> {
                     }
                 })
             })
+            .map_err(api::Failure::from)
             .and_then(|(generation, operation, data)| {
-                mutates = operation.mutates();
+                context = api::ErrorContext::for_request(&operation);
+                if operation.may_publish() {
+                    context.dispatched();
+                }
                 allocates = matches!(operation, Op::Open(_) | Op::Read(_) | Op::Write(_));
                 self.execute(&generation, operation, data)
             });
@@ -121,22 +126,22 @@ impl<D: api::Guest> Dispatcher<D> {
         } else {
             None
         };
-        p::encode_reply(result).unwrap_or_else(|_| {
+        p::encode_reply(result.map_err(p::Failure::from)).unwrap_or_else(|_| {
             if let Some(handle) = allocated {
                 self.resources.remove(&handle);
             }
-            // Failure to encode a mutation's result cannot establish rollback.
-            let code = if mutates {
-                p::wire::FailureCode::OutcomeUnknown
-            } else {
-                p::wire::FailureCode::ProtocolViolation
-            };
-            p::encode_status(code)
+            let error = context.failure(ah_vfs_storage::Failure::Contract(
+                ah_vfs_storage::ContractViolation::InvalidResponse,
+            ));
+            p::encode_reply(Err(error.into()))
+                .unwrap_or_else(|_| p::encode_status(p::FailureCode::ProtocolViolation))
         })
     }
-    fn capacity(&self) -> api::Result<()> {
+    fn capacity(&self, context: &api::ErrorContext) -> api::Result<()> {
         if self.resources.len() >= p::MAX_RESOURCES || self.next == u64::MAX {
-            Err(p::Failure::new(p::FailureCode::CapacityExceeded))
+            Err(context.failure(ah_vfs_storage::Failure::Backend(
+                ah_vfs_storage::BackendFailure::CapacityExceeded,
+            )))
         } else {
             Ok(())
         }
@@ -146,25 +151,36 @@ impl<D: api::Guest> Dispatcher<D> {
         self.resources.insert(self.next, resource);
         self.next
     }
-    fn storage(&self, handle: u64) -> api::Result<&dyn api::GuestStorage> {
+    fn storage(
+        &self,
+        context: &api::ErrorContext,
+        handle: u64,
+    ) -> api::Result<&dyn api::GuestStorage> {
         match self.resources.get(&handle) {
             Some(Resource::Storage(storage)) => Ok(storage.0.as_ref()),
-            Some(_) => Err(p::Failure::new(p::FailureCode::InvalidRequest)),
-            None => Err(p::Failure::new(p::FailureCode::SessionClosed)),
+            Some(_) => Err(p::Failure::new(p::FailureCode::InvalidRequest).into()),
+            None => Err(context.failure(ah_vfs_storage::Failure::Backend(
+                ah_vfs_storage::BackendFailure::Closed,
+            ))),
         }
     }
     fn execute(&mut self, generation: &str, operation: Op, data: Vec<u8>) -> api::Result<p::Reply> {
+        let context = api::ErrorContext::for_request(&operation);
         if generation.is_empty() {
-            return Err(p::Failure::new(p::FailureCode::InvalidRequest));
+            return Err(p::Failure::new(p::FailureCode::InvalidRequest).into());
         }
         if let Some(expected) = &self.generation {
             if expected != generation {
-                return Err(p::Failure::new(p::FailureCode::StaleHandle));
+                return Err(context.failure(ah_vfs_storage::Failure::Backend(
+                    ah_vfs_storage::BackendFailure::Stale,
+                )));
             }
         } else if matches!(operation, Op::Describe(p::Empty {})) {
             self.generation = Some(generation.into());
         } else {
-            return Err(p::Failure::new(p::FailureCode::Unavailable));
+            return Err(context.failure(ah_vfs_storage::Failure::Backend(
+                ah_vfs_storage::BackendFailure::Unavailable,
+            )));
         }
         let value = match operation {
             Op::Describe(p::Empty {}) => {
@@ -177,7 +193,9 @@ impl<D: api::Guest> Dispatcher<D> {
             }) => {
                 if let Some(previous) = &self.settings {
                     if previous != &settings {
-                        return Err(p::Failure::new(p::FailureCode::Conflict));
+                        return Err(context.failure(ah_vfs_storage::Failure::Rejected(
+                            ah_vfs_storage::Rejection::Conflict,
+                        )));
                     }
                 } else {
                     D::initialize(settings.clone())?;
@@ -186,7 +204,9 @@ impl<D: api::Guest> Dispatcher<D> {
                 Value::Unit(p::Empty {})
             }
             _ if self.settings.is_none() => {
-                return Err(p::Failure::new(p::FailureCode::Unavailable));
+                return Err(context.failure(ah_vfs_storage::Failure::Backend(
+                    ah_vfs_storage::BackendFailure::Unavailable,
+                )));
             }
             Op::Prepare(p::Config {
                 config: Some(config),
@@ -210,7 +230,7 @@ impl<D: api::Guest> Dispatcher<D> {
                 id,
                 config: Some(config),
             }) => {
-                self.capacity()?;
+                self.capacity(&context)?;
                 let storage = D::open(id, config)?;
                 let info = storage.0.info();
                 let handle = self.insert(Resource::Storage(storage));
@@ -222,15 +242,15 @@ impl<D: api::Guest> Dispatcher<D> {
             Op::Storage(p::StorageCall {
                 handle,
                 operation: Some(request),
-            }) => return self.storage(handle)?.call(request, data),
+            }) => return self.storage(&context, handle)?.call(request, data),
             Op::Read(p::Read {
                 handle,
                 path,
                 offset,
                 length,
             }) => {
-                self.capacity()?;
-                let reader = self.storage(handle)?.read(path, offset, length)?;
+                self.capacity(&context)?;
+                let reader = self.storage(&context, handle)?.read(path, offset, length)?;
                 Value::Reader(p::Handle {
                     handle: self.insert(Resource::Reader(reader)),
                 })
@@ -241,8 +261,10 @@ impl<D: api::Guest> Dispatcher<D> {
                 replace,
                 atomic,
             }) => {
-                self.capacity()?;
-                let writer = self.storage(handle)?.write(path, replace, atomic)?;
+                self.capacity(&context)?;
+                let writer = self
+                    .storage(&context, handle)?
+                    .write(path, replace, atomic)?;
                 Value::Writer(p::Handle {
                     handle: self.insert(Resource::Writer(writer)),
                 })
@@ -253,10 +275,12 @@ impl<D: api::Guest> Dispatcher<D> {
                     .get(&handle)
                     .is_some_and(|r| r.kind() != p::ResourceKind::Reader)
                 {
-                    return Err(p::Failure::new(p::FailureCode::InvalidRequest));
+                    return Err(p::Failure::new(p::FailureCode::InvalidRequest).into());
                 }
                 let Some(Resource::Reader(reader)) = self.resources.remove(&handle) else {
-                    return Err(p::Failure::new(p::FailureCode::SessionClosed));
+                    return Err(context.failure(ah_vfs_storage::Failure::Backend(
+                        ah_vfs_storage::BackendFailure::Closed,
+                    )));
                 };
                 match reader.0.next()? {
                     None => Value::Chunk(p::Chunk { eof: true }),
@@ -267,15 +291,19 @@ impl<D: api::Guest> Dispatcher<D> {
                             data: bytes,
                         });
                     }
-                    Some(_) => return Err(p::Failure::new(p::FailureCode::ProtocolViolation)),
+                    Some(_) => {
+                        return Err(p::Failure::new(p::FailureCode::ProtocolViolation).into());
+                    }
                 }
             }
             Op::WriterChunk(p::Handle { handle }) => {
                 let Some(resource) = self.resources.get(&handle) else {
-                    return Err(p::Failure::new(p::FailureCode::SessionClosed));
+                    return Err(context.failure(ah_vfs_storage::Failure::Backend(
+                        ah_vfs_storage::BackendFailure::Closed,
+                    )));
                 };
                 let Resource::Writer(writer) = resource else {
-                    return Err(p::Failure::new(p::FailureCode::InvalidRequest));
+                    return Err(p::Failure::new(p::FailureCode::InvalidRequest).into());
                 };
                 if let Err(error) = writer.0.write(data) {
                     self.resources.remove(&handle);
@@ -289,10 +317,12 @@ impl<D: api::Guest> Dispatcher<D> {
                     .get(&handle)
                     .is_some_and(|r| r.kind() != p::ResourceKind::Writer)
                 {
-                    return Err(p::Failure::new(p::FailureCode::InvalidRequest));
+                    return Err(p::Failure::new(p::FailureCode::InvalidRequest).into());
                 }
                 let Some(Resource::Writer(writer)) = self.resources.remove(&handle) else {
-                    return Err(p::Failure::new(p::FailureCode::SessionClosed));
+                    return Err(context.failure(ah_vfs_storage::Failure::Backend(
+                        ah_vfs_storage::BackendFailure::Closed,
+                    )));
                 };
                 if matches!(op, Op::Commit(_)) {
                     Value::Entry(writer.0.commit()?)
@@ -307,12 +337,12 @@ impl<D: api::Guest> Dispatcher<D> {
                     .get(&handle)
                     .is_some_and(|r| r.kind() as i32 != kind)
                 {
-                    return Err(p::Failure::new(p::FailureCode::InvalidRequest));
+                    return Err(p::Failure::new(p::FailureCode::InvalidRequest).into());
                 }
                 self.resources.remove(&handle);
                 Value::Unit(p::Empty {})
             }
-            _ => return Err(p::Failure::new(p::FailureCode::InvalidRequest)),
+            _ => return Err(p::Failure::new(p::FailureCode::InvalidRequest).into()),
         };
         Ok(p::Reply::new(value))
     }
@@ -340,3 +370,7 @@ macro_rules! export_plugin {
         export!(VfsComponent);
     };
 }
+
+mod error_context;
+
+mod error;

@@ -1,19 +1,21 @@
 //! Transport-independent host proxies with common session and capability rules.
 //! Native server dispatch is provided separately by vfs-plugin-grpc-server.
+use ah_vfs_storage::{
+    BackendFailure, ContractViolation, Failure, Operation, Rejection, StorageError,
+};
 pub use vfs_plugin_codec as convert;
 
-use ah_vfs::{
-    application::{driver_info::DriverInfo, dto::*, port::*},
-    domain::{
-        DriverError,
-        storage::{
-            Entry, EntryPermissions, StorageCreateDirRequest, StorageDirPage, StorageDirQuery,
-            StorageError, StorageErrorKind, StorageMoveEntryRequest, StoragePath,
-            StorageReadFileRequest, StorageRemoveEntryRequest, StorageStatEntryRequest,
-            StorageWriteFileMode, StorageWriteFileRequest, XattrName, XattrWriteMode,
-        },
-    },
+use ah_vfs::application::driver_error::{DriverError, LifecycleError, LifecycleFailure};
+use ah_vfs::application::driver_info::DriverInfo;
+use ah_vfs::application::dto::*;
+use ah_vfs::application::port::*;
+use ah_vfs::domain::storage::{
+    StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageMoveEntryRequest,
+    StorageReadFileRequest, StorageRemoveEntryRequest, StorageStatEntryRequest,
+    StorageWriteFileRequest,
 };
+use ah_vfs_storage::WriteMode;
+use ah_vfs_storage::{Entry, Permissions, StoragePath, XattrName, XattrWriteMode};
 use std::{
     collections::HashSet,
     future::Future,
@@ -62,13 +64,17 @@ pub trait Transport: Send + Sync {
 }
 
 fn connection_failure(error: &DriverError) -> bool {
-    error.storage_error().is_some_and(|error| {
+    error.lifecycle_error().is_some_and(|error| {
         matches!(
-            error.kind(),
-            StorageErrorKind::StaleHandle
-                | StorageErrorKind::Unavailable
-                | StorageErrorKind::TimedOut
-                | StorageErrorKind::OutcomeUnknown
+            error.failure(),
+            LifecycleFailure::Stale | LifecycleFailure::Unavailable | LifecycleFailure::TimedOut
+        )
+    }) || error.storage_error().is_some_and(|error| {
+        matches!(
+            error.failure(),
+            Failure::Backend(
+                BackendFailure::Stale | BackendFailure::Unavailable | BackendFailure::TimedOut
+            )
         )
     })
 }
@@ -94,12 +100,21 @@ impl Runtime {
     }
     async fn call(&self, op: Op, data: Vec<u8>) -> Result<p::Reply, DriverError> {
         if self.is_stale() && !matches!(op, Op::Release(_)) {
-            return Err(StorageError::new(StorageErrorKind::StaleHandle).into());
+            return Err(convert::call_error(
+                &op,
+                Failure::Backend(BackendFailure::Stale),
+                false,
+                None,
+            ));
         }
         if data.len() > p::MAX_DATA_BYTES {
-            return Err(StorageError::new(StorageErrorKind::TooLarge).into());
+            return Err(convert::call_error(
+                &op,
+                Failure::Rejected(Rejection::LimitExceeded),
+                false,
+                None,
+            ));
         }
-        let mutates = op.mutates();
         let reply = self
             .transport
             .call(&self.generation, op.clone(), data)
@@ -110,9 +125,11 @@ impl Runtime {
                 }
             })?;
         p::validate_reply(&reply).map_err(|source| {
-            convert::response_error(
-                mutates,
-                convert::storage_protocol_violation_with_source(source),
+            convert::call_error(
+                &op,
+                Failure::Contract(ContractViolation::InvalidResponse),
+                true,
+                Some(Box::new(source)),
             )
         })?;
         if !reply
@@ -120,7 +137,12 @@ impl Runtime {
             .as_ref()
             .is_some_and(|value| op.accepts_reply(value))
         {
-            return Err(bad_response(mutates).into());
+            return Err(convert::call_error(
+                &op,
+                Failure::Contract(ContractViolation::InvalidResponse),
+                true,
+                None,
+            ));
         }
         Ok(reply)
     }
@@ -132,23 +154,42 @@ impl Runtime {
                 .is_some_and(|status| status.load(Ordering::Acquire))
     }
     async fn value(&self, op: Op) -> Result<Value, DriverError> {
-        let mutates = op.mutates();
-        let r = self.call(op, vec![]).await?;
+        let r = self.call(op.clone(), vec![]).await?;
         if !r.data.is_empty() {
-            return Err(bad_response(mutates).into());
+            return Err(convert::call_error(
+                &op,
+                Failure::Contract(ContractViolation::InvalidResponse),
+                true,
+                None,
+            ));
         }
-        Ok(r.result.ok_or_else(convert::storage_protocol_violation)?)
+        r.result.ok_or_else(|| {
+            convert::call_error(
+                &op,
+                Failure::Contract(ContractViolation::InvalidResponse),
+                true,
+                None,
+            )
+        })
     }
     async fn unit(&self, op: Op) -> Result<(), DriverError> {
-        let mutates = op.mutates();
-        match self.value(op).await? {
+        match self.value(op.clone()).await? {
             Value::Unit(p::Empty {}) => Ok(()),
-            _ => Err(bad_response(mutates).into()),
+            _ => Err(convert::call_error(
+                &op,
+                Failure::Contract(ContractViolation::InvalidResponse),
+                true,
+                None,
+            )),
         }
     }
 }
-fn bad_response(mutates: bool) -> StorageError {
-    convert::response_error(mutates, convert::storage_protocol_violation())
+fn bad_response(operation: Operation, may_publish: bool) -> StorageError {
+    convert::response_error(
+        operation,
+        may_publish,
+        convert::storage_protocol_violation(operation),
+    )
 }
 
 /// A fully described plugin. Register it normally to initialize plugin settings.
@@ -163,10 +204,8 @@ impl PluginDriver {
     pub async fn connect(factory: Arc<dyn TransportFactory>) -> Result<Self, DriverError> {
         let transport = factory.clone().connect().await?;
         let description = describe(transport.as_ref()).await?;
-        let negotiated =
-            p::negotiate(&description, transport.host_capabilities()).map_err(|error| {
-                StorageError::with_source(StorageErrorKind::UnsupportedOperation, error)
-            })?;
+        let negotiated = p::negotiate(&description, transport.host_capabilities())
+            .map_err(|error| LifecycleError::with_source(LifecycleFailure::Unsupported, error))?;
         let info = Arc::new(convert::driver_info(&description)?);
         let runtime = Runtime::new(transport.clone(), description.generation.clone());
         Ok(Self {
@@ -198,10 +237,7 @@ async fn describe(transport: &dyn Transport) -> Result<p::Description, DriverErr
         .call("", Op::Describe(p::Empty {}), vec![])
         .await?;
     p::validate_reply(&reply).map_err(convert::protocol_violation_with_source)?;
-    match reply
-        .result
-        .ok_or_else(convert::storage_protocol_violation)?
-    {
+    match reply.result.ok_or_else(convert::protocol_violation)? {
         Value::Description(description) if reply.data.is_empty() => Ok(*description),
         _ => Err(convert::protocol_violation()),
     }
@@ -217,7 +253,7 @@ impl Driver for PluginDriver {
         Box::pin(async move {
             let mut connection = self.remote.connection.lock().await;
             if connection.settings.is_some() {
-                return Err(StorageError::new(StorageErrorKind::Conflict).into());
+                return Err(LifecycleError::new(LifecycleFailure::Conflict).into());
             }
             let settings: p::Object = settings.into_object().into();
             connection
@@ -247,9 +283,9 @@ impl Driver for PluginDriver {
                         Ok(opened) => opened,
                         Err(error) => {
                             if runtime.is_stale()
-                                || error.storage_error().is_some_and(|error| {
-                                    error.kind() == StorageErrorKind::StaleHandle
-                                })
+                                || error
+                                    .lifecycle_error()
+                                    .is_some_and(|error| error.failure() == LifecycleFailure::Stale)
                             {
                                 runtime.stale.store(true, Ordering::Release);
                             }
@@ -332,7 +368,7 @@ impl RemoteInstances {
                 connection.runtime.stale.store(true, Ordering::Release);
             }
             p::negotiate(&description, transport.host_capabilities()).map_err(|error| {
-                StorageError::with_source(StorageErrorKind::UnsupportedOperation, error)
+                LifecycleError::with_source(LifecycleFailure::Unsupported, error)
             })?;
             convert::driver_info(&description)?;
             expected.generation.clear();
@@ -353,7 +389,7 @@ impl RemoteInstances {
             Ok(runtime)
         })
         .await
-        .map_err(|source| StorageError::with_source(StorageErrorKind::Unavailable, source))?
+        .map_err(|source| LifecycleError::with_source(LifecycleFailure::Unavailable, source))?
     }
 }
 impl InstanceProvisioner for RemoteInstances {
@@ -416,7 +452,7 @@ struct Resource {
 impl Resource {
     fn new(runtime: Arc<Runtime>, kind: p::ResourceKind, handle: u64) -> Result<Self, DriverError> {
         if runtime.is_stale() {
-            return Err(StorageError::new(StorageErrorKind::StaleHandle).into());
+            return Err(LifecycleError::new(LifecycleFailure::Stale).into());
         }
         if handle == 0 {
             return Err(convert::protocol_violation());
@@ -463,6 +499,7 @@ struct RemoteStorage {
 }
 impl RemoteStorage {
     async fn call(&self, request: p::StorageOp, data: Vec<u8>) -> Result<p::Reply, StorageError> {
+        let operation = request.storage_operation();
         self.resource
             .runtime
             .call(
@@ -473,28 +510,37 @@ impl RemoteStorage {
                 data,
             )
             .await
-            .map_err(convert::storage_error)
+            .map_err(|error| convert::storage_error(operation, operation.may_mutate(), error))
     }
     async fn entry(&self, request: p::StorageOp, path: StoragePath) -> Result<Entry, StorageError> {
-        let mutates = !matches!(request, p::StorageOp::Stat(_));
+        let operation = request.storage_operation();
+
         let r = self.call(request, vec![]).await?;
-        match r.result.ok_or_else(convert::storage_protocol_violation)? {
+        match r
+            .result
+            .ok_or_else(|| bad_response(operation, operation.may_mutate()))?
+        {
             Value::Entry(entry) if r.data.is_empty() => {
-                let entry = convert::decode_entry(entry)
-                    .map_err(|source| convert::response_error(mutates, source))?;
-                if entry.path != path {
-                    return Err(bad_response(mutates));
+                let entry = convert::decode_entry(operation, entry).map_err(|source| {
+                    convert::response_error(operation, operation.may_mutate(), source)
+                })?;
+                if entry.path() != &path {
+                    return Err(bad_response(operation, operation.may_mutate()));
                 }
                 Ok(entry)
             }
-            _ => Err(bad_response(mutates)),
+            _ => Err(bad_response(operation, operation.may_mutate())),
         }
     }
     async fn unit(&self, request: p::StorageOp, data: Vec<u8>) -> Result<(), StorageError> {
+        let operation = request.storage_operation();
         let r = self.call(request, data).await?;
-        match r.result.ok_or_else(convert::storage_protocol_violation)? {
+        match r
+            .result
+            .ok_or_else(|| bad_response(operation, operation.may_mutate()))?
+        {
             Value::Unit(p::Empty {}) if r.data.is_empty() => Ok(()),
-            _ => Err(bad_response(true)),
+            _ => Err(bad_response(operation, operation.may_mutate())),
         }
     }
 }
@@ -573,7 +619,7 @@ impl Storage for RemoteStorage {
                 .call(
                     p::StorageOp::List(p::List {
                         path: r.path.as_str().into(),
-                        after: r.after.clone(),
+                        after: r.after.as_ref().map(|name| name.as_str().into()),
                         limit: r.limit.get() as u32,
                     }),
                     vec![],
@@ -584,38 +630,56 @@ impl Storage for RemoteStorage {
                 next_after,
             }) = reply
                 .result
-                .ok_or_else(convert::storage_protocol_violation)?
+                .ok_or_else(|| bad_response(Operation::List, false))?
             else {
-                return Err(convert::storage_protocol_violation());
+                return Err(bad_response(Operation::List, false));
             };
             if !reply.data.is_empty() {
-                return Err(convert::storage_protocol_violation());
+                return Err(bad_response(Operation::List, false));
             }
             let entries = entries
                 .into_iter()
-                .map(convert::decode_entry)
+                .map(|entry| convert::decode_entry(Operation::List, entry))
                 .collect::<Result<Vec<_>, _>>()?;
             if entries.len() > r.limit.get()
                 || entries
                     .iter()
-                    .any(|e| e.path.parent().as_ref() != Some(&r.path))
+                    .any(|e| e.path().parent().as_ref() != Some(&r.path))
                 || entries
                     .windows(2)
-                    .any(|v| v[0].path.as_str() >= v[1].path.as_str())
+                    .any(|v| v[0].path().as_str() >= v[1].path().as_str())
                 || entries.first().is_some_and(|e| {
                     r.after
                         .as_ref()
-                        .is_some_and(|a| e.path.name().is_none_or(|n| n <= a.as_str()))
+                        .is_some_and(|a| e.path().name().is_none_or(|n| n <= *a))
                 })
-                || next_after
-                    .as_deref()
-                    .is_some_and(|n| entries.last().and_then(|e| e.path.name()) != Some(n))
+                || next_after.as_deref().is_some_and(|n| {
+                    entries
+                        .last()
+                        .and_then(|e| e.path().name())
+                        .as_ref()
+                        .map(ah_vfs_storage::EntryName::as_str)
+                        != Some(n)
+                })
             {
-                return Err(convert::storage_protocol_violation());
+                return Err(bad_response(Operation::List, false));
             }
             Ok(StorageDirPage {
                 entries,
-                next_after,
+                next_after: next_after
+                    .as_deref()
+                    .map(ah_vfs_storage::EntryName::parse)
+                    .transpose()
+                    .map_err(|source| {
+                        convert::response_error(
+                            Operation::List,
+                            false,
+                            convert::storage_protocol_violation_with_source(
+                                Operation::List,
+                                source,
+                            ),
+                        )
+                    })?,
             })
         })
     }
@@ -634,7 +698,7 @@ impl Storage for RemoteStorage {
                     length: r.length,
                 }))
                 .await
-                .map_err(convert::storage_error)?;
+                .map_err(|error| convert::storage_error(Operation::Read, false, error))?;
             match value {
                 Value::Reader(p::Handle { handle }) => Ok(Box::new(RemoteReader {
                     resource: Some(
@@ -643,13 +707,13 @@ impl Storage for RemoteStorage {
                             p::ResourceKind::Reader,
                             handle,
                         )
-                        .map_err(convert::storage_error)?,
+                        .map_err(|error| convert::storage_error(Operation::Read, false, error))?,
                     ),
                     eof: false,
                     remaining: r.length,
                 })
                     as Box<dyn StorageFileReader>),
-                _ => Err(convert::storage_protocol_violation()),
+                _ => Err(bad_response(Operation::Read, false)),
             }
         })
     }
@@ -664,11 +728,11 @@ impl Storage for RemoteStorage {
                 .value(Op::Write(p::Write {
                     handle: self.resource.handle,
                     path: r.path.as_str().into(),
-                    replace: r.mode == StorageWriteFileMode::Replace,
+                    replace: r.mode == WriteMode::Replace,
                     atomic: r.require_atomic_publish,
                 }))
                 .await
-                .map_err(convert::storage_error)?;
+                .map_err(|error| convert::storage_error(Operation::Write, false, error))?;
             match value {
                 Value::Writer(p::Handle { handle }) => Ok(Box::new(RemoteWriter {
                     resource: Some(
@@ -677,18 +741,18 @@ impl Storage for RemoteStorage {
                             p::ResourceKind::Writer,
                             handle,
                         )
-                        .map_err(convert::storage_error)?,
+                        .map_err(|error| convert::storage_error(Operation::Write, false, error))?,
                     ),
                     path: r.path,
                 })
                     as Box<dyn StorageFileWriter>),
-                _ => Err(convert::storage_protocol_violation()),
+                _ => Err(bad_response(Operation::Write, false)),
             }
         })
     }
 }
-fn closed() -> StorageError {
-    StorageError::new(StorageErrorKind::SessionClosed)
+fn closed(operation: Operation) -> StorageError {
+    StorageError::without_effects(operation, Failure::Backend(BackendFailure::Closed), None)
 }
 struct RemoteReader {
     resource: Option<Resource>,
@@ -701,7 +765,10 @@ impl StorageFileReader for RemoteReader {
             if self.eof {
                 return Ok(None);
             }
-            let resource = self.resource.take().ok_or_else(closed)?;
+            let resource = self
+                .resource
+                .take()
+                .ok_or_else(|| closed(Operation::Read))?;
             let reply = resource
                 .runtime
                 .call(
@@ -711,10 +778,10 @@ impl StorageFileReader for RemoteReader {
                     vec![],
                 )
                 .await
-                .map_err(convert::storage_error)?;
+                .map_err(|error| convert::storage_error(Operation::Read, false, error))?;
             match reply
                 .result
-                .ok_or_else(convert::storage_protocol_violation)?
+                .ok_or_else(|| bad_response(Operation::Read, false))?
             {
                 Value::Chunk(p::Chunk { eof: true }) if reply.data.is_empty() => {
                     self.eof = true;
@@ -724,12 +791,12 @@ impl StorageFileReader for RemoteReader {
                     if let Some(remaining) = self.remaining.as_mut() {
                         *remaining = remaining
                             .checked_sub(reply.data.len() as u64)
-                            .ok_or_else(convert::storage_protocol_violation)?;
+                            .ok_or_else(|| bad_response(Operation::Read, false))?;
                     }
                     self.resource = Some(resource);
                     Ok(Some(reply.data))
                 }
-                _ => Err(convert::storage_protocol_violation()),
+                _ => Err(bad_response(Operation::Read, false)),
             }
         })
     }
@@ -741,7 +808,10 @@ struct RemoteWriter {
 impl StorageFileWriter for RemoteWriter {
     fn write_chunk<'a>(&'a mut self, data: &'a [u8]) -> StorageFuture<'a, ()> {
         Box::pin(async move {
-            let resource = self.resource.take().ok_or_else(closed)?;
+            let resource = self
+                .resource
+                .take()
+                .ok_or_else(|| closed(Operation::Write))?;
             for chunk in data.chunks(p::MAX_DATA_BYTES) {
                 let reply = resource
                     .runtime
@@ -752,15 +822,15 @@ impl StorageFileWriter for RemoteWriter {
                         chunk.to_vec(),
                     )
                     .await
-                    .map_err(convert::storage_error)?;
+                    .map_err(|error| convert::storage_error(Operation::Write, false, error))?;
                 if !matches!(
                     reply
                         .result
-                        .ok_or_else(convert::storage_protocol_violation)?,
+                        .ok_or_else(|| bad_response(Operation::Write, false))?,
                     Value::Unit(p::Empty {})
                 ) || !reply.data.is_empty()
                 {
-                    return Err(bad_response(true));
+                    return Err(bad_response(Operation::Write, false));
                 }
             }
             self.resource = Some(resource);
@@ -769,43 +839,51 @@ impl StorageFileWriter for RemoteWriter {
     }
     fn commit(&mut self) -> StorageFuture<'_, Entry> {
         Box::pin(async move {
-            let resource = self.resource.take().ok_or_else(closed)?;
+            let resource = self
+                .resource
+                .take()
+                .ok_or_else(|| closed(Operation::Write))?;
             let reply = resource
                 .runtime
                 .value(Op::Commit(p::Handle {
                     handle: resource.handle,
                 }))
                 .await
-                .map_err(convert::storage_error)?;
+                .map_err(|error| convert::storage_error(Operation::Write, true, error))?;
             match reply {
                 Value::Entry(entry) => {
-                    let entry = convert::decode_entry(entry)
-                        .map_err(|source| convert::response_error(true, source))?;
-                    if entry.path != self.path {
-                        return Err(bad_response(true));
+                    let entry =
+                        convert::decode_entry(Operation::Write, entry).map_err(|source| {
+                            convert::response_error(Operation::Write, true, source)
+                        })?;
+                    if entry.path() != &self.path {
+                        return Err(bad_response(Operation::Write, true));
                     }
                     Ok(entry)
                 }
-                _ => Err(bad_response(true)),
+                _ => Err(bad_response(Operation::Write, true)),
             }
         })
     }
     fn abort(&mut self) -> StorageFuture<'_, ()> {
         Box::pin(async move {
-            let resource = self.resource.take().ok_or_else(closed)?;
+            let resource = self
+                .resource
+                .take()
+                .ok_or_else(|| closed(Operation::Write))?;
             resource
                 .runtime
                 .unit(Op::Abort(p::Handle {
                     handle: resource.handle,
                 }))
                 .await
-                .map_err(convert::storage_error)
+                .map_err(|error| convert::storage_error(Operation::Write, false, error))
         })
     }
 }
 
 impl StoragePermissions for RemoteStorage {
-    fn get_permissions(&self, path: StoragePath) -> StorageFuture<'_, EntryPermissions> {
+    fn get_permissions(&self, path: StoragePath) -> StorageFuture<'_, Permissions> {
         Box::pin(async move {
             let r = self
                 .call(
@@ -815,20 +893,27 @@ impl StoragePermissions for RemoteStorage {
                     vec![],
                 )
                 .await?;
-            match r.result.ok_or_else(convert::storage_protocol_violation)? {
+            match r
+                .result
+                .ok_or_else(|| bad_response(Operation::GetPermissions, false))?
+            {
                 Value::Permissions(p::Permissions { mode }) if r.data.is_empty() => {
-                    EntryPermissions::new(mode).map_err(|error| {
-                        StorageError::with_source(StorageErrorKind::ProtocolViolation, error)
+                    Permissions::new(mode).map_err(|error| {
+                        StorageError::without_effects(
+                            Operation::GetPermissions,
+                            Failure::Contract(ContractViolation::InvalidResponse),
+                            Some(Box::new(error)),
+                        )
                     })
                 }
-                _ => Err(convert::storage_protocol_violation()),
+                _ => Err(bad_response(Operation::GetPermissions, false)),
             }
         })
     }
     fn set_permissions(
         &self,
         path: StoragePath,
-        permissions: EntryPermissions,
+        permissions: Permissions,
     ) -> StorageFuture<'_, ()> {
         Box::pin(async move {
             self.unit(
@@ -849,8 +934,13 @@ impl StorageXattrs for RemoteStorage {
         max_bytes: NonZeroUsize,
     ) -> StorageFuture<'_, Vec<XattrName>> {
         Box::pin(async move {
-            let max_bytes = u32::try_from(max_bytes.get())
-                .map_err(|source| StorageError::with_source(StorageErrorKind::TooLarge, source))?;
+            let max_bytes = u32::try_from(max_bytes.get()).map_err(|source| {
+                StorageError::without_effects(
+                    Operation::ListXattrs,
+                    Failure::Rejected(Rejection::LimitExceeded),
+                    Some(Box::new(source)),
+                )
+            })?;
             let r = self
                 .call(
                     p::StorageOp::ListXattrs(p::ListXattrs {
@@ -860,26 +950,30 @@ impl StorageXattrs for RemoteStorage {
                     vec![],
                 )
                 .await?;
-            match r.result.ok_or_else(convert::storage_protocol_violation)? {
+            match r
+                .result
+                .ok_or_else(|| bad_response(Operation::ListXattrs, false))?
+            {
                 Value::Names(p::Names { names }) if r.data.is_empty() => {
                     if names.windows(2).any(|v| v[0] >= v[1])
                         || names.iter().map(|n| n.len() + 1).sum::<usize>() > max_bytes as usize
                     {
-                        return Err(convert::storage_protocol_violation());
+                        return Err(bad_response(Operation::ListXattrs, false));
                     }
                     names
                         .into_iter()
                         .map(|n| {
                             XattrName::parse(&n).map_err(|error| {
-                                StorageError::with_source(
-                                    StorageErrorKind::ProtocolViolation,
-                                    error,
+                                StorageError::without_effects(
+                                    Operation::ListXattrs,
+                                    Failure::Contract(ContractViolation::InvalidResponse),
+                                    Some(Box::new(error)),
                                 )
                             })
                         })
                         .collect()
                 }
-                _ => Err(convert::storage_protocol_violation()),
+                _ => Err(bad_response(Operation::ListXattrs, false)),
             }
         })
     }
@@ -890,8 +984,13 @@ impl StorageXattrs for RemoteStorage {
         max_bytes: NonZeroUsize,
     ) -> StorageFuture<'_, Vec<u8>> {
         Box::pin(async move {
-            let max_bytes = u32::try_from(max_bytes.get())
-                .map_err(|source| StorageError::with_source(StorageErrorKind::TooLarge, source))?;
+            let max_bytes = u32::try_from(max_bytes.get()).map_err(|source| {
+                StorageError::without_effects(
+                    Operation::GetXattr,
+                    Failure::Rejected(Rejection::LimitExceeded),
+                    Some(Box::new(source)),
+                )
+            })?;
             let r = self
                 .call(
                     p::StorageOp::GetXattr(p::GetXattr {
@@ -903,13 +1002,14 @@ impl StorageXattrs for RemoteStorage {
                 )
                 .await?;
             if matches!(
-                r.result.ok_or_else(convert::storage_protocol_violation)?,
+                r.result
+                    .ok_or_else(|| bad_response(Operation::GetXattr, false))?,
                 Value::Bytes(p::Empty {})
             ) && r.data.len() <= max_bytes as usize
             {
                 Ok(r.data)
             } else {
-                Err(convert::storage_protocol_violation())
+                Err(bad_response(Operation::GetXattr, false))
             }
         })
     }

@@ -415,7 +415,7 @@ fn restoration_cannot_bypass_driver_policies_in_any_row_order() -> TestResult {
 
 #[test]
 fn storage_addresses_validate_only_the_suffix_after_namespace_resolution() -> TestResult {
-    use ah_vfs::domain::storage::{StorageError, StorageErrorKind, StoragePath, StoragePathError};
+    use ah_vfs_storage::{PathError, StoragePath};
 
     let mut table = MountTable::new(mount("/", "builtin.local", true)?)?;
     table.insert(mount("/cloud:archive", "builtin.local", true)?, policy)?;
@@ -439,12 +439,10 @@ fn storage_addresses_validate_only_the_suffix_after_namespace_resolution() -> Te
     ] {
         let path = VirtualPath::parse(virtual_path)?;
         let resolved = table.resolve(&path)?;
-        assert_eq!(
+        assert!(matches!(
             resolved.storage_path(),
-            Err(StoragePathError::InvalidSegment)
-        );
-        let error = resolved.storage_path().map_err(StorageError::from);
-        assert!(matches!(error, Err(error) if error.kind() == StorageErrorKind::InvalidPath));
+            Err(PathError::InvalidComponent(_))
+        ));
     }
     // The converted address owns its data independently of both table and request.
     let address = {

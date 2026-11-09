@@ -21,7 +21,7 @@ impl std::error::Error for CodecError {
     }
 }
 /// Default classification for malformed request input. Response encoders and
-/// decoders must explicitly choose ProtocolViolation (or OutcomeUnknown after a mutation).
+/// decoders classify the actual operation and preserve its mutation outcome separately.
 impl From<CodecError> for Failure {
     fn from(error: CodecError) -> Self {
         Self::new(match error {

@@ -1,21 +1,27 @@
 //! Optional typed storage attributes, independent of file formats.
 use super::StorageFuture;
-use crate::domain::storage::{
-    EntryPermissions, StorageError, StorageErrorKind, StoragePath, XattrName, XattrWriteMode,
-};
+use ah_vfs_storage::{Failure, Operation, Rejection, StorageError};
+
+use ah_vfs_storage::{Permissions, StoragePath, XattrName, XattrWriteMode};
 use std::num::NonZeroUsize;
 
 /// POSIX mode bits on files/dirs. Never follow symlinks, including parents.
 /// ACLs and ownership are separate. Adapters document additional access needed
 /// to acquire stable handles. Read-only extensions reject writes before mutation.
 pub trait StoragePermissions: Send + Sync {
-    fn get_permissions(&self, path: StoragePath) -> StorageFuture<'_, EntryPermissions>;
+    fn get_permissions(&self, path: StoragePath) -> StorageFuture<'_, Permissions>;
     fn set_permissions(
         &self,
         _path: StoragePath,
-        _permissions: EntryPermissions,
+        _permissions: Permissions,
     ) -> StorageFuture<'_, ()> {
-        Box::pin(async { Err(StorageError::new(StorageErrorKind::UnsupportedOperation)) })
+        Box::pin(async {
+            Err(StorageError::without_effects(
+                Operation::SetPermissions,
+                Failure::Rejected(Rejection::Unsupported),
+                None,
+            ))
+        })
     }
 }
 /// Opaque filesystem attributes. Never follow symlinks. Calls are live and do not
@@ -44,10 +50,22 @@ pub trait StorageXattrs: Send + Sync {
         _value: Vec<u8>,
         _mode: XattrWriteMode,
     ) -> StorageFuture<'_, ()> {
-        Box::pin(async { Err(StorageError::new(StorageErrorKind::UnsupportedOperation)) })
+        Box::pin(async {
+            Err(StorageError::without_effects(
+                Operation::SetXattr,
+                Failure::Rejected(Rejection::Unsupported),
+                None,
+            ))
+        })
     }
     /// Missing keys return AttributeNotFound. Read-only extensions reject writes.
     fn remove_xattr(&self, _path: StoragePath, _name: XattrName) -> StorageFuture<'_, ()> {
-        Box::pin(async { Err(StorageError::new(StorageErrorKind::UnsupportedOperation)) })
+        Box::pin(async {
+            Err(StorageError::without_effects(
+                Operation::RemoveXattr,
+                Failure::Rejected(Rejection::Unsupported),
+                None,
+            ))
+        })
     }
 }

@@ -1,6 +1,7 @@
 //! WebDAV/HTTP behavior kept inside the plugin, with no host-specific branches.
 //! See RFC 4918 sections 9.1, 9.3, 9.6 and 9.9, and RFC 9110 conditional requests.
 use super::*;
+use ah_vfs_storage::{Entry, EntryName, EntryType, PageSize, StoragePath};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use percent_encoding::percent_decode_str;
 use time::{OffsetDateTime, format_description::well_known::Rfc2822};
@@ -10,13 +11,14 @@ const PROPERTIES: &[u8] = br#"<?xml version="1.0" encoding="utf-8"?><d:propfind 
 
 #[derive(Clone)]
 pub(super) struct Client {
+    pub(super) context: api::ErrorContext,
     pub endpoint: Url,
     pub max_write_bytes: usize,
     authorization: Option<String>,
     root_segments: Vec<String>,
 }
 pub(super) struct Metadata {
-    pub entry: p::Entry,
+    pub entry: Entry,
     etag: Option<String>,
 }
 impl Metadata {
@@ -53,19 +55,19 @@ fn optional_text(fields: &p::JsonObject, field: &str) -> Result<Option<String>> 
         })
         .transpose()
 }
-fn decoded_segments(url: &Url) -> Result<Vec<String>> {
+fn decoded_segments(context: &api::ErrorContext, url: &Url) -> Result<Vec<String>> {
     let mut segments = vec![];
     let raw = url
         .path()
         .strip_prefix('/')
-        .ok_or_else(|| failure(p::FailureCode::InvalidData))?;
+        .ok_or_else(|| context.failure(Failure::Backend(BackendFailure::CorruptData)))?;
     let raw = raw.strip_suffix('/').unwrap_or(raw);
     if raw.is_empty() {
         return Ok(segments);
     }
     for segment in raw.split('/') {
         if segment.is_empty() {
-            return Err(failure(p::FailureCode::InvalidData));
+            return Err(context.failure(Failure::Backend(BackendFailure::CorruptData)));
         }
         let bytes = segment.as_bytes();
         for (index, byte) in bytes.iter().enumerate() {
@@ -74,51 +76,63 @@ fn decoded_segments(url: &Url) -> Result<Vec<String>> {
                     || !bytes[index + 1].is_ascii_hexdigit()
                     || !bytes[index + 2].is_ascii_hexdigit())
             {
-                return Err(failure(p::FailureCode::InvalidData));
+                return Err(context.failure(Failure::Backend(BackendFailure::CorruptData)));
             }
         }
         let decoded = percent_decode_str(segment)
             .decode_utf8()
-            .map_err(|_| failure(p::FailureCode::InvalidNameEncoding))?;
+            .map_err(|_| context.failure(Failure::Backend(BackendFailure::UnrepresentableName)))?;
         if decoded.contains(['/', '\\', '\0']) || matches!(decoded.as_ref(), "." | "..") {
-            return Err(failure(p::FailureCode::InvalidData));
+            return Err(context.failure(Failure::Backend(BackendFailure::CorruptData)));
         }
         segments.push(decoded.into_owned());
     }
     Ok(segments)
 }
-pub(super) fn modified(value: &str) -> Option<p::Timestamp> {
-    OffsetDateTime::parse(value.trim(), &Rfc2822)
-        .ok()
-        .map(|time| p::Timestamp {
-            seconds: time.unix_timestamp(),
-            nanos: time.nanosecond(),
+fn modified(
+    context: &api::ErrorContext,
+    value: Option<&str>,
+) -> Result<Option<std::time::SystemTime>> {
+    value
+        .map(|value| {
+            let time = OffsetDateTime::parse(value.trim(), &Rfc2822)
+                .map_err(|_| context.failure(Failure::Backend(BackendFailure::CorruptData)))?;
+            p::decode_time(time.unix_timestamp(), time.nanosecond())
+                .map_err(|_| context.failure(Failure::Backend(BackendFailure::CorruptData)))
         })
+        .transpose()
 }
+
 fn header<'a>(response: &'a http::Response<Vec<u8>>, name: &str) -> Option<&'a str> {
     response
         .headers()
         .get(name)
         .and_then(|value| value.to_str().ok())
 }
-fn status_error(status: u16, mutation: bool) -> api::Failure {
-    failure(match status {
-        400 | 422 => p::FailureCode::InvalidRequest,
-        401 | 403 => p::FailureCode::PermissionDenied,
-        404 | 410 => p::FailureCode::NotFound,
-        405 | 415 | 501 => p::FailureCode::UnsupportedOperation,
-        408 if !mutation => p::FailureCode::TimedOut,
-        409 | 412 | 423 | 424 => p::FailureCode::Conflict,
-        413 => p::FailureCode::TooLarge,
-        429 => p::FailureCode::RateLimited,
-        507 => p::FailureCode::CapacityExceeded,
-        500..=599 if !mutation => p::FailureCode::Unavailable,
-        _ if mutation => p::FailureCode::OutcomeUnknown,
-        _ => p::FailureCode::Backend,
+fn status_error(context: &api::ErrorContext, status: u16) -> api::Failure {
+    context.failure(match status {
+        400 | 422 => Failure::Rejected(Rejection::Conflict),
+        401 | 403 => Failure::Rejected(Rejection::AccessDenied),
+        404 | 410 => Failure::Rejected(Rejection::NotFound),
+        405 | 415 | 501 => Failure::Rejected(Rejection::Unsupported),
+        408 => Failure::Backend(BackendFailure::TimedOut),
+        409 | 412 | 423 | 424 => Failure::Rejected(Rejection::Conflict),
+        413 => Failure::Rejected(Rejection::LimitExceeded),
+        429 => Failure::Backend(BackendFailure::RateLimited),
+        507 => Failure::Backend(BackendFailure::CapacityExceeded),
+        500..=599 => Failure::Backend(BackendFailure::Unavailable),
+        _ => Failure::Backend(BackendFailure::Other),
     })
 }
 impl Client {
+    pub(super) fn for_operation(&self, operation: Operation) -> Self {
+        let mut client = self.clone();
+        client.context = api::ErrorContext::storage(operation);
+        client
+    }
+
     pub fn parse(fields: &p::JsonObject) -> Result<Self> {
+        let context = &api::ErrorContext::lifecycle();
         if let Some(field) = fields.keys().find(|field| {
             ![
                 "endpoint",
@@ -144,7 +158,7 @@ impl Client {
         {
             return Err(invalid("endpoint", p::ConfigErrorKind::InvalidValue));
         }
-        let root_segments = decoded_segments(&endpoint)
+        let root_segments = decoded_segments(context, &endpoint)
             .map_err(|_| invalid("endpoint", p::ConfigErrorKind::InvalidValue))?;
         if !endpoint.path().ends_with('/') {
             endpoint
@@ -206,6 +220,7 @@ impl Client {
             }
         };
         Ok(Self {
+            context: api::ErrorContext::lifecycle(),
             endpoint,
             max_write_bytes,
             authorization,
@@ -213,12 +228,13 @@ impl Client {
         })
     }
     fn url(&self, relative: &str, collection: bool) -> Result<Url> {
-        path(relative)?;
+        let context = &self.context;
+        path(context, relative)?;
         let mut url = self.endpoint.clone();
         if !relative.is_empty() {
             let mut segments = url
                 .path_segments_mut()
-                .map_err(|_| failure(p::FailureCode::InvalidData))?;
+                .map_err(|_| context.failure(Failure::Backend(BackendFailure::CorruptData)))?;
             segments.pop_if_empty();
             for segment in relative.split('/') {
                 segments.push(segment);
@@ -230,20 +246,22 @@ impl Client {
         Ok(url)
     }
     fn relative(&self, url: &Url) -> Result<String> {
+        let context = &self.context;
         if url.origin() != self.endpoint.origin()
             || !url.username().is_empty()
             || url.password().is_some()
             || url.query().is_some()
             || url.fragment().is_some()
         {
-            return Err(failure(p::FailureCode::InvalidData));
+            return Err(context.failure(Failure::Backend(BackendFailure::CorruptData)));
         }
-        let segments = decoded_segments(url)?;
+        let segments = decoded_segments(context, url)?;
         if !segments.starts_with(&self.root_segments) {
-            return Err(failure(p::FailureCode::InvalidData));
+            return Err(context.failure(Failure::Backend(BackendFailure::CorruptData)));
         }
         let relative = segments[self.root_segments.len()..].join("/");
-        path(&relative).map_err(|_| failure(p::FailureCode::InvalidNameEncoding))?;
+        path(context, &relative)
+            .map_err(|_| context.failure(Failure::Backend(BackendFailure::UnrepresentableName)))?;
         Ok(relative)
     }
     fn request(
@@ -253,8 +271,9 @@ impl Client {
         extra: Vec<(&str, String)>,
         body: Vec<u8>,
     ) -> Result<http::Response<Vec<u8>>> {
+        let context = &self.context;
         if body.len() > p::MAX_DATA_BYTES {
-            return Err(failure(p::FailureCode::TooLarge));
+            return Err(context.failure(Failure::Rejected(Rejection::LimitExceeded)));
         }
         self.relative(&url)?;
         let mutation = !matches!(method, "GET" | "HEAD" | "PROPFIND" | "OPTIONS");
@@ -268,25 +287,17 @@ impl Client {
         if let Some(authorization) = &self.authorization {
             request = request.header("authorization", authorization);
         }
-        vfs_plugin_guest::wasi_http::send(
-            request
-                .body(body)
-                .map_err(|_| failure(p::FailureCode::InvalidRequest))?,
-        )
-        .map_err(|error| {
-            if mutation
-                && !matches!(
-                    error.code(),
-                    p::FailureCode::PermissionDenied | p::FailureCode::InvalidRequest
-                )
-            {
-                failure(p::FailureCode::OutcomeUnknown)
-            } else {
-                error
-            }
-        })
+        let request = request
+            .body(body)
+            .map_err(|_| context.failure(Failure::Contract(ContractViolation::InvalidResponse)))?;
+        if mutation {
+            context.dispatched();
+        }
+        vfs_plugin_guest::wasi_http::send(request).map_err(|cause| context.failure(cause))
     }
+
     fn propfind(&self, relative: &str, depth: u8) -> Result<Vec<Metadata>> {
+        let context = &self.context;
         let base = self.url(relative, depth == 1)?;
         let reply = self.request(
             "PROPFIND",
@@ -298,72 +309,69 @@ impl Client {
             PROPERTIES.to_vec(),
         )?;
         if reply.status().as_u16() != 207 {
-            return Err(status_error(reply.status().as_u16(), false));
+            return Err(status_error(context, reply.status().as_u16()));
         }
         let mut metadata = vec![];
-        for response in multistatus::parse(reply.body())? {
+        for response in multistatus::parse(context, reply.body())? {
             let href = response
                 .href
-                .ok_or_else(|| failure(p::FailureCode::InvalidData))?;
+                .ok_or_else(|| context.failure(Failure::Backend(BackendFailure::CorruptData)))?;
             let url = base
                 .join(href.trim())
-                .map_err(|_| failure(p::FailureCode::InvalidData))?;
+                .map_err(|_| context.failure(Failure::Backend(BackendFailure::CorruptData)))?;
             let path = self.relative(&url)?;
             if let Some(status) = response.status {
-                let status = multistatus::status(&status)?;
+                let status = multistatus::status(context, &status)?;
                 if !(200..300).contains(&status) {
-                    return Err(status_error(status, false));
+                    return Err(status_error(context, status));
                 }
             }
             let properties = response.properties;
             let collection = properties
                 .collection
-                .ok_or_else(|| failure(p::FailureCode::InvalidData))?;
+                .ok_or_else(|| context.failure(Failure::Backend(BackendFailure::CorruptData)))?;
             let kind = if properties.other_type {
-                p::EntryKind::Other as i32
+                EntryType::Other
             } else if collection {
-                p::EntryKind::Dir as i32
+                EntryType::Directory
             } else {
-                p::EntryKind::File as i32
-            };
-            let size = if kind == p::EntryKind::File as i32 {
-                properties
+                let size = properties
                     .length
                     .map(|value| {
-                        value
-                            .trim()
-                            .parse::<u64>()
-                            .map_err(|_| failure(p::FailureCode::InvalidData))
+                        value.trim().parse::<u64>().map_err(|_| {
+                            context.failure(Failure::Backend(BackendFailure::CorruptData))
+                        })
                     })
-                    .transpose()?
-            } else {
-                None
+                    .transpose()?;
+                EntryType::file(size)
             };
             metadata.push(Metadata {
-                entry: p::Entry {
-                    path,
+                entry: entry(
+                    context,
+                    &path,
                     kind,
-                    size,
-                    modified: properties.modified.as_deref().and_then(modified),
-                },
+                    modified(context, properties.modified.as_deref())?,
+                )?,
                 etag: properties.etag.map(|value| value.trim().to_owned()),
             });
         }
         Ok(metadata)
     }
     pub fn stat(&self, relative: &str) -> Result<Metadata> {
-        path(relative)?;
+        let context = &self.context;
+        path(context, relative)?;
         let mut entries = self.propfind(relative, 0)?;
-        if entries.len() != 1 || entries[0].entry.path != relative {
-            return Err(failure(p::FailureCode::InvalidData));
+        if entries.len() != 1 || entries[0].entry.path().as_str() != relative {
+            return Err(context.failure(Failure::Backend(BackendFailure::CorruptData)));
         }
         entries
             .pop()
-            .ok_or_else(|| failure(p::FailureCode::InvalidData))
+            .ok_or_else(|| context.failure(Failure::Backend(BackendFailure::CorruptData)))
     }
     pub fn check_root(&self) -> Result<()> {
-        if self.stat("")?.entry.kind != p::EntryKind::Dir as i32 {
-            return Err(failure(p::FailureCode::NotDir));
+        let context = &self.context;
+        if self.stat("")?.entry.entry_type() != EntryType::Directory {
+            return Err(context.failure(Failure::Rejected(Rejection::NotDirectory)));
         }
         Ok(())
     }
@@ -373,22 +381,26 @@ impl Client {
         after: Option<&str>,
         limit: u32,
     ) -> Result<(Vec<p::Entry>, Option<String>)> {
-        path(relative)?;
-        if limit == 0 || limit > 1000 {
-            return Err(failure(p::FailureCode::InvalidRequest));
+        let context = &self.context;
+        path(context, relative)?;
+        if usize::try_from(limit)
+            .ok()
+            .and_then(|limit| PageSize::new(limit).ok())
+            .is_none()
+        {
+            return Err(context.failure(Failure::Rejected(Rejection::Conflict)));
         }
         if let Some(after) = after {
-            if after.is_empty() || after.contains('/') {
-                return Err(failure(p::FailureCode::InvalidPath));
-            }
-            path(&if relative.is_empty() {
-                after.into()
-            } else {
-                format!("{relative}/{after}")
-            })?;
+            let directory = StoragePath::parse(relative)
+                .map_err(|_| context.failure(Failure::Rejected(Rejection::UnsupportedName)))?;
+            let name = EntryName::parse(after)
+                .map_err(|_| context.failure(Failure::Rejected(Rejection::UnsupportedName)))?;
+            directory
+                .join(&name)
+                .map_err(|_| context.failure(Failure::Rejected(Rejection::UnsupportedName)))?;
         }
-        if self.stat(relative)?.entry.kind != p::EntryKind::Dir as i32 {
-            return Err(failure(p::FailureCode::NotDir));
+        if self.stat(relative)?.entry.entry_type() != EntryType::Directory {
+            return Err(context.failure(Failure::Rejected(Rejection::NotDirectory)));
         }
         let mut parent = false;
         let mut children = BTreeMap::new();
@@ -398,35 +410,39 @@ impl Client {
             format!("{relative}/")
         };
         for metadata in self.propfind(relative, 1)? {
-            if metadata.entry.path == relative {
+            if metadata.entry.path().as_str() == relative {
                 if parent {
-                    return Err(failure(p::FailureCode::InvalidData));
+                    return Err(context.failure(Failure::Backend(BackendFailure::CorruptData)));
                 }
-                if metadata.entry.kind != p::EntryKind::Dir as i32 {
-                    return Err(failure(p::FailureCode::NotDir));
+                if metadata.entry.entry_type() != EntryType::Directory {
+                    return Err(context.failure(Failure::Rejected(Rejection::NotDirectory)));
                 }
                 parent = true;
                 continue;
             }
             let name = metadata
                 .entry
-                .path
+                .path()
+                .as_str()
                 .strip_prefix(&prefix)
-                .ok_or_else(|| failure(p::FailureCode::InvalidData))?
+                .ok_or_else(|| context.failure(Failure::Backend(BackendFailure::CorruptData)))?
                 .to_owned();
             if name.is_empty()
                 || name.contains('/')
                 || children.insert(name, metadata.entry).is_some()
             {
-                return Err(failure(p::FailureCode::InvalidData));
+                return Err(context.failure(Failure::Backend(BackendFailure::CorruptData)));
             }
         }
         if !parent {
-            return Err(failure(p::FailureCode::InvalidData));
+            return Err(context.failure(Failure::Backend(BackendFailure::CorruptData)));
         }
         let mut candidates = children
             .into_iter()
             .filter(|(name, _)| after.is_none_or(|after| name.as_str() > after))
+            .map(|(name, entry)| Ok((name, crate::encode_entry(context, &entry)?)))
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
             .peekable();
         let mut entries = vec![];
         let mut bytes = 0usize;
@@ -444,11 +460,11 @@ impl Client {
             bytes += size + 1;
             let (_, entry) = candidates
                 .next()
-                .ok_or_else(|| failure(p::FailureCode::InvalidData))?;
+                .ok_or_else(|| context.failure(Failure::Backend(BackendFailure::CorruptData)))?;
             entries.push(entry);
         }
         if entries.is_empty() && candidates.peek().is_some() {
-            return Err(failure(p::FailureCode::TooLarge));
+            return Err(context.failure(Failure::Rejected(Rejection::LimitExceeded)));
         }
         let next = if candidates.peek().is_some() {
             last_name
@@ -458,29 +474,37 @@ impl Client {
         Ok((entries, next))
     }
     fn parent(&self, relative: &str) -> Result<()> {
+        let context = &self.context;
         let parent = relative.rsplit_once('/').map_or("", |(parent, _)| parent);
-        if self.stat(parent)?.entry.kind != p::EntryKind::Dir as i32 {
-            return Err(failure(p::FailureCode::NotDir));
+        if self.stat(parent)?.entry.entry_type() != EntryType::Directory {
+            return Err(context.failure(Failure::Rejected(Rejection::NotDirectory)));
         }
         Ok(())
     }
     pub fn write_condition(&self, relative: &str, replace: bool) -> Result<WriteCondition> {
-        path(relative)?;
+        let context = &self.context;
+        path(context, relative)?;
         if relative.is_empty() {
-            return Err(failure(p::FailureCode::RootProtected));
+            return Err(context.failure(Failure::Rejected(Rejection::RootProtected)));
         }
         self.parent(relative)?;
         match self.stat(relative) {
-            Ok(_) if !replace => Err(failure(p::FailureCode::AlreadyExists)),
-            Ok(metadata) if metadata.entry.kind == p::EntryKind::Dir as i32 => {
-                Err(failure(p::FailureCode::IsDir))
+            Ok(_) if !replace => Err(context.failure(Failure::Rejected(Rejection::AlreadyExists))),
+            Ok(metadata) if metadata.entry.entry_type() == EntryType::Directory => {
+                Err(context.failure(Failure::Rejected(Rejection::IsDirectory)))
             }
-            Ok(metadata) if metadata.entry.kind == p::EntryKind::File as i32 => metadata
-                .strong_etag()
-                .map(WriteCondition::Match)
-                .ok_or_else(|| failure(p::FailureCode::UnsupportedOperation)),
-            Ok(_) => Err(failure(p::FailureCode::UnsupportedOperation)),
-            Err(error) if error.code == p::FailureCode::NotFound as i32 => {
+            Ok(metadata) if matches!(metadata.entry.entry_type(), EntryType::File { .. }) => {
+                metadata
+                    .strong_etag()
+                    .map(WriteCondition::Match)
+                    .ok_or_else(|| context.failure(Failure::Rejected(Rejection::Unsupported)))
+            }
+            Ok(_) => Err(context.failure(Failure::Rejected(Rejection::Unsupported))),
+            Err(error)
+                if error.storage_error().is_some_and(|error| {
+                    error.failure() == Failure::Rejected(Rejection::NotFound)
+                }) =>
+            {
                 Ok(WriteCondition::Absent)
             }
             Err(error) => Err(error),
@@ -491,10 +515,11 @@ impl Client {
         relative: &str,
         condition: WriteCondition,
         bytes: Vec<u8>,
-    ) -> Result<p::Entry> {
+    ) -> Result<Entry> {
+        let context = &self.context;
         let size = bytes.len();
         if size > self.max_write_bytes {
-            return Err(failure(p::FailureCode::TooLarge));
+            return Err(context.failure(Failure::Rejected(Rejection::LimitExceeded)));
         }
         let absent = matches!(&condition, WriteCondition::Absent);
         let conditional = match condition {
@@ -511,61 +536,65 @@ impl Client {
             bytes,
         )?;
         if reply.status().as_u16() == 412 {
-            return Err(failure(if absent {
-                p::FailureCode::AlreadyExists
+            return Err(context.failure(if absent {
+                Failure::Rejected(Rejection::AlreadyExists)
             } else {
-                p::FailureCode::Conflict
+                Failure::Rejected(Rejection::Conflict)
             }));
         }
         if !matches!(reply.status().as_u16(), 200 | 201 | 204) {
-            return Err(status_error(reply.status().as_u16(), true));
+            return Err(status_error(context, reply.status().as_u16()));
         }
         // A successful PUT is already a known publication. Avoid a follow-up
         // PROPFIND turning a successful commit into a misleading read failure.
-        Ok(p::Entry {
-            path: relative.into(),
-            kind: p::EntryKind::File as i32,
-            size: Some(size as u64),
-            modified: header(&reply, "last-modified").and_then(modified),
-        })
+        entry(
+            context,
+            relative,
+            EntryType::file(Some(size as u64)),
+            modified(context, header(&reply, "last-modified"))?,
+        )
     }
-    fn make_collection(&self, relative: &str) -> Result<p::Entry> {
+    fn make_collection(&self, relative: &str) -> Result<Entry> {
+        let context = &self.context;
         let reply = self.request("MKCOL", self.url(relative, true)?, vec![], vec![])?;
         if reply.status().as_u16() == 405 {
             return match self.stat(relative) {
-                Ok(_) => Err(failure(p::FailureCode::AlreadyExists)),
-                Err(error) if error.code == p::FailureCode::NotFound as i32 => {
-                    Err(failure(p::FailureCode::UnsupportedOperation))
+                Ok(_) => Err(context.failure(Failure::Rejected(Rejection::AlreadyExists))),
+                Err(error)
+                    if error.storage_error().is_some_and(|error| {
+                        error.failure() == Failure::Rejected(Rejection::NotFound)
+                    }) =>
+                {
+                    Err(context.failure(Failure::Rejected(Rejection::Unsupported)))
                 }
                 Err(error) => Err(error),
             };
         }
         if reply.status().as_u16() != 201 {
-            return Err(status_error(reply.status().as_u16(), true));
+            return Err(status_error(context, reply.status().as_u16()));
         }
-        Ok(p::Entry {
-            path: relative.into(),
-            kind: p::EntryKind::Dir as i32,
-            size: None,
-            modified: None,
-        })
+        entry(context, relative, EntryType::Directory, None)
     }
-    pub fn create_dir(&self, relative: &str, recursive: bool) -> Result<p::Entry> {
-        path(relative)?;
+    pub fn create_dir(&self, relative: &str, recursive: bool) -> Result<Entry> {
+        let context = &self.context;
+        path(context, relative)?;
         if relative.is_empty() {
             if !recursive {
-                return Err(failure(p::FailureCode::AlreadyExists));
+                return Err(context.failure(Failure::Rejected(Rejection::AlreadyExists)));
             }
             let root = self.stat("")?.entry;
-            if root.kind != p::EntryKind::Dir as i32 {
-                return Err(failure(p::FailureCode::NotDir));
+            if root.entry_type() != EntryType::Directory {
+                return Err(context.failure(Failure::Rejected(Rejection::NotDirectory)));
             }
             return Ok(root);
         }
         if !recursive {
             match self.stat(relative) {
-                Ok(_) => return Err(failure(p::FailureCode::AlreadyExists)),
-                Err(error) if error.code == p::FailureCode::NotFound as i32 => {}
+                Ok(_) => return Err(context.failure(Failure::Rejected(Rejection::AlreadyExists))),
+                Err(error)
+                    if error.storage_error().is_some_and(|error| {
+                        error.failure() == Failure::Rejected(Rejection::NotFound)
+                    }) => {}
                 Err(error) => return Err(error),
             }
             self.parent(relative)?;
@@ -580,10 +609,18 @@ impl Client {
             prefix.push_str(name);
             let metadata = match self.stat(&prefix) {
                 Ok(metadata) => metadata.entry,
-                Err(error) if error.code == p::FailureCode::NotFound as i32 => {
+                Err(error)
+                    if error.storage_error().is_some_and(|error| {
+                        error.failure() == Failure::Rejected(Rejection::NotFound)
+                    }) =>
+                {
                     match self.make_collection(&prefix) {
                         Ok(entry) => entry,
-                        Err(error) if error.code == p::FailureCode::AlreadyExists as i32 => {
+                        Err(error)
+                            if error.storage_error().is_some_and(|error| {
+                                error.failure() == Failure::Rejected(Rejection::AlreadyExists)
+                            }) =>
+                        {
                             self.stat(&prefix)?.entry
                         }
                         Err(error) => return Err(error),
@@ -591,12 +628,12 @@ impl Client {
                 }
                 Err(error) => return Err(error),
             };
-            if metadata.kind != p::EntryKind::Dir as i32 {
-                return Err(failure(p::FailureCode::NotDir));
+            if metadata.entry_type() != EntryType::Directory {
+                return Err(context.failure(Failure::Rejected(Rejection::NotDirectory)));
             }
             result = Some(metadata);
         }
-        result.ok_or_else(|| failure(p::FailureCode::InvalidData))
+        result.ok_or_else(|| context.failure(Failure::Backend(BackendFailure::CorruptData)))
     }
     pub fn read_range(
         &self,
@@ -606,53 +643,56 @@ impl Client {
         size: u64,
         etag: Option<&str>,
     ) -> Result<(Vec<u8>, Option<Vec<u8>>)> {
+        let context = &self.context;
         let end = offset
             .checked_add(length)
             .and_then(|n| n.checked_sub(1))
-            .ok_or_else(|| failure(p::FailureCode::InvalidRequest))?;
+            .ok_or_else(|| context.failure(Failure::Rejected(Rejection::Conflict)))?;
         let mut headers = vec![("range", format!("bytes={offset}-{end}"))];
         if let Some(etag) = etag {
             headers.push(("if-match", etag.into()));
         }
         let response = self.request("GET", self.url(relative, false)?, headers, vec![])?;
         if response.status().as_u16() == 412 || response.status().as_u16() == 416 {
-            return Err(failure(p::FailureCode::Conflict));
+            return Err(context.failure(Failure::Rejected(Rejection::Conflict)));
         }
         if !matches!(response.status().as_u16(), 200 | 206) {
-            return Err(status_error(response.status().as_u16(), false));
+            return Err(status_error(context, response.status().as_u16()));
         }
         if let Some(encoding) = header(&response, "content-encoding") {
             if !encoding.eq_ignore_ascii_case("identity") {
-                return Err(failure(p::FailureCode::UnsupportedOperation));
+                return Err(context.failure(Failure::Rejected(Rejection::Unsupported)));
             }
         }
         if etag.is_some_and(|etag| header(&response, "etag").is_some_and(|actual| actual != etag)) {
-            return Err(failure(p::FailureCode::Conflict));
+            return Err(context.failure(Failure::Rejected(Rejection::Conflict)));
         }
         match response.status().as_u16() {
             206 => {
                 let range = header(&response, "content-range")
                     .and_then(|value| value.strip_prefix("bytes "))
-                    .ok_or_else(|| failure(p::FailureCode::InvalidData))?;
-                let (bounds, total) = range
-                    .split_once('/')
-                    .ok_or_else(|| failure(p::FailureCode::InvalidData))?;
-                let (start, last) = bounds
-                    .split_once('-')
-                    .ok_or_else(|| failure(p::FailureCode::InvalidData))?;
+                    .ok_or_else(|| {
+                        context.failure(Failure::Backend(BackendFailure::CorruptData))
+                    })?;
+                let (bounds, total) = range.split_once('/').ok_or_else(|| {
+                    context.failure(Failure::Backend(BackendFailure::CorruptData))
+                })?;
+                let (start, last) = bounds.split_once('-').ok_or_else(|| {
+                    context.failure(Failure::Backend(BackendFailure::CorruptData))
+                })?;
                 let parse = |value: &str| {
                     value
                         .parse::<u64>()
-                        .map_err(|_| failure(p::FailureCode::InvalidData))
+                        .map_err(|_| context.failure(Failure::Backend(BackendFailure::CorruptData)))
                 };
                 if parse(total)? != size {
-                    return Err(failure(p::FailureCode::Conflict));
+                    return Err(context.failure(Failure::Rejected(Rejection::Conflict)));
                 }
                 if parse(start)? != offset
                     || parse(last)? != end
                     || response.body().len() as u64 != length
                 {
-                    return Err(failure(p::FailureCode::InvalidData));
+                    return Err(context.failure(Failure::Backend(BackendFailure::CorruptData)));
                 }
                 Ok((response.into_body(), None))
             }
@@ -661,21 +701,33 @@ impl Client {
                 // whose size matches the discovered representation; never return
                 // the beginning of the file for a nonzero requested offset.
                 if response.body().len() as u64 != size {
-                    return Err(failure(p::FailureCode::Conflict));
+                    return Err(context.failure(Failure::Rejected(Rejection::Conflict)));
                 }
-                let start =
-                    usize::try_from(offset).map_err(|_| failure(p::FailureCode::TooLarge))?;
-                let end = start
-                    .checked_add(length as usize)
-                    .ok_or_else(|| failure(p::FailureCode::InvalidData))?;
+                let start = usize::try_from(offset)
+                    .map_err(|_| context.failure(Failure::Rejected(Rejection::LimitExceeded)))?;
+                let end = start.checked_add(length as usize).ok_or_else(|| {
+                    context.failure(Failure::Backend(BackendFailure::CorruptData))
+                })?;
                 let bytes = response
                     .body()
                     .get(start..end)
-                    .ok_or_else(|| failure(p::FailureCode::InvalidData))?
+                    .ok_or_else(|| context.failure(Failure::Backend(BackendFailure::CorruptData)))?
                     .to_vec();
                 Ok((bytes, Some(response.into_body())))
             }
-            status => Err(status_error(status, false)),
+            status => Err(status_error(context, status)),
         }
     }
+}
+
+fn entry(
+    context: &api::ErrorContext,
+    path: &str,
+    kind: EntryType,
+    modified: Option<std::time::SystemTime>,
+) -> Result<Entry> {
+    let path = StoragePath::parse(path)
+        .map_err(|_| context.failure(Failure::Backend(BackendFailure::UnrepresentableName)))?;
+    Entry::new(path, kind, modified)
+        .map_err(|_| context.failure(Failure::Backend(BackendFailure::CorruptData)))
 }

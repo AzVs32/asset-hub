@@ -1,6 +1,6 @@
 //! Transport-neutral creation parameters and driver-owned configuration descriptions.
 
-use crate::domain::{DriverError, InstanceConfigErrorKind};
+use crate::application::driver_error::{DriverError, InstanceConfigErrorKind};
 use std::collections::BTreeMap;
 
 /// An object of driver-specific creation parameters. These are inputs, unlike

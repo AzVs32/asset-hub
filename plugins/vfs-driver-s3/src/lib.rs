@@ -1,9 +1,10 @@
+#![cfg(target_arch = "wasm32")]
 //! S3-compatible storage plugin using path-style requests and AWS SigV4.
 //! Endpoint, bucket and signing region are supplied by instance configuration.
 //! The portable component uses WASIp2 HTTP and the standard library clock. Directories are implicit prefixes; empty-directory creation,
 //! rename, permissions and xattrs are deliberately unsupported. File/prefix
 //! collisions are rejected rather than silently selecting one interpretation.
-#![cfg(target_arch = "wasm32")]
+use ah_vfs_storage::{BackendFailure, ContractViolation, EntryType, Failure, Operation, Rejection};
 mod s3;
 use std::{
     cell::{Cell, RefCell},
@@ -14,44 +15,31 @@ use vfs_plugin_protocol::{self as p, Value};
 vfs_plugin_guest::export_plugin!(S3Driver, "../../crates/vfs-plugin-protocol/wit");
 use vfs_plugin_guest::api::{self, Guest, GuestReader, GuestStorage, GuestWriter};
 type Result<T> = std::result::Result<T, api::Failure>;
-fn failure(code: p::FailureCode) -> api::Failure {
-    api::Failure {
-        code: code as i32,
-        field: None,
-        config_kind: None,
-    }
-}
 fn invalid(field: &str, kind: p::ConfigErrorKind) -> api::Failure {
-    api::Failure {
+    p::Failure {
         code: p::FailureCode::InvalidInstanceConfig as i32,
         field: Some(field.into()),
         config_kind: Some(kind as i32),
+        storage: None,
     }
+    .into()
 }
-fn path(path: &str) -> Result<()> {
-    if path.len() > 4096
-        || path.starts_with('/')
-        || path.contains(['\\', ':', '\0'])
-        || (!path.is_empty() && path.split('/').any(|s| matches!(s, "" | "." | "..")))
-    {
-        return Err(failure(p::FailureCode::InvalidPath));
-    }
-    Ok(())
+fn path(context: &api::ErrorContext, path: &str) -> Result<()> {
+    ah_vfs_storage::StoragePath::parse(path)
+        .map(|_| ())
+        .map_err(|_| context.failure(Failure::Rejected(Rejection::UnsupportedName)))
 }
 fn caps() -> Vec<i32> {
-    [
-        p::Capability::Stat,
-        p::Capability::List,
-        p::Capability::RangeRead,
-        p::Capability::WriteNew,
-        p::Capability::WriteReplace,
-        p::Capability::AtomicPublish,
-        p::Capability::Prefix,
-        p::Capability::Remove,
-    ]
-    .into_iter()
-    .map(Into::into)
-    .collect()
+    use ah_vfs_storage::{Capabilities, DirectorySupport, ReadSupport, WriteModes, WriteSupport};
+    p::encode_capabilities(
+        Capabilities::default()
+            .with_stat(true)
+            .with_list(true)
+            .with_read(ReadSupport::Range)
+            .with_write(WriteSupport::staged(WriteModes::Both, true))
+            .with_directories(DirectorySupport::prefix(false, false))
+            .with_remove(true),
+    )
 }
 struct S3Driver;
 impl Guest for S3Driver {
@@ -96,10 +84,11 @@ impl Guest for S3Driver {
         }
     }
     fn initialize(settings: p::Object) -> Result<()> {
+        let context = api::ErrorContext::lifecycle();
         if settings.fields.is_empty() {
             Ok(())
         } else {
-            Err(failure(p::FailureCode::UnsupportedOperation))
+            Err(context.failure(Failure::Rejected(Rejection::Unsupported)))
         }
     }
     fn prepare(config: p::Object) -> Result<p::Prepared> {
@@ -117,8 +106,9 @@ impl Guest for S3Driver {
         })
     }
     fn migrate(from_version: u32, config: p::Object) -> Result<p::Object> {
+        let context = api::ErrorContext::lifecycle();
         if from_version != 1 {
-            return Err(failure(p::FailureCode::UnsupportedOperation));
+            return Err(context.failure(Failure::Rejected(Rejection::Unsupported)));
         }
         let fields = p::json_object(config)?;
         s3::Client::parse(&fields)?;
@@ -145,55 +135,63 @@ impl GuestStorage for S3Storage {
         }
     }
     fn call(&self, request: p::StorageOp, data: Vec<u8>) -> Result<p::Reply> {
+        let client = self.client.for_operation(request.storage_operation());
+        let context = client.context.clone();
         if !data.is_empty() {
-            return Err(failure(p::FailureCode::InvalidRequest));
+            return Err(context.failure(Failure::Rejected(Rejection::Conflict)));
         }
         let value = match request {
-            p::StorageOp::Stat(p::Path { path }) => Value::Entry(self.client.stat(&path)?),
+            p::StorageOp::Stat(p::Path { path }) => {
+                Value::Entry(encode_entry(&context, &client.stat(&path)?)?)
+            }
             p::StorageOp::List(p::List { path, after, limit }) => {
-                let (entries, next_after) = self.client.list(&path, after.as_deref(), limit)?;
+                let (entries, next_after) = client.list(&path, after.as_deref(), limit)?;
                 Value::Page(p::Page {
-                    entries,
+                    entries: entries
+                        .iter()
+                        .map(|entry| encode_entry(&context, entry))
+                        .collect::<Result<_>>()?,
                     next_after,
                 })
             }
             p::StorageOp::Remove(p::Path { path }) => {
-                let entry = self.client.stat(&path)?;
+                let entry = client.stat(&path)?;
                 if path.is_empty() {
-                    return Err(failure(p::FailureCode::RootProtected));
+                    return Err(context.failure(Failure::Rejected(Rejection::RootProtected)));
                 }
-                if entry.kind == p::EntryKind::Dir as i32 {
-                    return Err(failure(p::FailureCode::UnsupportedOperation));
+                if entry.entry_type() == EntryType::Directory {
+                    return Err(context.failure(Failure::Rejected(Rejection::Unsupported)));
                 }
-                self.client
-                    .request("DELETE", &path, vec![], vec![], vec![])?;
+                client.request("DELETE", &path, vec![], vec![], vec![])?;
                 Value::Unit(p::Empty {})
             }
-            _ => return Err(failure(p::FailureCode::UnsupportedOperation)),
+            _ => return Err(context.failure(Failure::Rejected(Rejection::Unsupported))),
         };
         Ok(p::Reply::new(value))
     }
     fn read(&self, path: String, offset: u64, length: Option<u64>) -> Result<api::Reader> {
-        let entry = self.client.stat(&path)?;
-        if entry.kind != p::EntryKind::File as i32 {
-            return Err(failure(p::FailureCode::IsDir));
-        }
-        let size = entry
-            .size
-            .ok_or_else(|| failure(p::FailureCode::InvalidData))?;
+        let client = self.client.for_operation(Operation::Read);
+        let context = client.context.clone();
+        let entry = client.stat(&path)?;
+        let EntryType::File { size, .. } = entry.entry_type() else {
+            return Err(context.failure(Failure::Rejected(Rejection::IsDirectory)));
+        };
+        let size =
+            size.ok_or_else(|| context.failure(Failure::Backend(BackendFailure::CorruptData)))?;
         Ok(api::Reader::new(S3Reader {
-            client: self.client.clone(),
+            client: client.clone(),
             path,
             offset: Cell::new(offset),
             remaining: Cell::new(length.unwrap_or(u64::MAX).min(size.saturating_sub(offset))),
         }))
     }
     fn write(&self, path: String, replace: bool, _atomic: bool) -> Result<api::Writer> {
-        path_check_target(&self.client, &path, replace)?;
-        let upload = self.client.start_upload(&path)?;
+        let client = self.client.for_operation(Operation::Write);
+        path_check_target(&client, &path, replace)?;
+        let upload = client.start_upload(&path)?;
         Ok(api::Writer::new(S3Writer {
             session: RefCell::new(Some(Upload {
-                client: self.client.clone(),
+                client: client.clone(),
                 path,
                 replace,
                 upload,
@@ -205,25 +203,31 @@ impl GuestStorage for S3Storage {
     }
 }
 fn path_check_target(client: &s3::Client, name: &str, replace: bool) -> Result<()> {
-    path(name)?;
+    let context = client.context.clone();
+    path(&context, name)?;
     if name.is_empty() {
-        return Err(failure(p::FailureCode::RootProtected));
+        return Err(context.failure(Failure::Rejected(Rejection::RootProtected)));
     }
     for (index, _) in name.match_indices('/') {
         if client.head(&name[..index])?.is_some() {
-            return Err(failure(p::FailureCode::NotDir));
+            return Err(context.failure(Failure::Rejected(Rejection::NotDirectory)));
         }
     }
     match client.stat(name) {
         Ok(entry) => {
             if !replace {
-                return Err(failure(p::FailureCode::AlreadyExists));
+                return Err(context.failure(Failure::Rejected(Rejection::AlreadyExists)));
             }
-            if entry.kind != p::EntryKind::File as i32 {
-                return Err(failure(p::FailureCode::IsDir));
+            if !matches!(entry.entry_type(), EntryType::File { .. }) {
+                return Err(context.failure(Failure::Rejected(Rejection::IsDirectory)));
             }
         }
-        Err(e) if e.code == p::FailureCode::NotFound as i32 => (),
+        Err(e)
+            if e.storage_error()
+                .is_some_and(|error| error.failure() == Failure::Rejected(Rejection::NotFound)) =>
+        {
+            ()
+        }
         Err(e) => return Err(e),
     }
     Ok(())
@@ -236,6 +240,7 @@ struct S3Reader {
 }
 impl GuestReader for S3Reader {
     fn next(&self) -> Result<Option<Vec<u8>>> {
+        let context = api::ErrorContext::storage(Operation::Read);
         let remaining = self.remaining.get();
         if remaining == 0 {
             return Ok(None);
@@ -258,7 +263,7 @@ impl GuestReader for S3Reader {
             || response.body().is_empty()
             || response.body().len() as u64 > length
         {
-            return Err(failure(p::FailureCode::InvalidData));
+            return Err(context.failure(Failure::Backend(BackendFailure::CorruptData)));
         }
         self.offset.set(offset + response.body().len() as u64);
         self.remaining.set(remaining - response.body().len() as u64);
@@ -277,8 +282,9 @@ struct Upload {
 }
 impl Upload {
     fn upload_part(&mut self, bytes: Vec<u8>) -> Result<()> {
+        let context = api::ErrorContext::storage(Operation::Write);
         if self.parts.len() >= 10_000 {
-            return Err(failure(p::FailureCode::CapacityExceeded));
+            return Err(context.failure(Failure::Backend(BackendFailure::CapacityExceeded)));
         }
         let etag =
             self.client
@@ -295,17 +301,18 @@ struct S3Writer {
 }
 impl GuestWriter for S3Writer {
     fn write(&self, data: Vec<u8>) -> Result<()> {
+        let context = api::ErrorContext::storage(Operation::Write);
         if data.len() > p::MAX_DATA_BYTES {
-            return Err(failure(p::FailureCode::TooLarge));
+            return Err(context.failure(Failure::Rejected(Rejection::LimitExceeded)));
         }
         let mut pending = self.session.borrow_mut();
         let s = pending
             .as_mut()
-            .ok_or_else(|| failure(p::FailureCode::SessionClosed))?;
+            .ok_or_else(|| context.failure(Failure::Backend(BackendFailure::Closed)))?;
         s.size = s
             .size
             .checked_add(data.len() as u64)
-            .ok_or_else(|| failure(p::FailureCode::TooLarge))?;
+            .ok_or_else(|| context.failure(Failure::Rejected(Rejection::LimitExceeded)))?;
         s.buffer.extend_from_slice(&data);
         while s.buffer.len() >= PART_SIZE {
             let part = s.buffer.drain(..PART_SIZE).collect();
@@ -314,11 +321,12 @@ impl GuestWriter for S3Writer {
         Ok(())
     }
     fn commit(&self) -> Result<p::Entry> {
+        let context = api::ErrorContext::storage(Operation::Write);
         let mut s = self
             .session
             .borrow_mut()
             .take()
-            .ok_or_else(|| failure(p::FailureCode::SessionClosed))?;
+            .ok_or_else(|| context.failure(Failure::Backend(BackendFailure::Closed)))?;
         let outcome = (|| {
             path_check_target(&s.client, &s.path, s.replace)?;
             if s.size == 0 {
@@ -339,7 +347,7 @@ impl GuestWriter for S3Writer {
             }
             s.client
                 .stat(&s.path)
-                .map_err(|_| failure(p::FailureCode::OutcomeUnknown))
+                .and_then(|entry| encode_entry(&s.client.context, &entry))
         })();
         if outcome.is_err() {
             let _ = s.abort();
@@ -347,10 +355,11 @@ impl GuestWriter for S3Writer {
         outcome
     }
     fn abort(&self) -> Result<()> {
+        let context = api::ErrorContext::storage(Operation::Write);
         self.session
             .borrow_mut()
             .take()
-            .ok_or_else(|| failure(p::FailureCode::SessionClosed))?
+            .ok_or_else(|| context.failure(Failure::Backend(BackendFailure::Closed)))?
             .abort()
     }
 }
@@ -360,4 +369,9 @@ impl Drop for S3Writer {
             let _ = s.abort();
         }
     }
+}
+
+fn encode_entry(context: &api::ErrorContext, entry: &ah_vfs_storage::Entry) -> Result<p::Entry> {
+    p::encode_entry(entry)
+        .map_err(|_| context.failure(Failure::Contract(ContractViolation::InvalidResponse)))
 }

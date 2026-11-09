@@ -1,29 +1,28 @@
+use ah_vfs::application::driver_error::{LifecycleError, LifecycleFailure};
 use ah_vfs::application::mount_runtime::MountRuntime;
+use ah_vfs_storage::{
+    BackendFailure, ContractViolation, Failure, Operation, Rejection, StorageError,
+};
 mod common;
 
-use ah_vfs::{
-    application::{
-        driver_catalog::DriverCatalog,
-        driver_info::DriverInfo,
-        dto::{ReadFileRequest, WriteFileRequest},
-        error::EntryError,
-        port::{
-            DriverFuture, Storage, StorageFileReader, StorageFileWriter, StorageFuture,
-            StoragePermissions, validate_storage_extensions,
-        },
-        service::{EntryService, MountService},
-    },
-    domain::{
-        DriverError, DriverInstance, DriverKey, InstanceId,
-        namespace::{ChildMountPolicy, VirtualPath},
-        storage::{
-            AttributeSupport, Entry, EntryPermissions, FileReadSupport, FileWriteSupport,
-            StorageCapabilities, StorageError, StorageErrorKind, StoragePath,
-            StorageReadFileRequest, StorageWriteFileMode, StorageWriteFileRequest, XattrName,
-        },
-    },
-    infrastructure::mount_repository::SqliteMountRepository,
+use ah_vfs::application::driver_catalog::DriverCatalog;
+use ah_vfs::application::driver_error::DriverError;
+use ah_vfs::application::driver_info::DriverInfo;
+use ah_vfs::application::dto::{ReadFileRequest, WriteFileRequest};
+use ah_vfs::application::error::EntryError;
+use ah_vfs::application::port::{
+    DriverFuture, Storage, StorageFileReader, StorageFileWriter, StorageFuture, StoragePermissions,
+    validate_storage_extensions,
 };
+use ah_vfs::application::service::{EntryService, MountService};
+use ah_vfs::domain::namespace::{ChildMountPolicy, VirtualPath};
+use ah_vfs::domain::storage::{StorageReadFileRequest, StorageWriteFileRequest};
+use ah_vfs::domain::{DriverInstance, DriverKey, InstanceId};
+use ah_vfs::infrastructure::mount_repository::SqliteMountRepository;
+use ah_vfs_storage::{
+    AttributeSupport, Capabilities, ReadSupport, WriteMode, WriteModes, WriteSupport,
+};
+use ah_vfs_storage::{Entry, Permissions, StoragePath, XattrName};
 use std::{
     error::Error,
     io,
@@ -35,13 +34,22 @@ use std::{
 };
 type TestResult = Result<(), Box<dyn Error>>;
 
-fn failure(kind: StorageErrorKind) -> StorageError {
-    StorageError::with_source(kind, io::Error::other("backend-private-token"))
+fn failure(operation: Operation, kind: Failure) -> StorageError {
+    StorageError::without_effects(
+        operation,
+        kind,
+        Some(Box::new(io::Error::other("backend-private-token"))),
+    )
 }
 struct TestReader;
 impl StorageFileReader for TestReader {
     fn next_chunk(&mut self) -> StorageFuture<'_, Option<Vec<u8>>> {
-        Box::pin(async { Err(failure(StorageErrorKind::StaleHandle)) })
+        Box::pin(async {
+            Err(failure(
+                Operation::Read,
+                Failure::Backend(BackendFailure::Stale),
+            ))
+        })
     }
 }
 struct TestWriter {
@@ -51,7 +59,11 @@ impl StorageFileWriter for TestWriter {
     fn write_chunk<'a>(&'a mut self, _: &'a [u8]) -> StorageFuture<'a, ()> {
         Box::pin(async {
             if self.closed {
-                Err(StorageError::new(StorageErrorKind::SessionClosed))
+                Err(StorageError::without_effects(
+                    Operation::Write,
+                    Failure::Backend(BackendFailure::Closed),
+                    None,
+                ))
             } else {
                 Ok(())
             }
@@ -60,16 +72,28 @@ impl StorageFileWriter for TestWriter {
     fn commit(&mut self) -> StorageFuture<'_, Entry> {
         Box::pin(async {
             if self.closed {
-                return Err(StorageError::new(StorageErrorKind::SessionClosed));
+                return Err(StorageError::without_effects(
+                    Operation::Write,
+                    Failure::Backend(BackendFailure::Closed),
+                    None,
+                ));
             }
             self.closed = true;
-            Err(failure(StorageErrorKind::OutcomeUnknown))
+            Err(StorageError::after_dispatch(
+                Operation::Write,
+                Failure::Backend(BackendFailure::Other),
+                Some(Box::new(io::Error::other("backend-private-token"))),
+            ))
         })
     }
     fn abort(&mut self) -> StorageFuture<'_, ()> {
         Box::pin(async {
             if self.closed {
-                return Err(StorageError::new(StorageErrorKind::SessionClosed));
+                return Err(StorageError::without_effects(
+                    Operation::Write,
+                    Failure::Backend(BackendFailure::Closed),
+                    None,
+                ));
             }
             self.closed = true;
             Ok(())
@@ -101,7 +125,7 @@ impl Storage for TestStorage {
 struct TestDriver {
     info: DriverInfo,
     storage: Arc<dyn Storage>,
-    open_failure: Option<StorageErrorKind>,
+    open_failure: Option<LifecycleFailure>,
 }
 impl common::Backend for TestDriver {
     fn info(&self) -> &DriverInfo {
@@ -114,15 +138,19 @@ impl common::Backend for TestDriver {
         let _ = context.instance_id().clone();
         Box::pin(async {
             if let Some(kind) = self.open_failure {
-                return Err(DriverError::Storage(failure(kind)));
+                return Err(LifecycleError::with_source(
+                    kind,
+                    io::Error::other("backend-private-token"),
+                )
+                .into());
             }
             Ok(self.storage.clone())
         })
     }
 }
 async fn fixture(
-    declared: StorageCapabilities,
-    open_failure: Option<StorageErrorKind>,
+    declared: Capabilities,
+    open_failure: Option<LifecycleFailure>,
 ) -> Result<(EntryService, Arc<AtomicUsize>), Box<dyn Error>> {
     let key = DriverKey::parse("test")?;
     let calls = Arc::new(AtomicUsize::new(0));
@@ -159,7 +187,7 @@ async fn fixture(
 fn request(atomic: bool) -> Result<WriteFileRequest, Box<dyn Error>> {
     Ok(WriteFileRequest {
         path: VirtualPath::parse("/file")?,
-        mode: StorageWriteFileMode::CreateNew,
+        mode: WriteMode::CreateNew,
         require_atomic_publish: atomic,
     })
 }
@@ -167,15 +195,15 @@ fn request(atomic: bool) -> Result<WriteFileRequest, Box<dyn Error>> {
 #[test]
 fn normalized_errors_preserve_sources_without_exposing_backend_messages() -> TestResult {
     for kind in [
-        StorageErrorKind::NotFound,
-        StorageErrorKind::StaleHandle,
-        StorageErrorKind::RateLimited,
-        StorageErrorKind::Conflict,
-        StorageErrorKind::TimedOut,
-        StorageErrorKind::OutcomeUnknown,
+        Failure::Rejected(Rejection::NotFound),
+        Failure::Backend(BackendFailure::Stale),
+        Failure::Backend(BackendFailure::RateLimited),
+        Failure::Rejected(Rejection::Conflict),
+        Failure::Backend(BackendFailure::TimedOut),
+        Failure::Backend(BackendFailure::Other),
     ] {
-        let error = failure(kind);
-        assert_eq!(error.kind(), kind);
+        let error = failure(Operation::Stat, kind);
+        assert_eq!(error.failure(), kind);
         assert!(!error.to_string().contains("backend-private-token"));
         assert_eq!(
             error.source().ok_or("missing source")?.to_string(),
@@ -186,7 +214,7 @@ fn normalized_errors_preserve_sources_without_exposing_backend_messages() -> Tes
             entry
                 .storage_error()
                 .ok_or("missing normalized error")?
-                .kind(),
+                .failure(),
             kind
         );
         assert!(!entry.to_string().contains("backend-private-token"));
@@ -196,8 +224,8 @@ fn normalized_errors_preserve_sources_without_exposing_backend_messages() -> Tes
 
 #[test]
 fn attribute_values_reject_invalid_input_without_normalizing_identity() -> TestResult {
-    assert_eq!(EntryPermissions::new(0o7640)?.bits(), 0o7640);
-    assert!(EntryPermissions::new(0o100644).is_err());
+    assert_eq!(Permissions::new(0o7640)?.bits(), 0o7640);
+    assert!(Permissions::new(0o100644).is_err());
     for name in ["", "bad\0name", &"a".repeat(256)] {
         assert!(XattrName::parse(name).is_err());
     }
@@ -207,20 +235,15 @@ fn attribute_values_reject_invalid_input_without_normalizing_identity() -> TestR
 
 #[tokio::test]
 async fn unsupported_requests_are_rejected_before_backend_side_effects() -> TestResult {
-    let caps = StorageCapabilities::builder()
-        .read_file(FileReadSupport::Sequential)
-        .write_file(FileWriteSupport {
-            create_new: true,
-            replace: false,
-            atomic_publish: false,
-        })
-        .build()?;
+    let caps = Capabilities::default()
+        .with_read(ReadSupport::Sequential)
+        .with_write(WriteSupport::staged(WriteModes::CreateNew, false));
     let (service, calls) = fixture(caps, None).await?;
     assert!(
-        matches!(service.write_file(request(true)?).await, Err(error) if error.storage_error().is_some_and(|e| e.kind() == StorageErrorKind::UnsupportedOperation))
+        matches!(service.write_file(request(true)?).await, Err(error) if error.storage_error().is_some_and(|e| e.failure() == Failure::Rejected(Rejection::Unsupported)))
     );
     assert!(
-        matches!(service.read_file(ReadFileRequest { path: VirtualPath::parse("/file")?, offset: 1, length: None }).await, Err(error) if error.storage_error().is_some_and(|e| e.kind() == StorageErrorKind::UnsupportedOperation))
+        matches!(service.read_file(ReadFileRequest { path: VirtualPath::parse("/file")?, offset: 1, length: None }).await, Err(error) if error.storage_error().is_some_and(|e| e.failure() == Failure::Rejected(Rejection::Unsupported)))
     );
     assert_eq!(calls.load(Ordering::SeqCst), 0);
     let mut writer = service.write_file(request(false)?).await?;
@@ -232,11 +255,8 @@ async fn unsupported_requests_are_rejected_before_backend_side_effects() -> Test
 #[tokio::test]
 async fn invalid_routed_suffix_is_rejected_before_backend_open_or_io() -> TestResult {
     // An open failure would be observed if path conversion happened too late.
-    let (service, calls) = fixture(
-        StorageCapabilities::default(),
-        Some(StorageErrorKind::Unavailable),
-    )
-    .await?;
+    let (service, calls) =
+        fixture(Capabilities::default(), Some(LifecycleFailure::Unavailable)).await?;
     let error = service
         .read_file(ReadFileRequest {
             path: VirtualPath::parse("/file:stream")?,
@@ -246,27 +266,24 @@ async fn invalid_routed_suffix_is_rejected_before_backend_open_or_io() -> TestRe
         .await
         .err()
         .ok_or("expected invalid storage path")?;
-    assert_eq!(
-        error.storage_error().ok_or("missing storage error")?.kind(),
-        StorageErrorKind::InvalidPath
-    );
+    assert!(matches!(
+        error,
+        ah_vfs::application::error::EntryError::InvalidStorageAddress(
+            ah_vfs_storage::PathError::InvalidComponent(_)
+        )
+    ));
     assert_eq!(calls.load(Ordering::SeqCst), 0);
     Ok(())
 }
 
 #[tokio::test]
 async fn opening_streaming_and_committing_keep_domain_error_categories() -> TestResult {
-    let caps = StorageCapabilities::builder()
-        .read_file(FileReadSupport::Range)
-        .write_file(FileWriteSupport {
-            create_new: true,
-            replace: false,
-            atomic_publish: false,
-        })
-        .build()?;
-    let (service, _) = fixture(caps, Some(StorageErrorKind::Unavailable)).await?;
+    let caps = Capabilities::default()
+        .with_read(ReadSupport::Range)
+        .with_write(WriteSupport::staged(WriteModes::CreateNew, false));
+    let (service, _) = fixture(caps, Some(LifecycleFailure::Unavailable)).await?;
     assert!(
-        matches!(service.read_file(ReadFileRequest { path: VirtualPath::parse("/file")?, offset: 0, length: None }).await, Err(error) if error.storage_error().is_some_and(|e| e.kind() == StorageErrorKind::Unavailable))
+        matches!(service.read_file(ReadFileRequest { path: VirtualPath::parse("/file")?, offset: 0, length: None }).await, Err(EntryError::Driver(DriverError::Lifecycle(error))) if error.failure() == LifecycleFailure::Unavailable)
     );
     let (service, _) = fixture(caps, None).await?;
     let mut reader = service
@@ -277,24 +294,28 @@ async fn opening_streaming_and_committing_keep_domain_error_categories() -> Test
         })
         .await?;
     assert!(
-        matches!(reader.next_chunk().await, Err(error) if error.storage_error().is_some_and(|e| e.kind() == StorageErrorKind::StaleHandle))
+        matches!(reader.next_chunk().await, Err(error) if error.storage_error().is_some_and(|e| e.failure() == Failure::Backend(BackendFailure::Stale)))
     );
     let mut writer = service.write_file(request(false)?).await?;
     assert!(
-        matches!(writer.commit().await, Err(error) if error.storage_error().is_some_and(|e| e.kind() == StorageErrorKind::OutcomeUnknown))
+        matches!(writer.commit().await, Err(error) if error.storage_error().is_some_and(|e| e.failure() == Failure::Backend(BackendFailure::Other)))
     );
     assert!(
-        matches!(writer.commit().await, Err(error) if error.storage_error().is_some_and(|e| e.kind() == StorageErrorKind::SessionClosed))
+        matches!(writer.commit().await, Err(error) if error.storage_error().is_some_and(|e| e.failure() == Failure::Backend(BackendFailure::Closed)))
     );
     Ok(())
 }
 
 struct ReadOnlyPermissions;
 impl StoragePermissions for ReadOnlyPermissions {
-    fn get_permissions(&self, _: StoragePath) -> StorageFuture<'_, EntryPermissions> {
+    fn get_permissions(&self, _: StoragePath) -> StorageFuture<'_, Permissions> {
         Box::pin(async {
-            EntryPermissions::new(0o444).map_err(|error| {
-                StorageError::with_source(StorageErrorKind::ProtocolViolation, error)
+            Permissions::new(0o444).map_err(|error| {
+                StorageError::without_effects(
+                    Operation::GetPermissions,
+                    Failure::Contract(ContractViolation::InvalidResponse),
+                    Some(Box::new(error)),
+                )
             })
         })
     }
@@ -312,9 +333,7 @@ impl Storage for PermissionStorage {
 
 #[test]
 fn independent_attribute_interfaces_must_match_the_driver_declaration() -> TestResult {
-    let declared = StorageCapabilities::builder()
-        .permissions(AttributeSupport::Read)
-        .build()?;
+    let declared = Capabilities::default().with_permissions(AttributeSupport::Read);
     let supported = PermissionStorage(ReadOnlyPermissions);
     validate_storage_extensions(declared, &supported)?;
     let absent = TestStorage {
@@ -323,16 +342,20 @@ fn independent_attribute_interfaces_must_match_the_driver_declaration() -> TestR
     let missing = validate_storage_extensions(declared, &absent)
         .err()
         .ok_or("missing declared interface")?;
-    assert_eq!(missing.kind(), StorageErrorKind::ProtocolViolation);
-    let unexpected = validate_storage_extensions(StorageCapabilities::default(), &supported)
+    assert_eq!(
+        missing.failure(),
+        ah_vfs::application::driver_error::LifecycleFailure::InvalidDeclaration
+    );
+    let unexpected = validate_storage_extensions(Capabilities::default(), &supported)
         .err()
         .ok_or("unexpected interface")?;
-    assert_eq!(unexpected.kind(), StorageErrorKind::ProtocolViolation);
-    let xattrs = StorageCapabilities::builder()
-        .xattrs(AttributeSupport::Read)
-        .build()?;
+    assert_eq!(
+        unexpected.failure(),
+        ah_vfs::application::driver_error::LifecycleFailure::InvalidDeclaration
+    );
+    let xattrs = Capabilities::default().with_xattrs(AttributeSupport::Read);
     assert!(
-        matches!(validate_storage_extensions(xattrs, &absent), Err(error) if error.kind() == StorageErrorKind::ProtocolViolation)
+        matches!(validate_storage_extensions(xattrs, &absent), Err(error) if error.failure() == ah_vfs::application::driver_error::LifecycleFailure::InvalidDeclaration)
     );
     assert_eq!(absent.calls.load(Ordering::SeqCst), 0);
     Ok(())
@@ -341,13 +364,13 @@ fn independent_attribute_interfaces_must_match_the_driver_declaration() -> TestR
 async fn read_only_extension_and_missing_base_operations_reject_mutation() -> TestResult {
     let extension = ReadOnlyPermissions;
     assert!(
-        matches!(extension.set_permissions(StoragePath::root(), EntryPermissions::new(0o600)?).await, Err(error) if error.kind() == StorageErrorKind::UnsupportedOperation)
+        matches!(extension.set_permissions(StoragePath::root(), Permissions::new(0o600)?).await, Err(error) if error.failure() == Failure::Rejected(Rejection::Unsupported))
     );
     let storage = TestStorage {
         calls: Arc::new(AtomicUsize::new(0)),
     };
     assert!(
-        matches!(storage.create_dir(ah_vfs::domain::storage::StorageCreateDirRequest { path: StoragePath::parse("dir")?, recursive: false }).await, Err(error) if error.kind() == StorageErrorKind::UnsupportedOperation)
+        matches!(storage.create_dir(ah_vfs::domain::storage::StorageCreateDirRequest { path: StoragePath::parse("dir")?, recursive: false }).await, Err(error) if error.failure() == Failure::Rejected(Rejection::Unsupported))
     );
     Ok(())
 }

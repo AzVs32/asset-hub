@@ -1,13 +1,11 @@
 #![cfg(target_os = "linux")]
+use ah_vfs::application::driver_error::LifecycleFailure;
 mod common;
 
-use ah_vfs::{
-    application::{
-        dto::{InstanceQuery, RemoveInstanceOutcome},
-        port::Driver,
-    },
-    domain::{DriverError, InstanceId},
-};
+use ah_vfs::application::driver_error::DriverError;
+use ah_vfs::application::dto::{InstanceQuery, RemoveInstanceOutcome};
+use ah_vfs::application::port::Driver;
+use ah_vfs::domain::InstanceId;
 
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use std::error::Error;
@@ -49,14 +47,14 @@ async fn local_instances_reopen_and_deleted_dirs_fail_to_open() -> TestResult {
         .await?;
     let root = storage
         .stat_entry(ah_vfs::domain::storage::StorageStatEntryRequest {
-            path: ah_vfs::domain::storage::StoragePath::root(),
+            path: ah_vfs_storage::StoragePath::root(),
         })
         .await?;
-    assert_eq!(root.kind, ah_vfs::domain::storage::EntryKind::Dir);
+    assert_eq!(root.entry_type(), ah_vfs_storage::EntryType::Directory);
     std::fs::remove_dir(&source)?;
     assert!(matches!(
         reopened.open(restored_registry.open_context(instance.id.clone()).await?).await,
-        Err(DriverError::Storage(error)) if error.kind() == ah_vfs::domain::storage::StorageErrorKind::NotFound
+        Err(DriverError::Lifecycle(error)) if error.failure() == LifecycleFailure::Backend && error.source().is_some()
     ));
     assert!(restored_registry.get(instance.id.clone()).await?.is_some());
     restored_registry.remove(instance.id.clone()).await?;
@@ -84,7 +82,7 @@ async fn invalid_instance_rows_are_reported_without_silently_dropping_data() -> 
             .execute(&pool)
             .await?;
         assert!(
-            matches!(registry.list(InstanceQuery::default()).await, Err(DriverError::Storage(error)) if error.kind() == ah_vfs::domain::storage::StorageErrorKind::InvalidData)
+            matches!(registry.list(InstanceQuery::default()).await, Err(DriverError::Lifecycle(error)) if error.failure() == ah_vfs::application::driver_error::LifecycleFailure::InvalidRecord)
         );
         assert_eq!(
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM vfs_instance_records")
@@ -119,7 +117,7 @@ async fn missing_instance_and_invalid_sources_return_errors_without_persisting()
     std::fs::write(&file, "untouched")?;
     assert!(matches!(
         registry.create(common::local_config(&file)?).await,
-        Err(DriverError::Storage(error)) if error.kind() == ah_vfs::domain::storage::StorageErrorKind::NotDir
+        Err(DriverError::Lifecycle(error)) if error.failure() == LifecycleFailure::InvalidRecord && error.source().is_some()
     ));
     assert!(
         registry
@@ -155,7 +153,7 @@ async fn non_utf8_canonical_roots_are_rejected_without_lossy_storage() -> TestRe
     let registry = common::registry(&driver, pool.clone()).await?;
     assert!(matches!(
         registry.create(common::local_config(&alias)?).await,
-        Err(DriverError::Storage(error)) if error.kind() == ah_vfs::domain::storage::StorageErrorKind::InvalidNameEncoding
+        Err(DriverError::Lifecycle(error)) if error.failure() == LifecycleFailure::InvalidRecord && error.source().is_some()
     ));
     assert!(
         registry

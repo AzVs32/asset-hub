@@ -323,7 +323,7 @@ async fn paths_links_admission_and_wire_metadata() -> TestResult {
     assert_eq!(fixture.storage.used_bytes(), 0);
 
     let mut invalid = wire::encode_entry(root)?;
-    invalid.kind = wire::EntryKind::File.into();
+    invalid.kind = vfs_plugin_protocol::EntryKind::File.into();
     assert_eq!(
         wire::decode_entry(invalid),
         Err(d::ContractViolation::InvalidEntry)

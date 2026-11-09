@@ -1,9 +1,9 @@
 //! Requests and namespace views using absolute virtual paths.
 
-use crate::domain::{
-    namespace::VirtualPath,
-    storage::{DEFAULT_DIR_PAGE_LIMIT, Entry, EntryKind, StorageWriteFileMode},
-};
+use crate::domain::namespace::VirtualPath;
+use crate::domain::storage::DEFAULT_DIR_PAGE_LIMIT;
+use ah_vfs_storage::WriteMode;
+use ah_vfs_storage::{Entry, EntryType};
 
 use std::{num::NonZeroUsize, time::SystemTime};
 
@@ -18,8 +18,7 @@ pub enum EntryOrigin {
 #[derive(Clone, Debug)]
 pub struct EntryView {
     pub path: VirtualPath,
-    pub kind: EntryKind,
-    pub size: Option<u64>,
+    pub kind: EntryType,
     pub modified: Option<SystemTime>,
     pub origin: EntryOrigin,
 }
@@ -28,9 +27,8 @@ impl EntryView {
     pub(crate) fn from_storage(path: VirtualPath, entry: Entry) -> Self {
         Self {
             path,
-            kind: entry.kind,
-            size: entry.size,
-            modified: entry.modified,
+            kind: entry.entry_type(),
+            modified: entry.modified(),
             origin: EntryOrigin::Storage,
         }
     }
@@ -38,8 +36,7 @@ impl EntryView {
     pub(crate) fn dir(path: VirtualPath, origin: EntryOrigin) -> Self {
         Self {
             path,
-            kind: EntryKind::Dir,
-            size: None,
+            kind: EntryType::Directory,
             modified: None,
             origin,
         }
@@ -77,7 +74,7 @@ pub struct WriteFileRequest {
     /// Require atomic complete-file publication; unsupported guarantees fail before staging.
     pub require_atomic_publish: bool,
     pub path: VirtualPath,
-    pub mode: StorageWriteFileMode,
+    pub mode: WriteMode,
 }
 
 pub struct CreateDirRequest {

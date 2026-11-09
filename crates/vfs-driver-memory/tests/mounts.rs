@@ -1,24 +1,21 @@
 use ah_vfs::application::mount_runtime::MountRuntime;
+use ah_vfs_storage::{BackendFailure, Failure, Rejection};
 mod common;
 
-use ah_vfs::{
-    application::{
-        driver_catalog::DriverCatalog,
-        dto::{
-            CreateDirRequest, DirQuery, EntryOrigin, MountFilter, MountRequest, MoveEntryRequest,
-            ReadFileRequest, RemoveEntryRequest, WriteFileRequest,
-        },
-        error::EntryError,
-        port::MountRepository,
-        service::{EntryService, MountService},
-    },
-    domain::{
-        DriverError, DriverInstance, DriverKey, InstanceId,
-        namespace::{MountTableError, VirtualPath},
-        storage::{EntryKind, StorageErrorKind as Kind, StorageWriteFileMode},
-    },
-    infrastructure::mount_repository::SqliteMountRepository,
+use ah_vfs::application::driver_catalog::DriverCatalog;
+use ah_vfs::application::driver_error::DriverError;
+use ah_vfs::application::dto::{
+    CreateDirRequest, DirQuery, EntryOrigin, MountFilter, MountRequest, MoveEntryRequest,
+    ReadFileRequest, RemoveEntryRequest, WriteFileRequest,
 };
+use ah_vfs::application::error::EntryError;
+use ah_vfs::application::port::MountRepository;
+use ah_vfs::application::service::{EntryService, MountService};
+use ah_vfs::domain::namespace::{MountTableError, VirtualPath};
+use ah_vfs::domain::{DriverInstance, DriverKey, InstanceId};
+use ah_vfs::infrastructure::mount_repository::SqliteMountRepository;
+use ah_vfs_storage::EntryType;
+use ah_vfs_storage::WriteMode;
 use common::*;
 use std::{num::NonZeroUsize, sync::Arc};
 use vfs_driver_memory::{CapacityUnit, MemoryDriver};
@@ -80,7 +77,7 @@ async fn write(entries: &EntryService, value: &str, bytes: &[u8]) -> TestResult 
     let mut writer = entries
         .write_file(WriteFileRequest {
             path: virtual_path(value)?,
-            mode: StorageWriteFileMode::CreateNew,
+            mode: WriteMode::CreateNew,
             require_atomic_publish: true,
         })
         .await?;
@@ -124,7 +121,7 @@ async fn mount_disable_enable_unmount_remount_preserves_instance_and_open_stream
         .entries
         .write_file(WriteFileRequest {
             path: virtual_path("/ram/pending")?,
-            mode: StorageWriteFileMode::CreateNew,
+            mode: WriteMode::CreateNew,
             require_atomic_publish: true,
         })
         .await?;
@@ -232,7 +229,7 @@ async fn nested_mounts_overlay_backend_entries_and_synthesize_missing_parents() 
     write(&f.entries, "/virtual/ram/file", b"nested").await?;
     let view = f.entries.stat_entry(&virtual_path("/virtual")?).await?;
     assert_eq!(view.origin, EntryOrigin::SyntheticDir);
-    assert_eq!(view.kind, EntryKind::Dir);
+    assert_eq!(view.kind, EntryType::Directory);
     let page = f
         .entries
         .list_entries(&virtual_path("/virtual")?, DirQuery::default())
@@ -337,7 +334,7 @@ async fn capacity_and_unsupported_attribute_failures_reach_vfs_as_domain_errors(
         .entries
         .write_file(WriteFileRequest {
             path: virtual_path("/small/file")?,
-            mode: StorageWriteFileMode::CreateNew,
+            mode: WriteMode::CreateNew,
             require_atomic_publish: true,
         })
         .await?;
@@ -347,8 +344,8 @@ async fn capacity_and_unsupported_attribute_failures_reach_vfs_as_domain_errors(
         .err()
         .ok_or("quota error")?;
     assert_eq!(
-        error.storage_error().ok_or("domain")?.kind(),
-        Kind::CapacityExceeded
+        error.storage_error().ok_or("domain")?.failure(),
+        Failure::Backend(BackendFailure::CapacityExceeded)
     );
     writer.abort().await?;
     let error = f
@@ -358,8 +355,8 @@ async fn capacity_and_unsupported_attribute_failures_reach_vfs_as_domain_errors(
         .err()
         .ok_or("unsupported")?;
     assert_eq!(
-        error.storage_error().ok_or("domain")?.kind(),
-        Kind::UnsupportedOperation
+        error.storage_error().ok_or("domain")?.failure(),
+        Failure::Rejected(Rejection::Unsupported)
     );
     let error = f
         .entries
@@ -368,8 +365,8 @@ async fn capacity_and_unsupported_attribute_failures_reach_vfs_as_domain_errors(
         .err()
         .ok_or("unsupported")?;
     assert_eq!(
-        error.storage_error().ok_or("domain")?.kind(),
-        Kind::UnsupportedOperation
+        error.storage_error().ok_or("domain")?.failure(),
+        Failure::Rejected(Rejection::Unsupported)
     );
     Ok(())
 }
@@ -390,12 +387,7 @@ async fn root_initialization_and_enable_persist_configuration_without_opening_ba
         .await?;
     mounts.disable(id).await?;
     mounts.enable(id).await?;
-    assert!(
-        entries
-            .capabilities(&virtual_path("/")?)
-            .await?
-            .stat_entry()
-    );
+    assert!(entries.capabilities(&virtual_path("/")?).await?.stat());
     let error = entries
         .stat_entry(&virtual_path("/file")?)
         .await

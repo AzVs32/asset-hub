@@ -1,38 +1,31 @@
-use ah_vfs::domain::storage::{
-    AttributeSupport, DirModel, FileReadSupport, FileWriteSupport, RenameSupport,
-    StorageCapabilities, StorageCapabilitiesError, StorageErrorKind,
+use ah_vfs::application::driver_error::LifecycleFailure;
+use ah_vfs_storage::{
+    AttributeSupport, Capabilities, DirectorySupport, ReadSupport, RenameSupport, WriteModes,
+    WriteSupport,
 };
 use std::error::Error;
 use vfs_plugin_codec::{capabilities, decode_capabilities};
 use vfs_plugin_protocol::Capability;
 
 #[test]
-fn contradictory_wire_capabilities_preserve_the_domain_validation_cause()
+fn contradictory_wire_capabilities_fail_before_constructing_a_declaration()
 -> Result<(), Box<dyn Error>> {
-    for (wire, expected) in [
-        (
-            vec![Capability::AtomicPublish as i32],
-            StorageCapabilitiesError::AtomicPublishWithoutWrite,
-        ),
-        (
-            vec![Capability::EmptyDirs as i32],
-            StorageCapabilitiesError::EmptyDirsWithoutDirModel,
-        ),
-        (
-            vec![Capability::CreateDir as i32],
-            StorageCapabilitiesError::CreateDirWithoutDirModel,
-        ),
+    for wire in [
+        vec![Capability::AtomicPublish as i32],
+        vec![Capability::EmptyDirs as i32],
+        vec![Capability::CreateDir as i32],
+        vec![Capability::PermissionsWrite as i32],
+        vec![Capability::Prefix as i32, Capability::Hierarchical as i32],
     ] {
         let error = decode_capabilities(&wire)
             .err()
-            .ok_or("accepted invalid wire capabilities")?;
-        let storage = error.storage_error().ok_or("missing storage error")?;
-        assert_eq!(storage.kind(), StorageErrorKind::ProtocolViolation);
+            .ok_or("accepted invalid declaration")?;
         assert_eq!(
-            storage
-                .source()
-                .and_then(|e| e.downcast_ref::<StorageCapabilitiesError>()),
-            Some(&expected)
+            error
+                .lifecycle_error()
+                .ok_or("invalid declaration")?
+                .failure(),
+            LifecycleFailure::InvalidDeclaration
         );
     }
     Ok(())
@@ -41,34 +34,25 @@ fn contradictory_wire_capabilities_preserve_the_domain_validation_cause()
 #[test]
 fn valid_capabilities_round_trip_and_unknown_optional_values_do_not_enable_features()
 -> Result<(), Box<dyn Error>> {
-    for dir_model in [DirModel::Hierarchical, DirModel::Prefix] {
-        let declared = StorageCapabilities::builder()
-            .stat_entry(true)
-            .list_entries(true)
-            .read_file(FileReadSupport::Range)
-            .write_file(FileWriteSupport {
-                create_new: true,
-                replace: true,
-                atomic_publish: true,
-            })
-            .dir_model(dir_model)
-            .persistent_empty_dirs(true)
-            .create_dir(true)
-            .remove_entry(true)
-            .rename(RenameSupport {
-                no_replace: true,
-                replace: true,
-            })
-            .permissions(AttributeSupport::ReadWrite)
-            .xattrs(AttributeSupport::Read)
-            .build()?;
+    for directories in [
+        DirectorySupport::hierarchical(true, true),
+        DirectorySupport::prefix(true, true),
+    ] {
+        let declared = Capabilities::default()
+            .with_stat(true)
+            .with_list(true)
+            .with_read_link(true)
+            .with_read(ReadSupport::Range)
+            .with_write(WriteSupport::staged(WriteModes::Both, true))
+            .with_directories(directories)
+            .with_remove(true)
+            .with_rename(RenameSupport::Both)
+            .with_permissions(AttributeSupport::ReadWrite)
+            .with_xattrs(AttributeSupport::Read);
         let mut wire = capabilities(declared);
         wire.push(i32::MAX);
         assert_eq!(decode_capabilities(&wire)?, declared);
     }
-    assert_eq!(
-        decode_capabilities(&[i32::MAX])?,
-        StorageCapabilities::default()
-    );
+    assert_eq!(decode_capabilities(&[i32::MAX])?, Capabilities::default());
     Ok(())
 }

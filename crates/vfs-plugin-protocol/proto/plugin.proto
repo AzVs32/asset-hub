@@ -1,5 +1,5 @@
 syntax = "proto3";
-package assethub.vfs.v3;
+package assethub.vfs.v4;
 
 // The sole plugin message schema, shared by gRPC and the WASM call export.
 // Request/Reply control fields are limited to 1 MiB, data to 8 MiB. Missing
@@ -33,6 +33,7 @@ enum Capability {
   CAPABILITY_RENAME_NEW = 13; CAPABILITY_RENAME_REPLACE = 14;
   CAPABILITY_PERMISSIONS_READ = 15; CAPABILITY_PERMISSIONS_WRITE = 16;
   CAPABILITY_XATTRS_READ = 17; CAPABILITY_XATTRS_WRITE = 18;
+  CAPABILITY_READ_LINK = 19;
 }
 enum EntryKind {
   ENTRY_KIND_UNSPECIFIED = 0; ENTRY_KIND_FILE = 1; ENTRY_KIND_DIR = 2;
@@ -46,24 +47,38 @@ enum XattrWriteMode {
   XATTR_WRITE_MODE_UNSPECIFIED = 0; XATTR_WRITE_MODE_UPSERT = 1;
   XATTR_WRITE_MODE_CREATE_NEW = 2; XATTR_WRITE_MODE_REPLACE = 3;
 }
+// Control-plane failures have no storage operation or mutation outcome.
 enum FailureCode {
   FAILURE_CODE_UNSPECIFIED = 0;
-  FAILURE_CODE_NOT_FOUND = 1; FAILURE_CODE_ALREADY_EXISTS = 2;
-  FAILURE_CODE_PERMISSION_DENIED = 3; FAILURE_CODE_NOT_DIR = 4;
-  FAILURE_CODE_IS_DIR = 5; FAILURE_CODE_DIR_NOT_EMPTY = 6;
-  FAILURE_CODE_INVALID_PATH = 7; FAILURE_CODE_INVALID_REQUEST = 8;
-  FAILURE_CODE_INVALID_NAME_ENCODING = 9; FAILURE_CODE_INVALID_DATA = 10;
-  FAILURE_CODE_ROOT_PROTECTED = 11; FAILURE_CODE_SESSION_CLOSED = 12;
-  FAILURE_CODE_UNSUPPORTED_OPERATION = 13; FAILURE_CODE_STALE_HANDLE = 14;
-  FAILURE_CODE_TIMED_OUT = 15; FAILURE_CODE_UNAVAILABLE = 16;
-  FAILURE_CODE_RATE_LIMITED = 17; FAILURE_CODE_CONFLICT = 18;
-  FAILURE_CODE_CAPACITY_EXCEEDED = 19; FAILURE_CODE_CROSS_DEVICE = 20;
-  FAILURE_CODE_CANCELLED = 21; FAILURE_CODE_OUTCOME_UNKNOWN = 22;
-  FAILURE_CODE_ATTRIBUTE_NOT_FOUND = 23; FAILURE_CODE_TOO_LARGE = 24;
-  FAILURE_CODE_BACKEND = 25; FAILURE_CODE_INSTANCE_NOT_FOUND = 26;
-  FAILURE_CODE_INVALID_INSTANCE_CONFIG = 27;
-  // Adapter contract bugs, distinct from corrupt stored/backend data (INVALID_DATA).
-  FAILURE_CODE_PROTOCOL_VIOLATION = 28;
+  FAILURE_CODE_STORAGE = 1;
+  FAILURE_CODE_INVALID_REQUEST = 2;
+  FAILURE_CODE_TOO_LARGE = 3;
+  FAILURE_CODE_PROTOCOL_VIOLATION = 4;
+  FAILURE_CODE_INSTANCE_NOT_FOUND = 5;
+  FAILURE_CODE_INVALID_INSTANCE_CONFIG = 6;
+  FAILURE_CODE_LIFECYCLE_INVALID_RECORD = 7;
+  FAILURE_CODE_LIFECYCLE_INVALID_REQUEST = 8;
+  FAILURE_CODE_LIFECYCLE_INVALID_DECLARATION = 9;
+  FAILURE_CODE_LIFECYCLE_UNSUPPORTED = 10;
+  FAILURE_CODE_LIFECYCLE_CONFLICT = 11;
+  FAILURE_CODE_LIFECYCLE_UNAVAILABLE = 12;
+  FAILURE_CODE_LIFECYCLE_TIMED_OUT = 13;
+  FAILURE_CODE_LIFECYCLE_BACKEND = 14;
+  FAILURE_CODE_LIFECYCLE_ACCESS_DENIED = 15;
+  FAILURE_CODE_LIFECYCLE_STALE = 16;
+  FAILURE_CODE_LIFECYCLE_CAPACITY_EXCEEDED = 17;
+  FAILURE_CODE_LIFECYCLE_CANCELLED = 18;
+}
+enum MutationOutcome {
+  MUTATION_OUTCOME_UNSPECIFIED = 0;
+  MUTATION_OUTCOME_UNCHANGED = 1;
+  MUTATION_OUTCOME_UNKNOWN = 2;
+}
+message StorageFailure {
+  string operation = 1;
+  string family = 2;
+  string reason = 3;
+  MutationOutcome outcome = 4;
 }
 enum ConfigErrorKind {
   CONFIG_ERROR_KIND_UNSPECIFIED = 0; CONFIG_ERROR_KIND_MISSING_FIELD = 1;
@@ -74,9 +89,10 @@ message Failure {
   FailureCode code = 1;
   optional string field = 2; // Safe configuration field identifier, never a value.
   optional ConfigErrorKind config_kind = 3;
+  StorageFailure storage = 4;
 }
 message Description {
-  uint32 major = 1; uint32 minor = 2; // This schema uses major 3, minor 0.
+  uint32 major = 1; uint32 minor = 2; // This schema uses major 4, minor 0.
   // Feature identifiers: streams.chunked.v1.
   // Unknown required identifiers reject loading; optional ones grant no support.
   repeated string required_features = 3;

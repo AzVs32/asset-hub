@@ -1,10 +1,9 @@
 //! Validated host records; their persistence representation stays private.
 
 use super::envelope::Envelope;
-use crate::domain::{
-    DriverError, DriverInstance,
-    storage::{StorageError, StorageErrorKind},
-};
+use crate::application::driver_error::DriverError;
+use crate::application::driver_error::{LifecycleError, LifecycleFailure};
+use crate::domain::DriverInstance;
 
 /// One persisted host record. config_json is an opaque encrypted-parameters/public-
 /// details envelope, never a plaintext secret object. Debug omits the envelope.
@@ -52,7 +51,7 @@ impl InstanceRecord {
             || updated_at > i64::MAX as u64
             || created_at > updated_at
         {
-            return Err(StorageError::new(StorageErrorKind::InvalidData).into());
+            return Err(LifecycleError::new(LifecycleFailure::InvalidRecord).into());
         }
         Ok(Self {
             instance,

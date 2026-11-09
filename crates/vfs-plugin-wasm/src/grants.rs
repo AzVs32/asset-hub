@@ -1,8 +1,6 @@
 //! Explicit per-plugin authority. Runtime execution limits are independent of I/O grants.
-use ah_vfs::domain::{
-    DriverError,
-    storage::{StorageError, StorageErrorKind},
-};
+use ah_vfs::application::driver_error::DriverError;
+use ah_vfs::application::driver_error::{LifecycleError, LifecycleFailure};
 use serde::{Deserialize, Serialize};
 use std::{
     net::{IpAddr, SocketAddr},
@@ -78,8 +76,8 @@ impl ExecutionLimits {
     }
 }
 fn invalid(message: &str) -> DriverError {
-    StorageError::with_source(
-        StorageErrorKind::InvalidRequest,
+    LifecycleError::with_source(
+        LifecycleFailure::InvalidRequest,
         std::io::Error::other(message.to_owned()),
     )
     .into()

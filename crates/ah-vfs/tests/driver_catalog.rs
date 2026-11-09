@@ -1,25 +1,24 @@
+use ah_vfs_storage::{Failure, Operation, Rejection, StorageError};
 use common::Backend;
 mod common;
 
-use ah_vfs::{
-    application::{
-        driver_catalog::DriverCatalog,
-        driver_info::DriverInfo,
-        error::DriverCatalogError,
-        port::{
-            Driver, DriverFuture, Storage, StorageFileReader, StorageFileWriter, StorageFuture,
-        },
-    },
-    domain::{
-        DriverError, DriverInstance, DriverKey, DriverKeyError, InstanceId,
-        namespace::{ChildMountPolicy, Mount, MountId, MountTable, MountTableError, VirtualPath},
-        storage::{
-            Entry, StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageError,
-            StorageErrorKind, StorageMoveEntryRequest, StorageReadFileRequest,
-            StorageRemoveEntryRequest, StorageStatEntryRequest, StorageWriteFileRequest,
-        },
-    },
+use ah_vfs::application::driver_catalog::DriverCatalog;
+use ah_vfs::application::driver_error::DriverError;
+use ah_vfs::application::driver_info::DriverInfo;
+use ah_vfs::application::error::DriverCatalogError;
+use ah_vfs::application::port::{
+    Driver, DriverFuture, Storage, StorageFileReader, StorageFileWriter, StorageFuture,
 };
+use ah_vfs::domain::namespace::{
+    ChildMountPolicy, Mount, MountId, MountTable, MountTableError, VirtualPath,
+};
+use ah_vfs::domain::storage::{
+    StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageMoveEntryRequest,
+    StorageReadFileRequest, StorageRemoveEntryRequest, StorageStatEntryRequest,
+    StorageWriteFileRequest,
+};
+use ah_vfs::domain::{DriverInstance, DriverKey, DriverKeyError, InstanceId};
+use ah_vfs_storage::Entry;
 
 use std::future::Future;
 use std::num::NonZeroUsize;
@@ -34,8 +33,14 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 // Catalog tests use an independent fake, not an unfinished storage adapter.
 struct TestStorage;
 
-fn unsupported<T: Send + 'static>() -> StorageFuture<'static, T> {
-    Box::pin(async { Err(StorageError::new(StorageErrorKind::UnsupportedOperation)) })
+fn unsupported<T: Send + 'static>(operation: Operation) -> StorageFuture<'static, T> {
+    Box::pin(async move {
+        Err(StorageError::without_effects(
+            operation,
+            Failure::Rejected(Rejection::Unsupported),
+            None,
+        ))
+    })
 }
 
 impl Storage for TestStorage {
@@ -43,31 +48,31 @@ impl Storage for TestStorage {
         NonZeroUsize::MIN
     }
     fn stat_entry(&self, _: StorageStatEntryRequest) -> StorageFuture<'_, Entry> {
-        unsupported()
+        unsupported(Operation::Stat)
     }
     fn list_entries(&self, _: StorageDirQuery) -> StorageFuture<'_, StorageDirPage> {
-        unsupported()
+        unsupported(Operation::List)
     }
     fn read_file(
         &self,
         _: StorageReadFileRequest,
     ) -> StorageFuture<'_, Box<dyn StorageFileReader>> {
-        unsupported()
+        unsupported(Operation::Read)
     }
     fn write_file(
         &self,
         _: StorageWriteFileRequest,
     ) -> StorageFuture<'_, Box<dyn StorageFileWriter>> {
-        unsupported()
+        unsupported(Operation::Write)
     }
     fn create_dir(&self, _: StorageCreateDirRequest) -> StorageFuture<'_, Entry> {
-        unsupported()
+        unsupported(Operation::CreateDirectory)
     }
     fn remove_entry(&self, _: StorageRemoveEntryRequest) -> StorageFuture<'_, ()> {
-        unsupported()
+        unsupported(Operation::Remove)
     }
     fn move_entry(&self, _: StorageMoveEntryRequest) -> StorageFuture<'_, Entry> {
-        unsupported()
+        unsupported(Operation::Rename)
     }
 }
 
@@ -107,7 +112,7 @@ fn driver(
 ) -> Result<Arc<TestDriver>, Box<dyn std::error::Error>> {
     Ok(Arc::new(TestDriver {
         info: DriverInfo::builder()
-            .capabilities(ah_vfs::domain::storage::StorageCapabilities::default())
+            .capabilities(ah_vfs_storage::Capabilities::default())
             .key(DriverKey::parse(key)?)
             .name(name.into())
             .version(semver::Version::new(0, 1, 0))

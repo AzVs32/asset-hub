@@ -2,10 +2,13 @@
 
 use super::{StoragePermissions, StorageXattrs};
 use crate::domain::storage::{
-    Entry, StorageCapabilities, StorageCreateDirRequest, StorageDirPage, StorageDirQuery,
-    StorageError, StorageErrorKind, StorageMoveEntryRequest, StorageReadFileRequest,
-    StorageRemoveEntryRequest, StorageStatEntryRequest, StorageWriteFileRequest,
+    StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageMoveEntryRequest,
+    StorageReadFileRequest, StorageRemoveEntryRequest, StorageStatEntryRequest,
+    StorageWriteFileRequest,
 };
+use ah_vfs_storage::Capabilities;
+use ah_vfs_storage::Entry;
+use ah_vfs_storage::{Failure, Operation, Rejection, StorageError};
 
 use std::{future::Future, num::NonZeroUsize, pin::Pin};
 
@@ -43,12 +46,12 @@ pub trait Storage: Send + Sync {
 
     /// Retrieve entry metadata without following its final symbolic link.
     fn stat_entry(&self, _request: StorageStatEntryRequest) -> StorageFuture<'_, Entry> {
-        unsupported()
+        unsupported(Operation::Stat)
     }
 
     /// List immediate backend entries without merging VFS mount points.
     fn list_entries(&self, _query: StorageDirQuery) -> StorageFuture<'_, StorageDirPage> {
-        unsupported()
+        unsupported(Operation::List)
     }
 
     /// Open a range-limited stream of raw file bytes, independent of this handle.
@@ -56,7 +59,7 @@ pub trait Storage: Send + Sync {
         &self,
         _request: StorageReadFileRequest,
     ) -> StorageFuture<'_, Box<dyn StorageFileReader>> {
-        unsupported()
+        unsupported(Operation::Read)
     }
 
     /// Stage a complete-file write. The target changes only when commit publishes it.
@@ -64,22 +67,22 @@ pub trait Storage: Send + Sync {
         &self,
         _request: StorageWriteFileRequest,
     ) -> StorageFuture<'_, Box<dyn StorageFileWriter>> {
-        unsupported()
+        unsupported(Operation::Write)
     }
 
     /// Create a directory in the backend.
     fn create_dir(&self, _request: StorageCreateDirRequest) -> StorageFuture<'_, Entry> {
-        unsupported()
+        unsupported(Operation::CreateDirectory)
     }
 
     /// Remove a file, link itself, or empty directory; preserve the instance root.
     fn remove_entry(&self, _request: StorageRemoveEntryRequest) -> StorageFuture<'_, ()> {
-        unsupported()
+        unsupported(Operation::Remove)
     }
 
     /// Rename an entry within this instance according to its replacement policy.
     fn move_entry(&self, _request: StorageMoveEntryRequest) -> StorageFuture<'_, Entry> {
-        unsupported()
+        unsupported(Operation::Rename)
     }
 }
 
@@ -106,28 +109,36 @@ pub trait StorageFileWriter: Send {
 
     /// Publish the completed write and return its metadata. Publication semantics
     /// are backend-specific; this interface does not promise power-loss durability.
-    /// A failure whose publication outcome cannot be determined is classified as
-    /// OutcomeUnknown. Callers must not infer rollback or blindly retry it.
+    /// A failure whose publication outcome cannot be determined is reported with
+    /// MutationOutcome::Unknown. Callers must not infer rollback or blindly retry it.
     fn commit(&mut self) -> StorageFuture<'_, Entry>;
 
     /// Cancel the pending write and release its temporary resources.
     fn abort(&mut self) -> StorageFuture<'_, ()>;
 }
 
-fn unsupported<T: Send + 'static>() -> StorageFuture<'static, T> {
-    Box::pin(async { Err(StorageError::new(StorageErrorKind::UnsupportedOperation)) })
+fn unsupported<T: Send + 'static>(operation: Operation) -> StorageFuture<'static, T> {
+    Box::pin(async move {
+        Err(StorageError::without_effects(
+            operation,
+            Failure::Rejected(Rejection::Unsupported),
+            None,
+        ))
+    })
 }
 
 /// Check independent extension interfaces against the driver's single declaration.
 /// No instance capability negotiation or backend probing is performed.
 pub fn validate_storage_extensions(
-    declared: StorageCapabilities,
+    declared: Capabilities,
     storage: &dyn Storage,
-) -> Result<(), StorageError> {
+) -> Result<(), crate::application::driver_error::LifecycleError> {
     if declared.permissions().can_read() != storage.permissions().is_some()
         || declared.xattrs().can_read() != storage.xattrs().is_some()
     {
-        return Err(StorageError::new(StorageErrorKind::ProtocolViolation));
+        return Err(crate::application::driver_error::LifecycleError::new(
+            crate::application::driver_error::LifecycleFailure::InvalidDeclaration,
+        ));
     }
     Ok(())
 }

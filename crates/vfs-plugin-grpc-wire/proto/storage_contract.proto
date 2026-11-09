@@ -1,5 +1,6 @@
 syntax = "proto3";
-package assethub.storage.v1;
+package assethub.storage.v2;
+import "plugin.proto";
 
 // A stream binds one instance, uses its root as cwd, and owns one listing
 // one range reader, and one writer. Calls and replies are ordered. Closing a stream discards
@@ -38,14 +39,6 @@ message Command {
     Unit read_next = 14;
   }
 }
-message Timestamp { sint64 seconds = 1; uint32 nanos = 2; }
-enum EntryKind { ENTRY_KIND_UNSPECIFIED = 0; FILE = 1; DIRECTORY = 2; SYMLINK = 3; }
-message Entry {
-  string address = 1;
-  EntryKind kind = 2;
-  optional uint64 size = 3;
-  Timestamp modified = 4;
-}
 message Selection { string address = 1; bytes identity = 2; }
 message Page {
   Selection reported = 1;
@@ -55,32 +48,14 @@ message Page {
   bytes entries = 2;
   oneof completion { Unit end = 3; string after = 4; }
 }
-enum Operation {
-  OPERATION_UNSPECIFIED = 0;
-  STAT = 1;
-  LIST = 2;
-  READ_LINK = 3;
-  WRITE = 4;
-  CREATE_DIRECTORY = 5;
-  REMOVE = 6;
-  GET_PERMISSIONS = 7;
-  READ = 8;
-}
-enum Outcome { OUTCOME_UNSPECIFIED = 0; UNCHANGED = 1; UNKNOWN = 2; }
-message Failure {
-  Operation operation = 1;
-  string family = 2;
-  string reason = 3;
-  Outcome outcome = 4;
-}
 message Reply {
   oneof result {
     Unit unit = 1;
-    Entry entry = 2;
+    assethub.vfs.v4.Entry entry = 2;
     Selection selected_directory = 3;
     Page page = 4;
     bytes link_target = 5;
-    Failure failure = 6;
+    assethub.vfs.v4.StorageFailure failure = 6;
     bytes chunk = 7;
     Unit end_of_file = 8;
   }

@@ -1,3 +1,4 @@
+use ah_vfs_storage::{BackendFailure, Failure, Operation, Rejection, StorageError};
 use std::cell::{Cell, RefCell};
 use vfs_plugin_guest::{Dispatcher, api::*};
 use vfs_plugin_protocol::{self as p, Operation as Op, Value};
@@ -69,7 +70,12 @@ impl GuestStorage for Store {
     fn call(&self, request: p::StorageOp, _: Vec<u8>) -> Result<p::Reply> {
         match request {
             p::StorageOp::Stat(_) => Ok(p::Reply::new(Value::Entry(entry(0)))),
-            _ => Err(p::Failure::new(p::FailureCode::UnsupportedOperation)),
+            _ => Err(StorageError::without_effects(
+                request.storage_operation(),
+                Failure::Rejected(Rejection::Unsupported),
+                None,
+            )
+            .into()),
         }
     }
     fn read(&self, _: String, _: u64, _: Option<u64>) -> Result<Reader> {
@@ -104,7 +110,12 @@ impl GuestWriter for Output {
     fn commit(&self) -> Result<p::Entry> {
         COMMITS.with(|v| v.set(v.get() + 1));
         if self.fail {
-            Err(p::Failure::new(p::FailureCode::OutcomeUnknown))
+            Err(StorageError::after_dispatch(
+                Operation::Write,
+                Failure::Backend(BackendFailure::Other),
+                None,
+            )
+            .into())
         } else {
             Ok(entry(self.bytes.borrow().len() as u64))
         }
@@ -193,7 +204,11 @@ fn metadata_and_commit_are_tagged_protobuf_results() -> TestResult {
     let repeated = p::encode_request("generation", &Op::Commit(p::Handle { handle }), vec![])?;
     assert_eq!(
         p::decode_reply(&dispatcher.call(&repeated))?,
-        Err(p::Failure::new(p::FailureCode::SessionClosed))
+        Err(storage_failure(StorageError::without_effects(
+            Operation::Write,
+            Failure::Backend(BackendFailure::Closed),
+            None
+        )))
     );
     Ok(())
 }
@@ -218,11 +233,19 @@ fn failed_commit_is_terminal_and_release_never_publishes() -> TestResult {
     let request = p::encode_request("generation", &Op::Commit(p::Handle { handle }), vec![])?;
     assert_eq!(
         p::decode_reply(&dispatcher.call(&request))?,
-        Err(p::Failure::new(p::FailureCode::OutcomeUnknown))
+        Err(storage_failure(StorageError::after_dispatch(
+            Operation::Write,
+            Failure::Backend(BackendFailure::Other),
+            None
+        )))
     );
     assert_eq!(
         p::decode_reply(&dispatcher.call(&request))?,
-        Err(p::Failure::new(p::FailureCode::SessionClosed))
+        Err(storage_failure(StorageError::without_effects(
+            Operation::Write,
+            Failure::Backend(BackendFailure::Closed),
+            None
+        )))
     );
     let Value::Writer(p::Handle { handle }) = call(
         &mut dispatcher,
@@ -295,7 +318,7 @@ fn readers_binary_data_and_generation_checks_do_not_rebind_resources() -> TestRe
     )?;
     assert_eq!(
         p::decode_reply(&dispatcher.call(&stale))?,
-        Err(p::Failure::new(p::FailureCode::StaleHandle))
+        Err(p::Failure::new(p::FailureCode::LifecycleStale))
     );
     let wrong = p::encode_request(
         "generation",
@@ -337,7 +360,7 @@ fn capacity_is_checked_before_open_and_released_ids_are_not_reused() -> TestResu
     )?;
     assert_eq!(
         p::decode_reply(&dispatcher.call(&request))?,
-        Err(p::Failure::new(p::FailureCode::CapacityExceeded))
+        Err(p::Failure::new(p::FailureCode::LifecycleCapacityExceeded))
     );
     assert_eq!(OPENS.with(Cell::get), p::MAX_RESOURCES);
     call(
@@ -367,4 +390,8 @@ fn missing_open_configuration_is_invalid_request_without_opening_storage() -> Te
     assert_eq!(error.code, p::FailureCode::InvalidRequest as i32);
     OPENS.with(|opens| assert_eq!(opens.get(), 0));
     Ok(())
+}
+
+fn storage_failure(error: StorageError) -> p::Failure {
+    vfs_plugin_guest::api::Failure::from(error).into()
 }

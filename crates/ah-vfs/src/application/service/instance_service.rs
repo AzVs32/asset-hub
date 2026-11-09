@@ -1,20 +1,15 @@
 //! Driver-independent instance views and mount-reference protection.
 
-use crate::{
-    application::{
-        dto::{
-            InstanceConfig, InstanceConfigSchema, InstanceInfo, InstancePage, InstanceQuery,
-            MountFilter, RemoveInstanceOutcome,
-        },
-        error::InstanceError,
-        mount_runtime::MountRuntime,
-        port::Driver,
-    },
-    domain::{
-        DriverError, DriverInstance, DriverKey,
-        storage::{StorageError, StorageErrorKind},
-    },
+use crate::application::driver_error::DriverError;
+use crate::application::driver_error::{LifecycleError, LifecycleFailure};
+use crate::application::dto::{
+    InstanceConfig, InstanceConfigSchema, InstanceInfo, InstancePage, InstanceQuery, MountFilter,
+    RemoveInstanceOutcome,
 };
+use crate::application::error::InstanceError;
+use crate::application::mount_runtime::MountRuntime;
+use crate::application::port::Driver;
+use crate::domain::{DriverInstance, DriverKey};
 use std::sync::Arc;
 
 /// Host-facing instance management using only registered driver ports.
@@ -59,10 +54,9 @@ impl InstanceService {
     ) -> Result<InstanceInfo, InstanceError> {
         let driver = self.driver(driver_key)?;
         if driver.info().instance_config_schema().is_none() {
-            return Err(DriverError::Storage(StorageError::new(
-                StorageErrorKind::UnsupportedOperation,
-            ))
-            .into());
+            return Err(
+                DriverError::from(LifecycleError::new(LifecycleFailure::Unsupported)).into(),
+            );
         }
         Ok(self
             .runtime

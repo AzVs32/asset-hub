@@ -100,6 +100,7 @@ version = "0.1.0"
 dependencies = [
  "aes-gcm",
  "ah-id",
+ "ah-vfs-storage",
  "bon",
  "derive_more",
  "getset",
@@ -2896,6 +2897,7 @@ name = "vfs-plugin-codec"
 version = "0.1.0"
 dependencies = [
  "ah-vfs",
+ "ah-vfs-storage",
  "semver",
  "vfs-plugin-protocol",
 ]
@@ -2905,6 +2907,7 @@ name = "vfs-plugin-grpc"
 version = "0.1.0"
 dependencies = [
  "ah-vfs",
+ "ah-vfs-storage",
  "tokio",
  "tokio-stream",
  "tonic",
@@ -2954,6 +2957,7 @@ dependencies = [
 name = "vfs-plugin-guest"
 version = "0.1.0"
 dependencies = [
+ "ah-vfs-storage",
  "http",
  "vfs-plugin-protocol",
  "wasip2",
@@ -2964,6 +2968,7 @@ name = "vfs-plugin-host"
 version = "0.1.0"
 dependencies = [
  "ah-vfs",
+ "ah-vfs-storage",
  "tokio",
  "vfs-plugin-codec",
  "vfs-plugin-protocol",
@@ -2991,11 +2996,13 @@ dependencies = [
 name = "vfs-plugin-protocol"
 version = "0.1.0"
 dependencies = [
+ "ah-vfs-storage",
  "prost",
  "prost-build",
  "prost-types",
  "protoc-bin-vendored",
  "serde_json",
+ "thiserror",
 ]
 
 [[package]]
@@ -3003,6 +3010,7 @@ name = "vfs-plugin-wasm"
 version = "0.1.0"
 dependencies = [
  "ah-vfs",
+ "ah-vfs-storage",
  "bytes",
  "http",
  "http-body-util",

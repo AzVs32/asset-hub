@@ -1,13 +1,15 @@
 #![cfg(target_os = "windows")]
 //! End-to-end checks use the actual native plugin executable and a TCP channel.
+use ah_vfs::application::driver_error::LifecycleFailure;
+use ah_vfs_storage::{BackendFailure, Failure, MutationOutcome, Operation};
 mod common;
-use ah_vfs::{
-    application::{driver_catalog::DriverCatalog, dto::*, port::*},
-    domain::storage::{
-        StorageErrorKind, StoragePath, StorageReadFileRequest, StorageStatEntryRequest,
-        StorageWriteFileRequest,
-    },
+use ah_vfs::application::driver_catalog::DriverCatalog;
+use ah_vfs::application::dto::*;
+use ah_vfs::application::port::*;
+use ah_vfs::domain::storage::{
+    StorageReadFileRequest, StorageStatEntryRequest, StorageWriteFileRequest,
 };
+use ah_vfs_storage::StoragePath;
 use std::{
     io::{BufRead, BufReader},
     process::{Child, Command, Stdio},
@@ -131,8 +133,8 @@ async fn native_process_passes_shared_storage_contracts_over_grpc() -> Result {
     .err()
     .ok_or("authentication must fail")?;
     assert_eq!(
-        denied.storage_error().ok_or("category")?.kind(),
-        StorageErrorKind::PermissionDenied
+        denied.lifecycle_error().ok_or("category")?.failure(),
+        LifecycleFailure::AccessDenied
     );
     Ok(())
 }
@@ -158,11 +160,19 @@ async fn process_restart_rejects_old_resources_without_replaying_commit() -> Res
     pending.write_chunk(b"unpublished").await?;
     process.child.kill()?;
     process.child.wait()?;
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while !storage.is_stale() {
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        }
+    })
+    .await?;
     let error = pending.commit().await.err().ok_or("commit must fail")?;
-    assert_eq!(error.kind(), StorageErrorKind::OutcomeUnknown);
+    assert_eq!(error.failure(), Failure::Backend(BackendFailure::Stale));
+    assert_eq!(error.operation(), Operation::Write);
+    assert_eq!(error.outcome(), MutationOutcome::Unchanged);
     assert_eq!(
-        pending.commit().await.err().ok_or("terminal")?.kind(),
-        StorageErrorKind::SessionClosed
+        pending.commit().await.err().ok_or("terminal")?.failure(),
+        Failure::Backend(BackendFailure::Closed)
     );
     assert!(!root.path().join("uncertain").exists());
     let restarted = Process::start(&address)?;
@@ -178,7 +188,7 @@ async fn process_restart_rejects_old_resources_without_replaying_commit() -> Res
         .await
         .err()
         .ok_or("old generation must fail")?;
-    assert_eq!(old.kind(), StorageErrorKind::StaleHandle);
+    assert_eq!(old.failure(), Failure::Backend(BackendFailure::Stale));
     assert_eq!(
         common::registry(fresh.as_ref(), records.clone())
             .await?

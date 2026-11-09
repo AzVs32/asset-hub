@@ -1,14 +1,13 @@
+use ah_vfs_storage::{BackendFailure, Failure, Rejection};
 mod common;
 
-use ah_vfs::{
-    application::port::{Driver, Storage, validate_storage_extensions},
-    domain::storage::{
-        AttributeSupport, EntryKind, StorageCreateDirRequest, StorageDirQuery,
-        StorageErrorKind as Kind, StorageMoveEntryRequest, StorageReadFileRequest,
-        StorageRemoveEntryRequest, StorageStatEntryRequest, StorageWriteFileMode,
-        StorageWriteFileRequest,
-    },
+use ah_vfs::application::port::{Driver, Storage, validate_storage_extensions};
+use ah_vfs::domain::storage::{
+    StorageCreateDirRequest, StorageDirQuery, StorageMoveEntryRequest, StorageReadFileRequest,
+    StorageRemoveEntryRequest, StorageStatEntryRequest, StorageWriteFileRequest,
 };
+use ah_vfs_storage::EntryType;
+use ah_vfs_storage::{AttributeSupport, WriteMode};
 use common::*;
 use std::{num::NonZeroUsize, sync::Arc};
 use vfs_driver_memory::{Capacity, CapacityUnit, MemoryDriver, MemoryStorage};
@@ -30,8 +29,7 @@ async fn declarations_cover_all_ports_and_optional_attributes_are_absent() -> Te
     let root = storage
         .stat_entry(StorageStatEntryRequest { path: path("")? })
         .await?;
-    assert_eq!(root.kind, EntryKind::Dir);
-    assert_eq!(root.size, None);
+    assert_eq!(root.entry_type(), EntryType::Directory);
     Ok(())
 }
 
@@ -46,16 +44,26 @@ async fn publication_is_staged_and_commit_is_terminal() -> TestResult {
     assert!(!exists(&storage, "file").await?);
     assert_eq!(storage.used_bytes(), 6);
     let metadata = writer.commit().await?;
-    assert_eq!(metadata.path, path("file")?);
-    assert_eq!(metadata.size, Some(6));
+    assert_eq!(metadata.path(), &path("file")?);
+    assert_eq!(metadata.entry_type(), EntryType::file(Some(6)));
     assert_eq!(get(&storage, "file").await?, b"onetwo");
     assert_eq!(
-        writer.commit().await.err().ok_or("expected closed")?.kind(),
-        Kind::SessionClosed
+        writer
+            .commit()
+            .await
+            .err()
+            .ok_or("expected closed")?
+            .failure(),
+        Failure::Backend(BackendFailure::Closed)
     );
     assert_eq!(
-        writer.abort().await.err().ok_or("expected closed")?.kind(),
-        Kind::SessionClosed
+        writer
+            .abort()
+            .await
+            .err()
+            .ok_or("expected closed")?
+            .failure(),
+        Failure::Backend(BackendFailure::Closed)
     );
     assert_eq!(
         writer
@@ -63,8 +71,8 @@ async fn publication_is_staged_and_commit_is_terminal() -> TestResult {
             .await
             .err()
             .ok_or("expected closed")?
-            .kind(),
-        Kind::SessionClosed
+            .failure(),
+        Failure::Backend(BackendFailure::Closed)
     );
     Ok(())
 }
@@ -79,8 +87,13 @@ async fn abort_drop_and_unpolled_operations_never_publish_or_leak_quota() -> Tes
     writer.abort().await?;
     assert_eq!(storage.used_bytes(), 0);
     assert_eq!(
-        writer.abort().await.err().ok_or("expected closed")?.kind(),
-        Kind::SessionClosed
+        writer
+            .abort()
+            .await
+            .err()
+            .ok_or("expected closed")?
+            .failure(),
+        Failure::Backend(BackendFailure::Closed)
     );
     {
         let mut writer = storage
@@ -143,8 +156,8 @@ async fn quota_counts_staging_and_failure_preserves_accepted_bytes() -> TestResu
             .await
             .err()
             .ok_or("expected full")?
-            .kind(),
-        Kind::CapacityExceeded
+            .failure(),
+        Failure::Backend(BackendFailure::CapacityExceeded)
     );
     assert_eq!(storage.used_bytes(), 5);
     two.write_chunk(b"678").await?;
@@ -154,8 +167,8 @@ async fn quota_counts_staging_and_failure_preserves_accepted_bytes() -> TestResu
             .await
             .err()
             .ok_or("expected full")?
-            .kind(),
-        Kind::CapacityExceeded
+            .failure(),
+        Failure::Backend(BackendFailure::CapacityExceeded)
     );
     one.commit().await?;
     two.commit().await?;
@@ -178,7 +191,7 @@ async fn readers_pin_old_versions_and_their_capacity_until_released() -> TestRes
     let mut writer = storage
         .write_file(StorageWriteFileRequest {
             path: path("file")?,
-            mode: StorageWriteFileMode::Replace,
+            mode: WriteMode::Replace,
             require_atomic_publish: true,
         })
         .await?;
@@ -211,7 +224,7 @@ async fn full_capacity_replacement_requires_staging_room_and_keeps_original_on_a
     let mut writer = storage
         .write_file(StorageWriteFileRequest {
             path: path("file")?,
-            mode: StorageWriteFileMode::Replace,
+            mode: WriteMode::Replace,
             require_atomic_publish: true,
         })
         .await?;
@@ -221,8 +234,8 @@ async fn full_capacity_replacement_requires_staging_room_and_keeps_original_on_a
             .await
             .err()
             .ok_or("expected full")?
-            .kind(),
-        Kind::CapacityExceeded
+            .failure(),
+        Failure::Backend(BackendFailure::CapacityExceeded)
     );
     writer.abort().await?;
     assert_eq!(get(&storage, "file").await?, b"full");
@@ -249,11 +262,13 @@ async fn directories_and_unicode_name_pagination_remain_hierarchical() -> TestRe
                 limit: NonZeroUsize::new(2).ok_or("limit")?,
             })
             .await?;
-        names.extend(
-            page.entries
-                .iter()
-                .map(|entry| entry.path.name().unwrap_or("").to_owned()),
-        );
+        names.extend(page.entries.iter().map(|entry| {
+            entry
+                .path()
+                .name()
+                .map(|name| name.as_str().to_owned())
+                .unwrap_or_default()
+        }));
         after = page.next_after;
         if after.is_none() {
             break;
@@ -266,20 +281,11 @@ async fn directories_and_unicode_name_pagination_remain_hierarchical() -> TestRe
             .await
             .err()
             .ok_or("not empty")?
-            .kind(),
-        Kind::DirNotEmpty
+            .failure(),
+        Failure::Rejected(Rejection::DirectoryNotEmpty)
     );
     for after in ["a/b", "..", "", "a:b"] {
-        let failure = storage
-            .list_entries(StorageDirQuery {
-                path: path("dir")?,
-                after: Some(after.into()),
-                limit: NonZeroUsize::MIN,
-            })
-            .await
-            .err()
-            .ok_or("invalid cursor")?;
-        assert_eq!(failure.kind(), Kind::InvalidPath);
+        assert!(ah_vfs_storage::EntryName::parse(after).is_err());
     }
     assert_eq!(
         storage
@@ -291,8 +297,8 @@ async fn directories_and_unicode_name_pagination_remain_hierarchical() -> TestRe
             .await
             .err()
             .ok_or("limit")?
-            .kind(),
-        Kind::InvalidRequest
+            .failure(),
+        Failure::Rejected(Rejection::LimitExceeded)
     );
     Ok(())
 }
@@ -307,8 +313,8 @@ async fn invalid_parents_types_and_root_mutations_have_domain_errors() -> TestRe
             .await
             .err()
             .ok_or("parent")?
-            .kind(),
-        Kind::NotFound
+            .failure(),
+        Failure::Rejected(Rejection::NotFound)
     );
     assert_eq!(
         storage
@@ -316,8 +322,8 @@ async fn invalid_parents_types_and_root_mutations_have_domain_errors() -> TestRe
             .await
             .err()
             .ok_or("parent")?
-            .kind(),
-        Kind::NotDir
+            .failure(),
+        Failure::Rejected(Rejection::NotDirectory)
     );
     assert_eq!(
         storage
@@ -327,8 +333,8 @@ async fn invalid_parents_types_and_root_mutations_have_domain_errors() -> TestRe
             .await
             .err()
             .ok_or("parent")?
-            .kind(),
-        Kind::NotDir
+            .failure(),
+        Failure::Rejected(Rejection::NotDirectory)
     );
     assert_eq!(
         storage
@@ -336,8 +342,8 @@ async fn invalid_parents_types_and_root_mutations_have_domain_errors() -> TestRe
             .await
             .err()
             .ok_or("dir")?
-            .kind(),
-        Kind::IsDir
+            .failure(),
+        Failure::Rejected(Rejection::IsDirectory)
     );
     assert_eq!(
         storage
@@ -345,8 +351,8 @@ async fn invalid_parents_types_and_root_mutations_have_domain_errors() -> TestRe
             .await
             .err()
             .ok_or("file")?
-            .kind(),
-        Kind::NotDir
+            .failure(),
+        Failure::Rejected(Rejection::NotDirectory)
     );
     assert_eq!(
         storage
@@ -354,8 +360,8 @@ async fn invalid_parents_types_and_root_mutations_have_domain_errors() -> TestRe
             .await
             .err()
             .ok_or("root")?
-            .kind(),
-        Kind::RootProtected
+            .failure(),
+        Failure::Rejected(Rejection::RootProtected)
     );
     assert_eq!(
         storage
@@ -363,8 +369,8 @@ async fn invalid_parents_types_and_root_mutations_have_domain_errors() -> TestRe
             .await
             .err()
             .ok_or("root")?
-            .kind(),
-        Kind::RootProtected
+            .failure(),
+        Failure::Rejected(Rejection::RootProtected)
     );
     assert_eq!(
         storage
@@ -375,8 +381,8 @@ async fn invalid_parents_types_and_root_mutations_have_domain_errors() -> TestRe
             .await
             .err()
             .ok_or("parent")?
-            .kind(),
-        Kind::NotDir
+            .failure(),
+        Failure::Rejected(Rejection::NotDirectory)
     );
     assert!(!exists(&storage, "nested").await?);
     Ok(())
@@ -409,8 +415,8 @@ async fn subtree_rename_and_atomic_replacement_preserve_contents() -> TestResult
             .await
             .err()
             .ok_or("exists")?
-            .kind(),
-        Kind::AlreadyExists
+            .failure(),
+        Failure::Rejected(Rejection::AlreadyExists)
     );
     storage
         .move_entry(StorageMoveEntryRequest {
@@ -432,13 +438,17 @@ async fn failed_renames_leave_every_entry_and_quota_unchanged() -> TestResult {
     mkdir(&storage, "other/sub").await?;
     put(&storage, "file", b"data").await?;
     for (source, destination, expected) in [
-        ("dir", "dir/sub/new", Kind::InvalidRequest),
-        ("dir", "other", Kind::DirNotEmpty),
-        ("dir", "file", Kind::NotDir),
-        ("file", "dir", Kind::IsDir),
-        ("", "new", Kind::RootProtected),
-        ("file", "", Kind::RootProtected),
-        ("missing", "new", Kind::NotFound),
+        ("dir", "dir/sub/new", Failure::Rejected(Rejection::Conflict)),
+        (
+            "dir",
+            "other",
+            Failure::Rejected(Rejection::DirectoryNotEmpty),
+        ),
+        ("dir", "file", Failure::Rejected(Rejection::NotDirectory)),
+        ("file", "dir", Failure::Rejected(Rejection::IsDirectory)),
+        ("", "new", Failure::Rejected(Rejection::RootProtected)),
+        ("file", "", Failure::Rejected(Rejection::RootProtected)),
+        ("missing", "new", Failure::Rejected(Rejection::NotFound)),
     ] {
         assert_eq!(
             storage
@@ -450,7 +460,7 @@ async fn failed_renames_leave_every_entry_and_quota_unchanged() -> TestResult {
                 .await
                 .err()
                 .ok_or("expected failure")?
-                .kind(),
+                .failure(),
             expected
         );
     }
@@ -469,8 +479,8 @@ async fn failed_renames_leave_every_entry_and_quota_unchanged() -> TestResult {
             .await
             .err()
             .ok_or("too long")?
-            .kind(),
-        Kind::InvalidPath
+            .failure(),
+        Failure::Rejected(Rejection::PathTooLong)
     );
     assert!(exists(&storage, "dir/sub").await?);
     Ok(())
@@ -489,12 +499,17 @@ async fn changed_parent_rejects_publication_and_failed_commit_is_terminal() -> T
         .await?;
     mkdir(&storage, "dir").await?;
     assert_eq!(
-        writer.commit().await.err().ok_or("parent changed")?.kind(),
-        Kind::Conflict
+        writer
+            .commit()
+            .await
+            .err()
+            .ok_or("parent changed")?
+            .failure(),
+        Failure::Rejected(Rejection::Conflict)
     );
     assert_eq!(
-        writer.commit().await.err().ok_or("closed")?.kind(),
-        Kind::SessionClosed
+        writer.commit().await.err().ok_or("closed")?.failure(),
+        Failure::Backend(BackendFailure::Closed)
     );
     assert_eq!(storage.used_bytes(), 0);
     assert!(!exists(&storage, "dir/file").await?);
@@ -514,7 +529,10 @@ async fn concurrent_create_new_publication_has_one_winner_and_refunds_loser() ->
     two.write_chunk(b"two").await?;
     let (first, second) = tokio::join!(one.commit(), two.commit());
     assert!(first.is_ok());
-    assert_eq!(second.err().ok_or("conflict")?.kind(), Kind::AlreadyExists);
+    assert_eq!(
+        second.err().ok_or("conflict")?.failure(),
+        Failure::Rejected(Rejection::AlreadyExists)
+    );
     assert_eq!(storage.used_bytes(), 3);
     assert_eq!(get(&storage, "file").await?, b"one");
     Ok(())
@@ -528,23 +546,25 @@ async fn concurrent_writers_cannot_overcommit_instance_quota() -> TestResult {
     for index in 0..8 {
         let storage = storage.clone();
         let barrier = barrier.clone();
+        let file = path(&format!("file{index}"))?;
         tasks.push(tokio::spawn(async move {
             let mut writer = storage
-                .write_file(StorageWriteFileRequest::new(
-                    ah_vfs::domain::storage::StoragePath::parse(&format!("file{index}"))?,
-                ))
+                .write_file(StorageWriteFileRequest::new(file))
                 .await?;
             barrier.wait().await;
             writer.write_chunk(b"1234").await?;
             writer.commit().await?;
-            Ok::<_, ah_vfs::domain::storage::StorageError>(())
+            Ok::<_, ah_vfs_storage::StorageError>(())
         }));
     }
     let mut success = 0;
     for task in tasks {
         match task.await? {
             Ok(()) => success += 1,
-            Err(error) => assert_eq!(error.kind(), Kind::CapacityExceeded),
+            Err(error) => assert_eq!(
+                error.failure(),
+                Failure::Backend(BackendFailure::CapacityExceeded)
+            ),
         }
     }
     assert_eq!(success, 4);
@@ -565,6 +585,9 @@ async fn streams_keep_resources_alive_after_the_storage_handle_is_dropped() -> T
     drop(storage);
     assert_eq!(collect(reader.as_mut()).await?, b"retained");
     writer.write_chunk(b"new").await?;
-    assert_eq!(writer.commit().await?.size, Some(3));
+    assert_eq!(
+        writer.commit().await?.entry_type(),
+        EntryType::file(Some(3))
+    );
     Ok(())
 }

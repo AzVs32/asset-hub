@@ -2,7 +2,7 @@
 //! The service is independent of plugin registration and binds one configured
 //! instance. One stream owns its active writer and listing.
 use crate::{ServerLimits, limits, security::AuthToken};
-use ah_vfs::domain::DriverError;
+use ah_vfs::application::driver_error::DriverError;
 use ah_vfs_storage as d;
 use std::{pin::Pin, sync::Arc};
 use tokio::sync::mpsc;

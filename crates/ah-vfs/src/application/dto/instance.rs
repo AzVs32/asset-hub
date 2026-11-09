@@ -1,9 +1,8 @@
 //! Public instance views and driver-scoped live pagination.
 
-use crate::domain::{
-    DriverError, InstanceId,
-    storage::{StorageError, StorageErrorKind},
-};
+use crate::application::driver_error::DriverError;
+use crate::application::driver_error::{LifecycleError, LifecycleFailure};
+use crate::domain::InstanceId;
 use std::{collections::BTreeMap, num::NonZeroUsize};
 
 /// Public information about one registered instance, not a live storage handle.
@@ -36,7 +35,7 @@ impl InstanceQuery {
     /// Zero cannot be represented by the input type.
     pub fn new(limit: NonZeroUsize) -> Result<Self, DriverError> {
         if limit.get() > Self::MAX_LIMIT {
-            return Err(StorageError::new(StorageErrorKind::InvalidRequest).into());
+            return Err(LifecycleError::new(LifecycleFailure::InvalidRequest).into());
         }
         Ok(Self { after: None, limit })
     }

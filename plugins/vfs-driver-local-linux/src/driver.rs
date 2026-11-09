@@ -1,22 +1,18 @@
 //! Stateless local-directory validation and storage opening.
 use crate::{LinuxLocalDriverError, LinuxLocalStorage};
-use ah_vfs::{
-    application::{
-        driver_info::DriverInfo,
-        dto::{
-            InstanceConfig, InstanceConfigSchema, instance_config_string,
-            validate_instance_config_fields,
-        },
-        port::{Driver, DriverFuture, InstanceProvisioner, OpenContext, PreparedConfig, Storage},
-    },
-    domain::{
-        DriverError, DriverKey, InstanceConfigErrorKind,
-        namespace::ChildMountPolicy,
-        storage::{
-            AttributeSupport, DirModel, FileReadSupport, FileWriteSupport, RenameSupport,
-            StorageCapabilities, StorageCapabilitiesError,
-        },
-    },
+use ah_vfs::application::driver_error::{DriverError, InstanceConfigErrorKind};
+use ah_vfs::application::driver_info::DriverInfo;
+use ah_vfs::application::dto::{
+    InstanceConfig, InstanceConfigSchema, instance_config_string, validate_instance_config_fields,
+};
+use ah_vfs::application::port::{
+    Driver, DriverFuture, InstanceProvisioner, OpenContext, PreparedConfig, Storage,
+};
+use ah_vfs::domain::DriverKey;
+use ah_vfs::domain::namespace::ChildMountPolicy;
+use ah_vfs_storage::{
+    AttributeSupport, Capabilities, DirectorySupport, ReadSupport, RenameSupport, WriteModes,
+    WriteSupport,
 };
 
 use std::{
@@ -30,27 +26,17 @@ pub struct LinuxLocalDriver {
     info: DriverInfo,
 }
 impl LinuxLocalDriver {
-    fn supported_capabilities() -> Result<StorageCapabilities, StorageCapabilitiesError> {
-        StorageCapabilities::builder()
-            .stat_entry(true)
-            .list_entries(true)
-            .read_file(FileReadSupport::Range)
-            .write_file(FileWriteSupport {
-                create_new: true,
-                replace: true,
-                atomic_publish: true,
-            })
-            .dir_model(DirModel::Hierarchical)
-            .persistent_empty_dirs(true)
-            .create_dir(true)
-            .remove_entry(true)
-            .rename(RenameSupport {
-                no_replace: true,
-                replace: true,
-            })
-            .permissions(AttributeSupport::ReadWrite)
-            .xattrs(AttributeSupport::ReadWrite)
-            .build()
+    fn supported_capabilities() -> Capabilities {
+        Capabilities::default()
+            .with_stat(true)
+            .with_list(true)
+            .with_read(ReadSupport::Range)
+            .with_write(WriteSupport::staged(WriteModes::Both, true))
+            .with_directories(DirectorySupport::hierarchical(true, true))
+            .with_remove(true)
+            .with_rename(RenameSupport::Both)
+            .with_permissions(AttributeSupport::ReadWrite)
+            .with_xattrs(AttributeSupport::ReadWrite)
     }
 
     pub const KEY: &str = "local";
@@ -58,7 +44,7 @@ impl LinuxLocalDriver {
         Ok(Self {
             info: DriverInfo::builder()
                 .maybe_instance_config_schema(instance_config_schema())
-                .capabilities(Self::supported_capabilities()?)
+                .capabilities(Self::supported_capabilities())
                 .key(DriverKey::parse(Self::KEY).map_err(LinuxLocalDriverError::from)?)
                 .name("Local filesystem".into())
                 .version(semver::Version::new(0, 1, 0))

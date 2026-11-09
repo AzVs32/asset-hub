@@ -5,17 +5,15 @@
 //! and annotations hidden in combinators/patterns are unsupported. Other JSON
 //! Schema validation remains authoritative inside the driver/provisioner.
 use super::dto::InstanceConfigSchema;
-use crate::domain::{
-    DriverError,
-    storage::{StorageError, StorageErrorKind},
-};
+use crate::application::driver_error::DriverError;
+use crate::application::driver_error::{LifecycleError, LifecycleFailure};
 use serde_json::Value;
 
-fn failure(kind: StorageErrorKind) -> DriverError {
-    StorageError::new(kind).into()
+fn failure(kind: LifecycleFailure) -> DriverError {
+    LifecycleError::new(kind).into()
 }
 fn invalid() -> DriverError {
-    failure(StorageErrorKind::ProtocolViolation)
+    failure(LifecycleFailure::InvalidDeclaration)
 }
 
 /// Check the shared metadata profile before initializing a driver. This does
@@ -67,11 +65,11 @@ pub(crate) fn validate_annotations(schema: &Value) -> Result<(), DriverError> {
                     if value.is_object() {
                         validate_annotations(value)?;
                     } else if !value.is_boolean() {
-                        return Err(failure(StorageErrorKind::UnsupportedOperation));
+                        return Err(failure(LifecycleFailure::Unsupported));
                     }
                 }
                 "$ref" | "$dynamicRef" | "$recursiveRef" => {
-                    return Err(failure(StorageErrorKind::UnsupportedOperation));
+                    return Err(failure(LifecycleFailure::Unsupported));
                 }
                 "x-secret" | "x-immutable" => {
                     if !value.is_boolean() {
@@ -82,7 +80,7 @@ pub(crate) fn validate_annotations(schema: &Value) -> Result<(), DriverError> {
                     || has_annotation(value, "x-secret")
                     || has_annotation(value, "x-immutable") =>
                 {
-                    return Err(failure(StorageErrorKind::UnsupportedOperation));
+                    return Err(failure(LifecycleFailure::Unsupported));
                 }
                 _ => {}
             }

@@ -17,10 +17,9 @@ use super::{
         PreparedConfig, SecretCipher, SecretContext,
     },
 };
-use crate::domain::{
-    DriverError, DriverInstance, DriverKey, InstanceId,
-    storage::{StorageError, StorageErrorKind},
-};
+use crate::application::driver_error::DriverError;
+use crate::application::driver_error::{LifecycleError, LifecycleFailure};
+use crate::domain::{DriverInstance, DriverKey, InstanceId};
 use serde_json::Value;
 use std::{
     collections::BTreeMap,
@@ -28,23 +27,22 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-fn failure(kind: StorageErrorKind) -> DriverError {
-    StorageError::new(kind).into()
+fn failure(kind: LifecycleFailure) -> DriverError {
+    LifecycleError::new(kind).into()
 }
 fn cipher_failure(source: DriverError) -> DriverError {
-    let kind = match &source {
-        DriverError::Storage(error) => error.kind(),
-        _ => StorageErrorKind::Backend,
-    };
-    StorageError::with_source(kind, source).into()
+    let failure = source
+        .lifecycle_error()
+        .map_or(LifecycleFailure::Backend, LifecycleError::failure);
+    LifecycleError::with_source(failure, source).into()
 }
 fn invalid() -> DriverError {
-    failure(StorageErrorKind::InvalidData)
+    failure(LifecycleFailure::InvalidRecord)
 }
 fn migration_failure(source: DriverError) -> DriverError {
     match source {
-        error @ DriverError::Storage(_) => error,
-        error => StorageError::with_source(StorageErrorKind::InvalidData, error).into(),
+        error @ DriverError::Lifecycle(_) => error,
+        error => LifecycleError::with_source(LifecycleFailure::InvalidRecord, error).into(),
     }
 }
 fn pointer(base: &str, key: &str) -> String {
@@ -132,10 +130,10 @@ fn now() -> Result<u64, DriverError> {
     u64::try_from(
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map_err(|source| StorageError::with_source(StorageErrorKind::InvalidData, source))?
+            .map_err(|source| LifecycleError::with_source(LifecycleFailure::InvalidRecord, source))?
             .as_millis(),
     )
-    .map_err(|source| StorageError::with_source(StorageErrorKind::InvalidData, source).into())
+    .map_err(|source| LifecycleError::with_source(LifecycleFailure::InvalidRecord, source).into())
 }
 
 /// One driver's host-owned registry. Supports nested properties, array items and
@@ -172,12 +170,12 @@ impl HostInstanceRegistry {
         let schema = serde_json::to_value(
             self.schema
                 .as_ref()
-                .ok_or_else(|| failure(StorageErrorKind::UnsupportedOperation))?,
+                .ok_or_else(|| failure(LifecycleFailure::Unsupported))?,
         )
-        .map_err(|source| StorageError::with_source(StorageErrorKind::InvalidData, source))?;
+        .map_err(|source| LifecycleError::with_source(LifecycleFailure::InvalidRecord, source))?;
         validate_annotations(&schema)?;
         if has_annotation(&schema, "x-secret") && self.cipher.is_none() {
-            return Err(failure(StorageErrorKind::UnsupportedOperation));
+            return Err(failure(LifecycleFailure::Unsupported));
         }
         Ok(schema)
     }
@@ -197,7 +195,7 @@ impl HostInstanceRegistry {
             let cipher = self
                 .cipher
                 .as_ref()
-                .ok_or_else(|| failure(StorageErrorKind::UnsupportedOperation))?;
+                .ok_or_else(|| failure(LifecycleFailure::Unsupported))?;
             let target = value.pointer_mut(path).ok_or_else(invalid)?;
             let plaintext = cipher
                 .decrypt(
@@ -207,11 +205,12 @@ impl HostInstanceRegistry {
                 .await
                 .map_err(cipher_failure)?;
             *target = serde_json::from_slice(&plaintext).map_err(|source| {
-                StorageError::with_source(StorageErrorKind::InvalidData, source)
+                LifecycleError::with_source(LifecycleFailure::InvalidRecord, source)
             })?;
         }
-        let fields: BTreeMap<String, Value> = serde_json::from_value(value)
-            .map_err(|source| StorageError::with_source(StorageErrorKind::InvalidData, source))?;
+        let fields: BTreeMap<String, Value> = serde_json::from_value(value).map_err(|source| {
+            LifecycleError::with_source(LifecycleFailure::InvalidRecord, source)
+        })?;
         Ok(fields.into())
     }
     async fn prepare(&self, config: InstanceConfig) -> Result<PreparedConfig, DriverError> {
@@ -220,7 +219,7 @@ impl HostInstanceRegistry {
             Err(DriverError::InvalidInstanceConfig { field, kind }) => {
                 let schema = self.schema()?;
                 let value = serde_json::to_value(config.into_object()).map_err(|source| {
-                    StorageError::with_source(StorageErrorKind::InvalidData, source)
+                    LifecycleError::with_source(LifecycleFailure::InvalidRecord, source)
                 })?;
                 let mut locations = Vec::new();
                 paths(&schema, &value, "x-secret", "", &mut locations);
@@ -237,9 +236,9 @@ impl HostInstanceRegistry {
                     kind,
                 })
             }
-            Err(error @ DriverError::Storage(_)) => Err(error),
+            Err(error @ DriverError::Lifecycle(_)) => Err(error),
             Err(error) => {
-                Err(StorageError::with_source(StorageErrorKind::InvalidRequest, error).into())
+                Err(LifecycleError::with_source(LifecycleFailure::InvalidRequest, error).into())
             }
         }
     }
@@ -250,13 +249,16 @@ impl HostInstanceRegistry {
         raw: &InstanceConfig,
     ) -> Result<Envelope, DriverError> {
         let schema = self.schema()?;
-        let mut value = serde_json::to_value(prepared.config().clone().into_object())
-            .map_err(|source| StorageError::with_source(StorageErrorKind::InvalidData, source))?;
+        let mut value =
+            serde_json::to_value(prepared.config().clone().into_object()).map_err(|source| {
+                LifecycleError::with_source(LifecycleFailure::InvalidRecord, source)
+            })?;
         let mut secret_paths = Vec::new();
         paths(&schema, &value, "x-secret", "", &mut secret_paths);
         let mut secrets = Vec::new();
-        let raw_value = serde_json::to_value(raw.clone().into_object())
-            .map_err(|source| StorageError::with_source(StorageErrorKind::InvalidData, source))?;
+        let raw_value = serde_json::to_value(raw.clone().into_object()).map_err(|source| {
+            LifecycleError::with_source(LifecycleFailure::InvalidRecord, source)
+        })?;
         let mut raw_paths = Vec::new();
         paths(&schema, &raw_value, "x-secret", "", &mut raw_paths);
         for path in raw_paths {
@@ -268,22 +270,23 @@ impl HostInstanceRegistry {
             let cipher = self
                 .cipher
                 .as_ref()
-                .ok_or_else(|| failure(StorageErrorKind::UnsupportedOperation))?;
+                .ok_or_else(|| failure(LifecycleFailure::Unsupported))?;
             let target = value.pointer_mut(path).ok_or_else(invalid)?;
             redaction_values(target, &mut secrets);
             let plaintext = serde_json::to_vec(target).map_err(|source| {
-                StorageError::with_source(StorageErrorKind::InvalidData, source)
+                LifecycleError::with_source(LifecycleFailure::InvalidRecord, source)
             })?;
             let ciphertext = cipher
                 .encrypt(&plaintext, self.secret_context(id, path.clone()))
                 .await
                 .map_err(cipher_failure)?;
             *target = serde_json::to_value(ciphertext).map_err(|source| {
-                StorageError::with_source(StorageErrorKind::InvalidData, source)
+                LifecycleError::with_source(LifecycleFailure::InvalidRecord, source)
             })?;
         }
-        let mut details = serde_json::to_value(prepared.details())
-            .map_err(|source| StorageError::with_source(StorageErrorKind::InvalidData, source))?;
+        let mut details = serde_json::to_value(prepared.details()).map_err(|source| {
+            LifecycleError::with_source(LifecycleFailure::InvalidRecord, source)
+        })?;
         redact(&mut details, &secrets);
         if !details.is_object() {
             details = serde_json::json!({});
@@ -292,7 +295,7 @@ impl HostInstanceRegistry {
             value,
             secret_paths,
             serde_json::from_value(details).map_err(|source| {
-                StorageError::with_source(StorageErrorKind::InvalidData, source)
+                LifecycleError::with_source(LifecycleFailure::InvalidRecord, source)
             })?,
         )
     }
@@ -312,10 +315,13 @@ impl HostInstanceRegistry {
         let schema = self.schema()?;
         let (old, previous) = self.load_current(&id).await?;
         let prepared = self.prepare(config.clone()).await?;
-        let old_value = serde_json::to_value(previous.into_object())
-            .map_err(|source| StorageError::with_source(StorageErrorKind::InvalidData, source))?;
-        let new_value = serde_json::to_value(prepared.config().clone().into_object())
-            .map_err(|source| StorageError::with_source(StorageErrorKind::InvalidData, source))?;
+        let old_value = serde_json::to_value(previous.into_object()).map_err(|source| {
+            LifecycleError::with_source(LifecycleFailure::InvalidRecord, source)
+        })?;
+        let new_value =
+            serde_json::to_value(prepared.config().clone().into_object()).map_err(|source| {
+                LifecycleError::with_source(LifecycleFailure::InvalidRecord, source)
+            })?;
         let mut immutable = Vec::new();
         paths(&schema, &old_value, "x-immutable", "", &mut immutable);
         paths(&schema, &new_value, "x-immutable", "", &mut immutable);
@@ -323,7 +329,7 @@ impl HostInstanceRegistry {
             .iter()
             .any(|path| old_value.pointer(path) != new_value.pointer(path))
         {
-            return Err(failure(StorageErrorKind::InvalidRequest));
+            return Err(failure(LifecycleFailure::InvalidRequest));
         }
         let envelope = self.encode(&id, prepared, &config).await?;
         let next = InstanceRecord::from_envelope(

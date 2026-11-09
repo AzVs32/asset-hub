@@ -16,6 +16,7 @@ expect_used = "warn"
 panic = "warn"
 
 [target.'cfg(target_os = "windows")'.dependencies]
+ah-vfs-storage = { path = "../../crates/ah-vfs-storage", version = "0.1.0" }
 ah-id = { version = "0.1.0", features = ["uuid_v7"] }
 ah-vfs = { path = "../../crates/ah-vfs", version = "0.1.0" }
 vfs-plugin-grpc-server = { path = "../../crates/vfs-plugin-grpc-server", version = "0.1.0" }

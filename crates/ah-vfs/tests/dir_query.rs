@@ -1,10 +1,9 @@
-use ah_vfs::{
-    application::dto::DirQuery,
-    domain::storage::{
-        DEFAULT_DIR_PAGE_LIMIT, MAX_DIR_PAGE_LIMIT, StorageDirQuery, StorageErrorKind, StoragePath,
-        validate_dir_page_limit,
-    },
+use ah_vfs::application::dto::DirQuery;
+use ah_vfs::domain::storage::{
+    DEFAULT_DIR_PAGE_LIMIT, MAX_DIR_PAGE_LIMIT, StorageDirQuery, validate_dir_page_limit,
 };
+use ah_vfs_storage::{EntryName, StoragePath};
+use ah_vfs_storage::{Failure, Rejection};
 use std::{error::Error, num::NonZeroUsize};
 
 type TestResult = Result<(), Box<dyn Error>>;
@@ -26,7 +25,7 @@ fn namespace_and_storage_queries_share_defaults_and_bounds() -> TestResult {
         validate_dir_page_limit(limit)?;
         StorageDirQuery {
             path: StoragePath::root(),
-            after: Some("文件 name".into()),
+            after: Some(EntryName::parse("文件 name")?),
             limit,
         }
         .validate()?;
@@ -34,12 +33,16 @@ fn namespace_and_storage_queries_share_defaults_and_bounds() -> TestResult {
     let limit = NonZeroUsize::new(MAX_DIR_PAGE_LIMIT.get() + 1).ok_or("zero limit")?;
     let query = StorageDirQuery {
         path: StoragePath::root(),
-        after: Some("../invalid".into()),
+        after: None,
         limit,
     };
     assert_eq!(
-        query.validate().err().ok_or("expected limit error")?.kind(),
-        StorageErrorKind::InvalidRequest
+        query
+            .validate()
+            .err()
+            .ok_or("expected limit error")?
+            .failure(),
+        Failure::Rejected(Rejection::LimitExceeded)
     );
     Ok(())
 }
@@ -47,18 +50,11 @@ fn namespace_and_storage_queries_share_defaults_and_bounds() -> TestResult {
 #[test]
 fn invalid_cursors_retain_path_errors_and_full_address_bounds() -> TestResult {
     for name in ["", ".", "..", "a/b", "a\\b", "a:b", "a\0b"] {
-        let query = StorageDirQuery {
-            path: StoragePath::root(),
-            after: Some(name.into()),
-            limit: DEFAULT_DIR_PAGE_LIMIT,
-        };
-        let error = query.validate().err().ok_or("expected path error")?;
-        assert_eq!(error.kind(), StorageErrorKind::InvalidPath);
-        assert!(error.source().is_some());
+        assert!(EntryName::parse(name).is_err());
     }
     let query = StorageDirQuery {
-        path: StoragePath::parse(&"x".repeat(StoragePath::MAX_LEN))?,
-        after: Some("child".into()),
+        path: StoragePath::parse(&"x".repeat(ah_vfs_storage::MAX_PATH_BYTES))?,
+        after: Some(EntryName::parse("child")?),
         limit: DEFAULT_DIR_PAGE_LIMIT,
     };
     assert_eq!(
@@ -66,8 +62,8 @@ fn invalid_cursors_retain_path_errors_and_full_address_bounds() -> TestResult {
             .validate()
             .err()
             .ok_or("expected path overflow")?
-            .kind(),
-        StorageErrorKind::InvalidPath
+            .failure(),
+        Failure::Rejected(Rejection::PathTooLong)
     );
     Ok(())
 }

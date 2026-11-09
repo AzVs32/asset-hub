@@ -142,7 +142,8 @@ impl StoragePath {
     pub fn parent(&self) -> Option<Self> {
         self.split_name().map(|(parent, _)| Self(parent.into()))
     }
-    pub(super) fn entry_names(&self) -> impl Iterator<Item = EntryName> + '_ {
+    /// Iterate over the validated components of this address in order.
+    pub fn entry_names(&self) -> impl DoubleEndedIterator<Item = EntryName> + '_ {
         // The address already contains only validated names. The root has none.
         self.0
             .split_terminator('/')

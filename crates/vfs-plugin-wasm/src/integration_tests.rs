@@ -120,8 +120,8 @@ fn response(body: &[u8]) -> Vec<u8> {
 fn denied(result: std::result::Result<String, DriverError>) -> Result {
     let error = result.err().ok_or("ungranted operation succeeded")?;
     assert_eq!(
-        error.storage_error().ok_or("storage category")?.kind(),
-        StorageErrorKind::PermissionDenied
+        error.lifecycle_error().ok_or("storage category")?.failure(),
+        LifecycleFailure::AccessDenied
     );
     Ok(())
 }
@@ -366,8 +366,8 @@ async fn wasi_http_allows_an_explicit_origin_and_limits_response_body_and_header
             .err()
             .ok_or("response limit ignored")?;
         assert_eq!(
-            error.storage_error().ok_or("category")?.kind(),
-            StorageErrorKind::TooLarge
+            error.lifecycle_error().ok_or("category")?.failure(),
+            LifecycleFailure::CapacityExceeded
         );
         server.await??;
     }
@@ -402,8 +402,8 @@ async fn request_body_and_header_limits_prevent_network_side_effects() -> Result
         .err()
         .ok_or("request limit ignored")?;
         assert_eq!(
-            error.storage_error().ok_or("category")?.kind(),
-            StorageErrorKind::TooLarge
+            error.lifecycle_error().ok_or("category")?.failure(),
+            LifecycleFailure::CapacityExceeded
         );
         assert!(
             tokio::time::timeout(Duration::from_millis(50), listener.accept())
@@ -484,11 +484,11 @@ async fn memory_fuel_and_wall_deadlines_abort_the_instance_and_allow_recovery() 
         .err()
         .ok_or("limit ignored")?;
         assert_eq!(
-            error.storage_error().ok_or("category")?.kind(),
+            error.lifecycle_error().ok_or("category")?.failure(),
             if mode == "timeout" {
-                StorageErrorKind::TimedOut
+                LifecycleFailure::TimedOut
             } else {
-                StorageErrorKind::CapacityExceeded
+                LifecycleFailure::CapacityExceeded
             }
         );
         assert_eq!(
@@ -521,8 +521,8 @@ async fn socket_deadline_releases_the_store_and_closes_the_remote_connection() -
         .err()
         .ok_or("socket did not time out")?;
     assert_eq!(
-        error.storage_error().ok_or("category")?.kind(),
-        StorageErrorKind::TimedOut
+        error.lifecycle_error().ok_or("category")?.failure(),
+        LifecycleFailure::TimedOut
     );
     assert_eq!(
         tokio::time::timeout(Duration::from_secs(2), server).await???,
@@ -555,8 +555,8 @@ async fn http_deadline_cancels_the_pending_connection() -> Result {
         .err()
         .ok_or("HTTP deadline ignored")?;
     assert_eq!(
-        error.storage_error().ok_or("category")?.kind(),
-        StorageErrorKind::TimedOut
+        error.lifecycle_error().ok_or("category")?.failure(),
+        LifecycleFailure::TimedOut
     );
     assert_eq!(
         tokio::time::timeout(Duration::from_secs(2), server).await???,
@@ -599,8 +599,8 @@ async fn components_only_and_configured_storage_concurrency_are_enforced() -> Re
         .err()
         .ok_or("concurrency limit ignored")?;
     assert_eq!(
-        error.storage_error().ok_or("category")?.kind(),
-        StorageErrorKind::CapacityExceeded
+        error.lifecycle_error().ok_or("category")?.failure(),
+        LifecycleFailure::CapacityExceeded
     );
     drop(first);
     // Resource::drop schedules Release on the runtime instead of blocking Drop.
@@ -613,8 +613,8 @@ async fn components_only_and_configured_storage_concurrency_are_enforced() -> Re
             {
                 Ok(fresh) => break Ok::<_, DriverError>(fresh),
                 Err(error)
-                    if error.storage_error().is_some_and(|error| {
-                        error.kind() == StorageErrorKind::CapacityExceeded
+                    if error.lifecycle_error().is_some_and(|error| {
+                        error.failure() == LifecycleFailure::CapacityExceeded
                     }) =>
                 {
                     tokio::task::yield_now().await
@@ -652,8 +652,8 @@ async fn epoch_interrupts_real_guest_cpu_execution() -> Result {
         .err()
         .ok_or("epoch ignored")?;
     interrupt.await?;
-    let error = error.storage_error().ok_or("category")?;
-    assert_eq!(error.kind(), StorageErrorKind::TimedOut);
+    let error = error.lifecycle_error().ok_or("category")?;
+    assert_eq!(error.failure(), LifecycleFailure::TimedOut);
     // An epoch trap carries its Wasmtime source; a wall deadline does not.
     assert!(std::error::Error::source(error).is_some());
     assert_eq!(

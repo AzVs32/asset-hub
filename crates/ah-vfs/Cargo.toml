@@ -13,6 +13,7 @@ workspace = true
 testing = []
 
 [dependencies]
+ah-vfs-storage = { path = "../ah-vfs-storage", version = "0.1.0" }
 ah-id = { workspace = true, features = ["uuid_v7"] }
 bon.workspace = true
 getset.workspace = true

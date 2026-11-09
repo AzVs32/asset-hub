@@ -1,27 +1,22 @@
 //! Driver-independent entry access, namespace overlays and mount-boundary protection.
 
-use crate::{
-    application::{
-        dto::{
-            CreateDirRequest, DirPage, DirQuery, EntryOrigin, EntryView, MoveEntryRequest,
-            ReadFileRequest, RemoveEntryRequest, WriteFileRequest,
-        },
-        error::EntryError,
-        mount_runtime::MountRuntime,
-        port::Storage,
-        session::{FileReadHandle, FileWriteHandle},
-    },
-    domain::{
-        namespace::{Mount, MountTable, VirtualPath},
-        storage::{
-            EntryKind, EntryPermissions, FileReadSupport, MAX_DIR_PAGE_LIMIT, StorageCapabilities,
-            StorageCreateDirRequest, StorageDirQuery, StorageError, StorageErrorKind,
-            StorageMoveEntryRequest, StoragePath, StorageReadFileRequest,
-            StorageRemoveEntryRequest, StorageStatEntryRequest, StorageWriteFileRequest, XattrName,
-            XattrWriteMode, validate_dir_page_limit,
-        },
-    },
+use crate::application::dto::{
+    CreateDirRequest, DirPage, DirQuery, EntryOrigin, EntryView, MoveEntryRequest, ReadFileRequest,
+    RemoveEntryRequest, WriteFileRequest,
 };
+use crate::application::error::EntryError;
+use crate::application::mount_runtime::MountRuntime;
+use crate::application::port::Storage;
+use crate::application::session::{FileReadHandle, FileWriteHandle};
+use crate::domain::namespace::{Mount, MountTable, VirtualPath};
+use crate::domain::storage::{
+    MAX_DIR_PAGE_LIMIT, StorageCreateDirRequest, StorageDirQuery, StorageMoveEntryRequest,
+    StorageReadFileRequest, StorageRemoveEntryRequest, StorageStatEntryRequest,
+    StorageWriteFileRequest, validate_dir_page_limit,
+};
+use ah_vfs_storage::{Capabilities, Publication, ReadRange, RenameMode};
+use ah_vfs_storage::{EntryType, Permissions, StoragePath, XattrName, XattrWriteMode};
+use ah_vfs_storage::{Failure, Operation, Rejection, StorageError};
 
 use std::{collections::BTreeMap, num::NonZeroUsize, sync::Arc};
 
@@ -47,7 +42,7 @@ impl EntryService {
         &self,
         table: &MountTable,
         path: &VirtualPath,
-    ) -> Result<(StoragePath, Arc<dyn Storage>, StorageCapabilities), EntryError> {
+    ) -> Result<(StoragePath, Arc<dyn Storage>, Capabilities), EntryError> {
         let resolution = table.resolve(path)?;
         let reference = resolution.mount().driver_instance();
         let driver = self
@@ -55,25 +50,27 @@ impl EntryService {
             .drivers
             .get(reference.driver_key())
             .ok_or_else(|| EntryError::DriverNotRegistered(reference.driver_key().clone()))?;
-        let relative = resolution.storage_path().map_err(StorageError::from)?;
+        let relative = resolution.storage_path()?;
         let storage = self.runtime.storage(reference, driver.as_ref()).await?;
         Ok((relative, storage, driver.info().capabilities()))
     }
 
-    fn require(supported: bool) -> Result<(), EntryError> {
+    fn require(operation: Operation, supported: bool) -> Result<(), EntryError> {
         if supported {
             Ok(())
         } else {
-            Err(StorageError::new(StorageErrorKind::UnsupportedOperation).into())
+            Err(StorageError::without_effects(
+                operation,
+                Failure::Rejected(Rejection::Unsupported),
+                None,
+            )
+            .into())
         }
     }
 
     /// Driver-wide capabilities for the resolved mount. No instance is opened and
     /// no backend path is probed. This does not report authorization or availability.
-    pub async fn capabilities(
-        &self,
-        path: &VirtualPath,
-    ) -> Result<StorageCapabilities, EntryError> {
+    pub async fn capabilities(&self, path: &VirtualPath) -> Result<Capabilities, EntryError> {
         let table = self.runtime.table().await?;
         let resolution = table.resolve(path)?;
         let key = resolution.mount().driver_instance().driver_key();
@@ -116,7 +113,7 @@ impl EntryService {
             return Ok(EntryView::dir(path.clone(), EntryOrigin::SyntheticDir));
         }
         let (relative, storage, capabilities) = self.open(&table, path).await?;
-        Self::require(capabilities.stat_entry())?;
+        Self::require(Operation::Stat, capabilities.stat())?;
         let entry = storage
             .stat_entry(StorageStatEntryRequest { path: relative })
             .await?;
@@ -144,9 +141,9 @@ impl EntryService {
         let table = self.runtime.table().await?;
         let synthetic = matches!(Self::classify(&table, path), NamespaceEntry::SyntheticDir);
         let (relative, storage, capabilities) = self.open(&table, path).await?;
-        Self::require(capabilities.list_entries())?;
+        Self::require(Operation::List, capabilities.list())?;
         if synthetic {
-            Self::require(capabilities.stat_entry())?;
+            Self::require(Operation::List, capabilities.stat())?;
         }
         let mut entries = BTreeMap::new();
         let mut after = None;
@@ -158,11 +155,12 @@ impl EntryService {
                 })
                 .await
             {
-                Ok(entry) => entry.kind == EntryKind::Dir,
+                Ok(entry) => entry.entry_type() == EntryType::Directory,
                 Err(error)
                     if matches!(
-                        error.kind(),
-                        StorageErrorKind::NotFound | StorageErrorKind::NotDir
+                        error.failure(),
+                        Failure::Rejected(Rejection::NotFound)
+                            | Failure::Rejected(Rejection::NotDirectory)
                     ) =>
                 {
                     false
@@ -186,8 +184,9 @@ impl EntryService {
                     Err(error)
                         if synthetic
                             && matches!(
-                                error.kind(),
-                                StorageErrorKind::NotFound | StorageErrorKind::NotDir
+                                error.failure(),
+                                Failure::Rejected(Rejection::NotFound)
+                                    | Failure::Rejected(Rejection::NotDirectory)
                             ) =>
                     {
                         break;
@@ -195,15 +194,16 @@ impl EntryService {
                     Err(error) => return Err(error.into()),
                 };
                 for entry in page.entries {
-                    if entry.path.parent().as_ref() != Some(&relative) {
+                    if entry.path().parent().as_ref() != Some(&relative) {
                         return Err(EntryError::InvalidStorageResponse(
                             "entry is not an immediate child",
                         ));
                     }
                     let name = entry
-                        .path
+                        .path()
                         .name()
                         .ok_or(EntryError::InvalidStorageResponse("child has no name"))?
+                        .as_str()
                         .to_owned();
                     entries.insert(
                         name.clone(),
@@ -269,14 +269,17 @@ impl EntryService {
             Self::classify(&table, &request.path),
             NamespaceEntry::Backend
         ) {
-            return Err(StorageError::new(StorageErrorKind::IsDir).into());
+            return Err(StorageError::without_effects(
+                Operation::Read,
+                Failure::Rejected(Rejection::IsDirectory),
+                None,
+            )
+            .into());
         }
         let (relative, storage, capabilities) = self.open(&table, &request.path).await?;
-        let support = capabilities.read_file();
-        Self::require(support != FileReadSupport::None)?;
-        Self::require(
-            (request.offset == 0 && request.length.is_none()) || support == FileReadSupport::Range,
-        )?;
+        let range =
+            ReadRange::new(request.offset, request.length).map_err(EntryError::InvalidReadRange)?;
+        Self::require(Operation::Read, capabilities.read().supports(range))?;
         let reader = storage
             .read_file(StorageReadFileRequest {
                 path: relative,
@@ -295,12 +298,15 @@ impl EntryService {
         let table = self.runtime.table().await?;
         Self::protect(&table, &request.path)?;
         let (relative, storage, capabilities) = self.open(&table, &request.path).await?;
-        let support = capabilities.write_file();
-        Self::require(match request.mode {
-            crate::domain::storage::StorageWriteFileMode::CreateNew => support.create_new,
-            crate::domain::storage::StorageWriteFileMode::Replace => support.replace,
-        })?;
-        Self::require(!request.require_atomic_publish || support.atomic_publish)?;
+        let publication = if request.require_atomic_publish {
+            Publication::Atomic
+        } else {
+            Publication::Staged
+        };
+        Self::require(
+            Operation::Write,
+            capabilities.write().supports(request.mode, publication),
+        )?;
         let writer = storage
             .write_file(StorageWriteFileRequest {
                 require_atomic_publish: request.require_atomic_publish,
@@ -321,7 +327,10 @@ impl EntryService {
         let table = self.runtime.table().await?;
         Self::protect(&table, &request.path)?;
         let (relative, storage, capabilities) = self.open(&table, &request.path).await?;
-        Self::require(capabilities.create_dir())?;
+        Self::require(
+            Operation::CreateDirectory,
+            capabilities.directories().can_create(),
+        )?;
         let entry = storage
             .create_dir(StorageCreateDirRequest {
                 path: relative,
@@ -336,7 +345,7 @@ impl EntryService {
         let table = self.runtime.table().await?;
         Self::protect(&table, &request.path)?;
         let (relative, storage, capabilities) = self.open(&table, &request.path).await?;
-        Self::require(capabilities.remove_entry())?;
+        Self::require(Operation::Remove, capabilities.remove())?;
         Ok(storage
             .remove_entry(StorageRemoveEntryRequest { path: relative })
             .await?)
@@ -352,14 +361,14 @@ impl EntryService {
         if source.mount().id() != destination.mount().id() {
             return Err(EntryError::CrossMountMove);
         }
-        let destination = destination.storage_path().map_err(StorageError::from)?;
+        let destination = destination.storage_path()?;
         let (source, storage, capabilities) = self.open(&table, &request.source).await?;
-        let support = capabilities.rename();
-        Self::require(if request.replace {
-            support.replace
+        let mode = if request.replace {
+            RenameMode::Replace
         } else {
-            support.no_replace
-        })?;
+            RenameMode::NoReplace
+        };
+        Self::require(Operation::Rename, capabilities.rename().supports(mode))?;
         let entry = storage
             .move_entry(StorageMoveEntryRequest {
                 source,
@@ -373,24 +382,32 @@ impl EntryService {
         &self,
         path: &VirtualPath,
         write: bool,
-    ) -> Result<(StoragePath, Arc<dyn Storage>, StorageCapabilities), EntryError> {
+        operation: Operation,
+    ) -> Result<(StoragePath, Arc<dyn Storage>, Capabilities), EntryError> {
         let table = self.runtime.table().await?;
         if write {
             Self::protect(&table, path)?;
         }
         if matches!(Self::classify(&table, path), NamespaceEntry::SyntheticDir) {
-            return Err(StorageError::new(StorageErrorKind::UnsupportedOperation).into());
+            return Err(StorageError::without_effects(
+                operation,
+                Failure::Rejected(Rejection::Unsupported),
+                None,
+            )
+            .into());
         }
         self.open(&table, path).await
     }
 
     /// Read POSIX mode bits. Synthetic dirs have no backend attributes.
-    pub async fn get_permissions(
-        &self,
-        path: &VirtualPath,
-    ) -> Result<EntryPermissions, EntryError> {
-        let (relative, storage, capabilities) = self.attribute_storage(path, false).await?;
-        Self::require(capabilities.permissions().can_read())?;
+    pub async fn get_permissions(&self, path: &VirtualPath) -> Result<Permissions, EntryError> {
+        let (relative, storage, capabilities) = self
+            .attribute_storage(path, false, Operation::GetPermissions)
+            .await?;
+        Self::require(
+            Operation::GetPermissions,
+            capabilities.permissions().can_read(),
+        )?;
         let extension = storage
             .permissions()
             .ok_or(EntryError::InvalidStorageResponse(
@@ -403,10 +420,15 @@ impl EntryService {
     pub async fn set_permissions(
         &self,
         path: &VirtualPath,
-        permissions: EntryPermissions,
+        permissions: Permissions,
     ) -> Result<(), EntryError> {
-        let (relative, storage, capabilities) = self.attribute_storage(path, true).await?;
-        Self::require(capabilities.permissions().can_write())?;
+        let (relative, storage, capabilities) = self
+            .attribute_storage(path, true, Operation::SetPermissions)
+            .await?;
+        Self::require(
+            Operation::SetPermissions,
+            capabilities.permissions().can_write(),
+        )?;
         let extension = storage
             .permissions()
             .ok_or(EntryError::InvalidStorageResponse(
@@ -421,8 +443,10 @@ impl EntryService {
         path: &VirtualPath,
         max_bytes: NonZeroUsize,
     ) -> Result<Vec<XattrName>, EntryError> {
-        let (relative, storage, capabilities) = self.attribute_storage(path, false).await?;
-        Self::require(capabilities.xattrs().can_read())?;
+        let (relative, storage, capabilities) = self
+            .attribute_storage(path, false, Operation::ListXattrs)
+            .await?;
+        Self::require(Operation::ListXattrs, capabilities.xattrs().can_read())?;
         let extension = storage.xattrs().ok_or(EntryError::InvalidStorageResponse(
             "missing xattr extension",
         ))?;
@@ -436,8 +460,10 @@ impl EntryService {
         name: XattrName,
         max_bytes: NonZeroUsize,
     ) -> Result<Vec<u8>, EntryError> {
-        let (relative, storage, capabilities) = self.attribute_storage(path, false).await?;
-        Self::require(capabilities.xattrs().can_read())?;
+        let (relative, storage, capabilities) = self
+            .attribute_storage(path, false, Operation::GetXattr)
+            .await?;
+        Self::require(Operation::GetXattr, capabilities.xattrs().can_read())?;
         let extension = storage.xattrs().ok_or(EntryError::InvalidStorageResponse(
             "missing xattr extension",
         ))?;
@@ -452,8 +478,10 @@ impl EntryService {
         value: Vec<u8>,
         mode: XattrWriteMode,
     ) -> Result<(), EntryError> {
-        let (relative, storage, capabilities) = self.attribute_storage(path, true).await?;
-        Self::require(capabilities.xattrs().can_write())?;
+        let (relative, storage, capabilities) = self
+            .attribute_storage(path, true, Operation::SetXattr)
+            .await?;
+        Self::require(Operation::SetXattr, capabilities.xattrs().can_write())?;
         let extension = storage.xattrs().ok_or(EntryError::InvalidStorageResponse(
             "missing xattr extension",
         ))?;
@@ -466,8 +494,10 @@ impl EntryService {
         path: &VirtualPath,
         name: XattrName,
     ) -> Result<(), EntryError> {
-        let (relative, storage, capabilities) = self.attribute_storage(path, true).await?;
-        Self::require(capabilities.xattrs().can_write())?;
+        let (relative, storage, capabilities) = self
+            .attribute_storage(path, true, Operation::RemoveXattr)
+            .await?;
+        Self::require(Operation::RemoveXattr, capabilities.xattrs().can_write())?;
         let extension = storage.xattrs().ok_or(EntryError::InvalidStorageResponse(
             "missing xattr extension",
         ))?;

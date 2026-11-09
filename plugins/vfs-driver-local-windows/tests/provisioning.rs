@@ -1,12 +1,11 @@
 #![cfg(target_os = "windows")]
+use ah_vfs::application::driver_error::LifecycleFailure;
 mod common;
-use ah_vfs::{
-    application::{dto::*, port::*},
-    domain::{
-        DriverError,
-        storage::{StorageErrorKind, StoragePath, StorageReadFileRequest, StorageWriteFileRequest},
-    },
-};
+use ah_vfs::application::driver_error::DriverError;
+use ah_vfs::application::dto::*;
+use ah_vfs::application::port::*;
+use ah_vfs::domain::storage::{StorageReadFileRequest, StorageWriteFileRequest};
+use ah_vfs_storage::StoragePath;
 use vfs_driver_local_windows::WindowsLocalDriver;
 type Result = std::result::Result<(), Box<dyn std::error::Error>>;
 #[tokio::test]
@@ -42,7 +41,7 @@ async fn host_creation_opens_for_read_write_and_rejects_root_changes() -> Result
     let another = tempfile::tempdir()?;
     let instance = registry.create(common::local_config(root.path())?).await?;
     assert!(
-        matches!(registry.update(instance.id.clone(),common::local_config(another.path())?).await,Err(DriverError::Storage(error)) if error.kind()==StorageErrorKind::InvalidRequest)
+        matches!(registry.update(instance.id.clone(),common::local_config(another.path())?).await,Err(DriverError::Lifecycle(error)) if error.failure()==LifecycleFailure::InvalidRequest)
     );
     let storage = driver
         .open(registry.open_context(instance.id.clone()).await?)

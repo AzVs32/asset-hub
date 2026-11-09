@@ -1,8 +1,6 @@
 use super::{Blob, CHUNK_SIZE};
-use ah_vfs::{
-    application::port::{StorageFileReader, StorageFuture},
-    domain::storage::StorageErrorKind,
-};
+use ah_vfs::application::port::{StorageFileReader, StorageFuture};
+use ah_vfs_storage::{BackendFailure, Failure, Operation, StorageError};
 use std::sync::Arc;
 
 pub(super) struct MemoryFileReader {
@@ -50,9 +48,10 @@ impl StorageFileReader for MemoryFileReader {
     fn next_chunk(&mut self) -> StorageFuture<'_, Option<Vec<u8>>> {
         Box::pin(async move {
             self.next_bytes().map_err(|source| {
-                ah_vfs::domain::storage::StorageError::with_source(
-                    StorageErrorKind::CapacityExceeded,
-                    source,
+                StorageError::without_effects(
+                    Operation::Read,
+                    Failure::Backend(BackendFailure::CapacityExceeded),
+                    Some(Box::new(source)),
                 )
             })
         })

@@ -193,7 +193,7 @@ fn bounds_apply_to_control_data_and_nested_configuration() {
 fn exported_descriptor_contains_the_complete_language_independent_contract() -> Result {
     let descriptor = prost_types::FileDescriptorSet::decode(p::FILE_DESCRIPTOR_SET)?;
     let file = descriptor.file.first().ok_or("schema")?;
-    assert_eq!(file.package.as_deref(), Some("assethub.vfs.v3"));
+    assert_eq!(file.package.as_deref(), Some("assethub.vfs.v4"));
     let storage_info = file
         .message_type
         .iter()
@@ -232,11 +232,11 @@ fn exported_descriptor_contains_the_complete_language_independent_contract() -> 
     for method in &file.service.first().ok_or("Plugin")?.method {
         assert_eq!(
             method.input_type.as_deref(),
-            Some(".assethub.vfs.v3.Request")
+            Some(".assethub.vfs.v4.Request")
         );
         assert_eq!(
             method.output_type.as_deref(),
-            Some(".assethub.vfs.v3.Reply")
+            Some(".assethub.vfs.v4.Reply")
         );
     }
     Ok(())

@@ -2,10 +2,8 @@ use aes_gcm::{
     Aes256Gcm, KeyInit, Nonce,
     aead::{Aead, Payload},
 };
-use ah_vfs::{
-    application::port::{DriverFuture, SecretCipher, SecretContext},
-    domain::storage::{StorageError, StorageErrorKind},
-};
+use ah_vfs::application::driver_error::{LifecycleError, LifecycleFailure};
+use ah_vfs::application::port::{DriverFuture, SecretCipher, SecretContext};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub struct Cipher {
@@ -47,7 +45,7 @@ impl SecretCipher for Cipher {
                             aad: &aad(&context),
                         },
                     )
-                    .map_err(|_| StorageError::new(StorageErrorKind::InvalidData))?,
+                    .map_err(|_| LifecycleError::new(LifecycleFailure::InvalidRecord))?,
             );
             Ok(output)
         })
@@ -59,7 +57,7 @@ impl SecretCipher for Cipher {
     ) -> DriverFuture<'a, Vec<u8>> {
         Box::pin(async move {
             if ciphertext.len() < 12 {
-                return Err(StorageError::new(StorageErrorKind::InvalidData).into());
+                return Err(LifecycleError::new(LifecycleFailure::InvalidRecord).into());
             }
             self.key
                 .decrypt(
@@ -69,7 +67,7 @@ impl SecretCipher for Cipher {
                         aad: &aad(&context),
                     },
                 )
-                .map_err(|_| StorageError::new(StorageErrorKind::InvalidData).into())
+                .map_err(|_| LifecycleError::new(LifecycleFailure::InvalidRecord).into())
         })
     }
 }

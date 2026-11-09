@@ -1,14 +1,10 @@
-use ah_vfs::{
-    application::port::*,
-    domain::{
-        DriverError, InstanceId,
-        storage::{
-            Entry, EntryKind, EntryPermissionsError, StorageCapabilities, StorageErrorKind,
-            StoragePath, StorageReadFileRequest, StorageWriteFileRequest, XattrName,
-            XattrNameError,
-        },
-    },
-};
+use ah_vfs::application::driver_error::DriverError;
+use ah_vfs::application::port::*;
+use ah_vfs::domain::InstanceId;
+use ah_vfs::domain::storage::{StorageReadFileRequest, StorageWriteFileRequest};
+use ah_vfs_storage::Capabilities;
+use ah_vfs_storage::{BackendFailure, ContractViolation, Failure, Operation};
+use ah_vfs_storage::{Entry, EntryType, PermissionsError, StoragePath, XattrName, XattrNameError};
 use std::{
     error::Error,
     num::NonZeroUsize,
@@ -133,10 +129,10 @@ async fn incompatible_versions_and_false_capabilities_are_rejected() -> Result {
         error
             .downcast_ref::<DriverError>()
             .ok_or("driver error")?
-            .storage_error()
+            .lifecycle_error()
             .ok_or("category")?
-            .kind(),
-        StorageErrorKind::UnsupportedOperation
+            .failure(),
+        ah_vfs::application::driver_error::LifecycleFailure::Unsupported
     );
     let error = peer(Fault::Capabilities)
         .await
@@ -144,8 +140,8 @@ async fn incompatible_versions_and_false_capabilities_are_rejected() -> Result {
         .ok_or("capability rejection")?;
     let error = error.downcast_ref::<DriverError>().ok_or("driver error")?;
     assert_eq!(
-        error.storage_error().ok_or("category")?.kind(),
-        StorageErrorKind::ProtocolViolation
+        error.lifecycle_error().ok_or("category")?.failure(),
+        ah_vfs::application::driver_error::LifecycleFailure::InvalidDeclaration
     );
     Ok(())
 }
@@ -163,15 +159,15 @@ async fn malformed_commit_response_is_unknown_and_is_never_replayed() -> Result 
         .await?;
     writer.write_chunk(b"accepted").await?;
     let error = writer.commit().await.err().ok_or("unknown outcome")?;
-    assert_eq!(error.kind(), StorageErrorKind::OutcomeUnknown);
-    let violation = error
-        .source()
-        .and_then(|e| e.downcast_ref::<ah_vfs::domain::storage::StorageError>())
-        .ok_or("protocol violation cause")?;
-    assert_eq!(violation.kind(), StorageErrorKind::ProtocolViolation);
     assert_eq!(
-        writer.commit().await.err().ok_or("terminal")?.kind(),
-        StorageErrorKind::SessionClosed
+        error.failure(),
+        Failure::Contract(ContractViolation::InvalidResponse)
+    );
+    assert_eq!(error.operation(), Operation::Write);
+    assert_eq!(error.outcome(), ah_vfs_storage::MutationOutcome::Unknown);
+    assert_eq!(
+        writer.commit().await.err().ok_or("terminal")?.failure(),
+        Failure::Backend(BackendFailure::Closed)
     );
     assert_eq!(peer.commits.load(Ordering::Relaxed), 1);
     Ok(())
@@ -194,12 +190,12 @@ async fn empty_non_eof_chunks_close_the_read_session() -> Result {
             .await
             .err()
             .ok_or("invalid chunk")?
-            .kind(),
-        StorageErrorKind::ProtocolViolation
+            .failure(),
+        Failure::Contract(ContractViolation::InvalidResponse)
     );
     assert_eq!(
-        reader.next_chunk().await.err().ok_or("closed")?.kind(),
-        StorageErrorKind::SessionClosed
+        reader.next_chunk().await.err().ok_or("closed")?.failure(),
+        Failure::Backend(BackendFailure::Closed)
     );
     Ok(())
 }
@@ -211,13 +207,12 @@ fn timestamps_and_unknown_error_codes_preserve_boundary_semantics() -> Result {
         UNIX_EPOCH - Duration::from_millis(1500),
         UNIX_EPOCH + Duration::from_nanos(1),
     ] {
-        let entry = Entry {
-            path: StoragePath::parse("file")?,
-            kind: EntryKind::File,
-            size: Some(u64::MAX),
-            modified: Some(time),
-        };
-        let encoded = convert::entry(entry)?;
+        let entry = Entry::new(
+            StoragePath::parse("file")?,
+            EntryType::file(Some(u64::MAX)),
+            Some(time),
+        )?;
+        let encoded = convert::entry(Operation::Stat, entry)?;
         let bytes = p::encode_reply(Ok(p::Reply::new(Value::Entry(encoded))))?;
         let value = p::decode_reply(&bytes)?
             .map_err(|error| convert::driver_error(error, None))?
@@ -225,18 +220,21 @@ fn timestamps_and_unknown_error_codes_preserve_boundary_semantics() -> Result {
         let Value::Entry(entry) = value else {
             return Err("entry reply".into());
         };
-        let decoded = convert::decode_entry(entry)?;
-        assert_eq!(decoded.modified, Some(time));
-        assert_eq!(decoded.size, Some(u64::MAX));
+        let decoded = convert::decode_entry(Operation::Stat, entry)?;
+        assert_eq!(decoded.modified(), Some(time));
+        assert_eq!(decoded.entry_type(), EntryType::file(Some(u64::MAX)));
     }
     assert_eq!(
-        convert::error_kind(p::FailureCode::Unspecified),
-        StorageErrorKind::Backend
+        convert::driver_error(p::Failure::new(p::FailureCode::Unspecified), None)
+            .lifecycle_error()
+            .ok_or("unknown status accepted")?
+            .failure(),
+        ah_vfs::application::driver_error::LifecycleFailure::InvalidDeclaration
     );
     assert!(convert::decode_capabilities(&[p::Capability::PermissionsWrite as i32]).is_err());
     let caps = convert::decode_capabilities(&[i32::MAX])?;
-    assert_eq!(caps, StorageCapabilities::default());
-    let caps = caps.to_builder().stat_entry(true).build()?;
+    assert_eq!(caps, Capabilities::default());
+    let caps = caps.with_stat(true);
     assert_eq!(
         convert::decode_capabilities(&convert::capabilities(caps))?,
         caps
@@ -261,12 +259,15 @@ async fn malformed_permissions_response_is_a_protocol_violation_with_its_validat
         .await
         .err()
         .ok_or("accepted entry type bits")?;
-    assert_eq!(error.kind(), StorageErrorKind::ProtocolViolation);
+    assert_eq!(
+        error.failure(),
+        Failure::Contract(ContractViolation::InvalidResponse)
+    );
     assert_eq!(
         error
             .source()
-            .and_then(|e| e.downcast_ref::<EntryPermissionsError>()),
-        Some(&EntryPermissionsError::InvalidBits)
+            .and_then(|e| e.downcast_ref::<PermissionsError>()),
+        Some(&PermissionsError::InvalidBits)
     );
     Ok(())
 }
@@ -275,8 +276,11 @@ async fn malformed_permissions_response_is_a_protocol_violation_with_its_validat
 async fn malformed_xattr_responses_keep_each_value_validation_cause() -> Result {
     for (name, expected) in [
         (String::new(), XattrNameError::Empty),
-        ("a".repeat(XattrName::MAX_LEN + 1), XattrNameError::TooLong),
-        ("user.\0name".to_owned(), XattrNameError::InvalidCharacter),
+        (
+            "a".repeat(XattrName::MAX_BYTES + 1),
+            XattrNameError::TooLong,
+        ),
+        ("user.\0name".to_owned(), XattrNameError::Nul),
     ] {
         let (driver, _) = peer(Fault::Attributes(name)).await?;
         let storage = driver
@@ -295,7 +299,10 @@ async fn malformed_xattr_responses_keep_each_value_validation_cause() -> Result 
             .await
             .err()
             .ok_or("accepted invalid attribute name")?;
-        assert_eq!(error.kind(), StorageErrorKind::ProtocolViolation);
+        assert_eq!(
+            error.failure(),
+            Failure::Contract(ContractViolation::InvalidResponse)
+        );
         assert_eq!(
             error
                 .source()

@@ -1,13 +1,12 @@
-use ah_vfs::{
-    application::{dto::*, port::*},
-    domain::{
-        InstanceId,
-        storage::{
-            EntryKind, StorageCreateDirRequest, StorageDirQuery, StorageErrorKind, StoragePath,
-            StorageReadFileRequest, StorageRemoveEntryRequest, StorageWriteFileRequest,
-        },
-    },
+use ah_vfs::application::dto::*;
+use ah_vfs::application::port::*;
+use ah_vfs::domain::InstanceId;
+use ah_vfs::domain::storage::{
+    StorageCreateDirRequest, StorageDirQuery, StorageReadFileRequest, StorageRemoveEntryRequest,
+    StorageWriteFileRequest,
 };
+use ah_vfs_storage::{EntryType, StoragePath};
+use ah_vfs_storage::{Failure, Rejection};
 use std::{
     collections::BTreeMap,
     sync::{
@@ -236,15 +235,15 @@ async fn protobuf_component_opens_writes_commits_reads_and_lists() -> Result {
         .open(OpenContext::new(InstanceId::parse("fixture")?, config))
         .await?;
     assert_eq!(storage.chunk_size().get(), 65536);
-    assert!(!driver.info().capabilities().remove_entry());
+    assert!(!driver.info().capabilities().remove());
     let file = StoragePath::parse("file")?;
     let mut writer = storage
         .write_file(StorageWriteFileRequest::new(file.clone()))
         .await?;
     writer.write_chunk(&[0, 255, 1, 2]).await?;
     let entry = writer.commit().await?;
-    assert_eq!(entry.size, Some(4));
-    assert_eq!(entry.path, file);
+    assert_eq!(entry.entry_type(), ah_vfs_storage::EntryType::file(Some(4)));
+    assert_eq!(entry.path(), &file);
     let mut reader = storage
         .read_file(StorageReadFileRequest {
             path: file.clone(),
@@ -261,7 +260,7 @@ async fn protobuf_component_opens_writes_commits_reads_and_lists() -> Result {
             recursive: false,
         })
         .await?;
-    assert_eq!(directory.kind, EntryKind::Dir);
+    assert_eq!(directory.entry_type(), EntryType::Directory);
     let page = storage
         .list_entries(StorageDirQuery::new(StoragePath::root()))
         .await?;
@@ -272,8 +271,8 @@ async fn protobuf_component_opens_writes_commits_reads_and_lists() -> Result {
             .await
             .err()
             .ok_or("unsupported removal")?
-            .kind(),
-        StorageErrorKind::UnsupportedOperation
+            .failure(),
+        Failure::Rejected(Rejection::Unsupported)
     );
     assert_eq!(fixture.deletes.load(Ordering::SeqCst), 0);
     Ok(())

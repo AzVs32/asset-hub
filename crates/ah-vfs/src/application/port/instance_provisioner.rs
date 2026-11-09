@@ -1,9 +1,7 @@
 //! Stateless driver logic for host-owned instance records.
 use super::DriverFuture;
-use crate::{
-    application::dto::InstanceConfig,
-    domain::storage::{StorageError, StorageErrorKind},
-};
+use crate::application::driver_error::{LifecycleError, LifecycleFailure};
+use crate::application::dto::InstanceConfig;
 use std::collections::BTreeMap;
 
 /// Validated normalized parameters and a curated public view. Construction accepts
@@ -41,7 +39,7 @@ pub trait InstanceProvisioner: Send + Sync {
     fn prepare(&self, config: InstanceConfig) -> DriverFuture<'_, PreparedConfig>;
     /// Optional explicit connectivity probe, separate from get/list and preparation.
     fn test_connection<'a>(&'a self, _config: &'a InstanceConfig) -> DriverFuture<'a, ()> {
-        Box::pin(async { Err(StorageError::new(StorageErrorKind::UnsupportedOperation).into()) })
+        Box::pin(async { Err(LifecycleError::new(LifecycleFailure::Unsupported).into()) })
     }
     /// Upgrade one older schema without persisting records or opening storage.
     /// This may await plugin execution. Cancellation must leave host records

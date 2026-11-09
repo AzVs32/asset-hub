@@ -9,6 +9,7 @@
 //! recursive and cannot guarantee the VFS empty-directory removal contract.
 #![cfg(any(target_arch = "wasm32", test))]
 
+use ah_vfs_storage::{BackendFailure, ContractViolation, EntryType, Failure, Operation, Rejection};
 mod client;
 mod multistatus;
 
@@ -24,44 +25,30 @@ use vfs_plugin_guest::api::{self, Guest, GuestReader, GuestStorage, GuestWriter}
 type Result<T> = std::result::Result<T, api::Failure>;
 const CHUNK_SIZE: u32 = 64 * 1024;
 
-fn failure(code: p::FailureCode) -> api::Failure {
-    api::Failure {
-        code: code as i32,
-        field: None,
-        config_kind: None,
-    }
-}
 fn invalid(field: &str, kind: p::ConfigErrorKind) -> api::Failure {
-    api::Failure {
+    p::Failure {
         code: p::FailureCode::InvalidInstanceConfig as i32,
         field: Some(field.into()),
         config_kind: Some(kind as i32),
+        storage: None,
     }
+    .into()
 }
-fn path(value: &str) -> Result<()> {
-    if value.len() > 4096
-        || value.starts_with('/')
-        || value.contains(['\\', ':', '\0'])
-        || (!value.is_empty() && value.split('/').any(|part| matches!(part, "" | "." | "..")))
-    {
-        return Err(failure(p::FailureCode::InvalidPath));
-    }
-    Ok(())
+fn path(context: &api::ErrorContext, value: &str) -> Result<()> {
+    ah_vfs_storage::StoragePath::parse(value)
+        .map(|_| ())
+        .map_err(|_| context.failure(Failure::Rejected(Rejection::UnsupportedName)))
 }
 fn capabilities() -> Vec<i32> {
-    [
-        p::Capability::Stat,
-        p::Capability::List,
-        p::Capability::RangeRead,
-        p::Capability::WriteNew,
-        p::Capability::WriteReplace,
-        p::Capability::Hierarchical,
-        p::Capability::EmptyDirs,
-        p::Capability::CreateDir,
-    ]
-    .into_iter()
-    .map(Into::into)
-    .collect()
+    use ah_vfs_storage::{Capabilities, DirectorySupport, ReadSupport, WriteModes, WriteSupport};
+    p::encode_capabilities(
+        Capabilities::default()
+            .with_stat(true)
+            .with_list(true)
+            .with_read(ReadSupport::Range)
+            .with_write(WriteSupport::staged(WriteModes::Both, false))
+            .with_directories(DirectorySupport::hierarchical(true, true)),
+    )
 }
 
 struct WebdavDriver;
@@ -105,10 +92,11 @@ impl Guest for WebdavDriver {
         }
     }
     fn initialize(settings: p::Object) -> Result<()> {
+        let context = api::ErrorContext::lifecycle();
         if settings.fields.is_empty() {
             Ok(())
         } else {
-            Err(failure(p::FailureCode::UnsupportedOperation))
+            Err(context.failure(Failure::Rejected(Rejection::Unsupported)))
         }
     }
     fn prepare(config: p::Object) -> Result<p::Prepared> {
@@ -128,8 +116,9 @@ impl Guest for WebdavDriver {
         })
     }
     fn migrate(from_version: u32, config: p::Object) -> Result<p::Object> {
+        let context = api::ErrorContext::lifecycle();
         if from_version != 1 {
-            return Err(failure(p::FailureCode::UnsupportedOperation));
+            return Err(context.failure(Failure::Rejected(Rejection::Unsupported)));
         }
         let fields = p::json_object(config)?;
         client::Client::parse(&fields)?;
@@ -156,40 +145,44 @@ impl GuestStorage for WebdavStorage {
         }
     }
     fn call(&self, request: p::StorageOp, data: Vec<u8>) -> Result<p::Reply> {
+        let client = self.client.for_operation(request.storage_operation());
+        let context = client.context.clone();
         if !data.is_empty() {
-            return Err(failure(p::FailureCode::InvalidRequest));
+            return Err(context.failure(Failure::Rejected(Rejection::Conflict)));
         }
         let value = match request {
-            p::StorageOp::Stat(p::Path { path }) => Value::Entry(self.client.stat(&path)?.entry),
+            p::StorageOp::Stat(p::Path { path }) => {
+                Value::Entry(encode_entry(&context, &client.stat(&path)?.entry)?)
+            }
             p::StorageOp::List(p::List { path, after, limit }) => {
-                let (entries, next_after) = self.client.list(&path, after.as_deref(), limit)?;
+                let (entries, next_after) = client.list(&path, after.as_deref(), limit)?;
                 Value::Page(p::Page {
                     entries,
                     next_after,
                 })
             }
-            p::StorageOp::CreateDir(p::CreateDir { path, recursive }) => {
-                Value::Entry(self.client.create_dir(&path, recursive)?)
-            }
-            _ => return Err(failure(p::FailureCode::UnsupportedOperation)),
+            p::StorageOp::CreateDir(p::CreateDir { path, recursive }) => Value::Entry(
+                encode_entry(&context, &client.create_dir(&path, recursive)?)?,
+            ),
+            _ => return Err(context.failure(Failure::Rejected(Rejection::Unsupported))),
         };
         Ok(p::Reply::new(value))
     }
     fn read(&self, path: String, offset: u64, length: Option<u64>) -> Result<api::Reader> {
-        let metadata = self.client.stat(&path)?;
-        if metadata.entry.kind == p::EntryKind::Dir as i32 {
-            return Err(failure(p::FailureCode::IsDir));
+        let client = self.client.for_operation(Operation::Read);
+        let context = client.context.clone();
+        let metadata = client.stat(&path)?;
+        if metadata.entry.entry_type() == EntryType::Directory {
+            return Err(context.failure(Failure::Rejected(Rejection::IsDirectory)));
         }
-        if metadata.entry.kind != p::EntryKind::File as i32 {
-            return Err(failure(p::FailureCode::UnsupportedOperation));
-        }
-        let size = metadata
-            .entry
-            .size
-            .ok_or_else(|| failure(p::FailureCode::UnsupportedOperation))?;
+        let EntryType::File { size, .. } = metadata.entry.entry_type() else {
+            return Err(context.failure(Failure::Rejected(Rejection::Unsupported)));
+        };
+        let size =
+            size.ok_or_else(|| context.failure(Failure::Rejected(Rejection::Unsupported)))?;
         Ok(api::Reader::new(WebdavReader {
             session: RefCell::new(Some(ReadSession {
-                client: self.client.clone(),
+                client: client.clone(),
                 path,
                 offset,
                 remaining: length.unwrap_or(u64::MAX).min(size.saturating_sub(offset)),
@@ -201,13 +194,15 @@ impl GuestStorage for WebdavStorage {
         }))
     }
     fn write(&self, path: String, replace: bool, atomic: bool) -> Result<api::Writer> {
+        let client = self.client.for_operation(Operation::Write);
+        let context = client.context.clone();
         if atomic {
-            return Err(failure(p::FailureCode::UnsupportedOperation));
+            return Err(context.failure(Failure::Rejected(Rejection::Unsupported)));
         }
-        let condition = self.client.write_condition(&path, replace)?;
+        let condition = client.write_condition(&path, replace)?;
         Ok(api::Writer::new(WebdavWriter {
             session: RefCell::new(Some(WriteSession {
-                client: self.client.clone(),
+                client: client.clone(),
                 path,
                 condition,
                 bytes: vec![],
@@ -231,6 +226,7 @@ struct WebdavReader {
 }
 impl GuestReader for WebdavReader {
     fn next(&self) -> Result<Option<Vec<u8>>> {
+        let context = api::ErrorContext::storage(Operation::Read);
         if self.eof.get() {
             return Ok(None);
         }
@@ -239,7 +235,7 @@ impl GuestReader for WebdavReader {
             .session
             .borrow_mut()
             .take()
-            .ok_or_else(|| failure(p::FailureCode::SessionClosed))?;
+            .ok_or_else(|| context.failure(Failure::Backend(BackendFailure::Closed)))?;
         if session.remaining == 0 {
             self.eof.set(true);
             return Ok(None);
@@ -247,13 +243,13 @@ impl GuestReader for WebdavReader {
         let length = session.remaining.min(u64::from(CHUNK_SIZE));
         let data = if let Some(bytes) = &session.cached {
             let start = usize::try_from(session.offset)
-                .map_err(|_| failure(p::FailureCode::InvalidData))?;
+                .map_err(|_| context.failure(Failure::Backend(BackendFailure::CorruptData)))?;
             let end = start
                 .checked_add(length as usize)
-                .ok_or_else(|| failure(p::FailureCode::InvalidData))?;
+                .ok_or_else(|| context.failure(Failure::Backend(BackendFailure::CorruptData)))?;
             bytes
                 .get(start..end)
-                .ok_or_else(|| failure(p::FailureCode::InvalidData))?
+                .ok_or_else(|| context.failure(Failure::Backend(BackendFailure::CorruptData)))?
                 .to_vec()
         } else {
             let (data, full) = session.client.read_range(
@@ -267,12 +263,12 @@ impl GuestReader for WebdavReader {
             data
         };
         if data.is_empty() || data.len() as u64 > length {
-            return Err(failure(p::FailureCode::InvalidData));
+            return Err(context.failure(Failure::Backend(BackendFailure::CorruptData)));
         }
         session.offset = session
             .offset
             .checked_add(data.len() as u64)
-            .ok_or_else(|| failure(p::FailureCode::InvalidData))?;
+            .ok_or_else(|| context.failure(Failure::Backend(BackendFailure::CorruptData)))?;
         session.remaining -= data.len() as u64;
         *self.session.borrow_mut() = Some(session);
         Ok(Some(data))
@@ -290,43 +286,47 @@ struct WebdavWriter {
 }
 impl GuestWriter for WebdavWriter {
     fn write(&self, data: Vec<u8>) -> Result<()> {
+        let context = api::ErrorContext::storage(Operation::Write);
         let mut session = self
             .session
             .borrow_mut()
             .take()
-            .ok_or_else(|| failure(p::FailureCode::SessionClosed))?;
+            .ok_or_else(|| context.failure(Failure::Backend(BackendFailure::Closed)))?;
         let length = session
             .bytes
             .len()
             .checked_add(data.len())
-            .ok_or_else(|| failure(p::FailureCode::TooLarge))?;
+            .ok_or_else(|| context.failure(Failure::Rejected(Rejection::LimitExceeded)))?;
         if length > session.client.max_write_bytes {
-            return Err(failure(p::FailureCode::TooLarge));
+            return Err(context.failure(Failure::Rejected(Rejection::LimitExceeded)));
         }
         session
             .bytes
             .try_reserve_exact(data.len())
-            .map_err(|_| failure(p::FailureCode::CapacityExceeded))?;
+            .map_err(|_| context.failure(Failure::Backend(BackendFailure::CapacityExceeded)))?;
         session.bytes.extend_from_slice(&data);
         *self.session.borrow_mut() = Some(session);
         Ok(())
     }
     fn commit(&self) -> Result<p::Entry> {
+        let context = api::ErrorContext::storage(Operation::Write);
         // Both success and failure are terminal; no remote request is retried.
         let session = self
             .session
             .borrow_mut()
             .take()
-            .ok_or_else(|| failure(p::FailureCode::SessionClosed))?;
+            .ok_or_else(|| context.failure(Failure::Backend(BackendFailure::Closed)))?;
         session
             .client
             .put_file(&session.path, session.condition, session.bytes)
+            .and_then(|entry| encode_entry(&session.client.context, &entry))
     }
     fn abort(&self) -> Result<()> {
+        let context = api::ErrorContext::storage(Operation::Write);
         self.session
             .borrow_mut()
             .take()
-            .ok_or_else(|| failure(p::FailureCode::SessionClosed))?;
+            .ok_or_else(|| context.failure(Failure::Backend(BackendFailure::Closed)))?;
         Ok(())
     }
 }
@@ -379,13 +379,29 @@ mod tests {
             let error = storage
                 .call(p::StorageOp::Remove(p::Path { path: path.into() }), vec![])
                 .err()
-                .ok_or_else(|| failure(p::FailureCode::InvalidData))?;
+                .ok_or_else(|| {
+                    api::ErrorContext::storage(Operation::Remove)
+                        .failure(Failure::Contract(ContractViolation::InvalidResponse))
+                })?;
             assert_eq!(
-                error.code(),
-                p::FailureCode::UnsupportedOperation,
+                error.storage_error().map(|error| (
+                    error.operation(),
+                    error.failure(),
+                    error.outcome()
+                )),
+                Some((
+                    Operation::Remove,
+                    Failure::Rejected(Rejection::Unsupported),
+                    ah_vfs_storage::MutationOutcome::Unchanged
+                )),
                 "path: {path}"
             );
         }
         Ok(())
     }
+}
+
+fn encode_entry(context: &api::ErrorContext, entry: &ah_vfs_storage::Entry) -> Result<p::Entry> {
+    p::encode_entry(entry)
+        .map_err(|_| context.failure(Failure::Contract(ContractViolation::InvalidResponse)))
 }

@@ -1,13 +1,15 @@
-use ah_vfs::{
-    application::{driver_info::DriverInfo, dto::*, port::*},
-    domain::{
-        InstanceId,
-        storage::{
-            Entry, EntryKind, StorageError, StorageErrorKind, StoragePath, StorageReadFileRequest,
-            StorageRemoveEntryRequest, StorageStatEntryRequest, StorageWriteFileRequest,
-        },
-    },
+use ah_vfs::application::driver_info::DriverInfo;
+use ah_vfs::application::dto::*;
+use ah_vfs::application::port::*;
+use ah_vfs::domain::InstanceId;
+use ah_vfs::domain::storage::{
+    StorageReadFileRequest, StorageRemoveEntryRequest, StorageStatEntryRequest,
+    StorageWriteFileRequest,
 };
+use ah_vfs_storage::{
+    BackendFailure, ContractViolation, Failure, Operation, Rejection, StorageError,
+};
+use ah_vfs_storage::{Entry, EntryType, StoragePath};
 use std::{
     num::NonZeroUsize,
     sync::{
@@ -141,16 +143,30 @@ impl Storage for BackendStorage {
     fn stat_entry(&self, request: StorageStatEntryRequest) -> StorageFuture<'_, Entry> {
         Box::pin(async move {
             if self.faults.invalid_stat.load(Ordering::SeqCst) {
-                return Err(StorageError::new(StorageErrorKind::ProtocolViolation));
+                return Err(StorageError::without_effects(
+                    Operation::Stat,
+                    Failure::Contract(ContractViolation::InvalidResponse),
+                    None,
+                ));
             }
             if self.faults.corrupt_data.load(Ordering::SeqCst) {
-                return Err(StorageError::new(StorageErrorKind::InvalidData));
+                return Err(StorageError::without_effects(
+                    Operation::Stat,
+                    Failure::Backend(BackendFailure::CorruptData),
+                    None,
+                ));
             }
-            Ok(Entry {
-                path: request.path,
-                kind: EntryKind::File,
-                size: Some(self.marker as u64),
-                modified: None,
+            Entry::new(
+                request.path,
+                EntryType::file(Some(self.marker as u64)),
+                None,
+            )
+            .map_err(|cause| {
+                StorageError::without_effects(
+                    Operation::Stat,
+                    Failure::Contract(ContractViolation::InvalidResponse),
+                    Some(Box::new(cause)),
+                )
             })
         })
     }
@@ -221,7 +237,11 @@ impl StorageFileWriter for Writer {
     fn commit(&mut self) -> StorageFuture<'_, Entry> {
         Box::pin(async move {
             self.0.commits.fetch_add(1, Ordering::SeqCst);
-            Err(StorageError::new(StorageErrorKind::UnsupportedOperation))
+            Err(StorageError::after_dispatch(
+                Operation::Write,
+                Failure::Rejected(Rejection::Unsupported),
+                None,
+            ))
         })
     }
     fn abort(&mut self) -> StorageFuture<'_, ()> {
@@ -272,13 +292,17 @@ async fn open(driver: &PluginDriver) -> Result<Arc<dyn Storage>> {
         .await?)
 }
 async fn stat(storage: &dyn Storage) -> Result<u64> {
-    Ok(storage
+    let entry = storage
         .stat_entry(StorageStatEntryRequest {
             path: StoragePath::parse("file")?,
         })
-        .await?
-        .size
-        .ok_or("file size")?)
+        .await?;
+    match entry.entry_type() {
+        EntryType::File {
+            size: Some(size), ..
+        } => Ok(size),
+        _ => Err("expected file size".into()),
+    }
 }
 async fn read(storage: &dyn Storage) -> Result<Box<dyn StorageFileReader>> {
     Ok(storage
@@ -295,7 +319,10 @@ async fn panic_recovery_uses_a_fresh_backend_and_never_replays_the_mutation() ->
             let faults = faults.clone();
             Box::pin(async move {
                 if faults.fail_factory.load(Ordering::SeqCst) {
-                    return Err(StorageError::new(StorageErrorKind::Unavailable).into());
+                    return Err(ah_vfs::application::driver_error::LifecycleError::new(
+                        ah_vfs::application::driver_error::LifecycleFailure::Unavailable,
+                    )
+                    .into());
                 }
                 let marker = faults.constructions.fetch_add(1, Ordering::SeqCst) + 1;
                 Ok(
@@ -319,7 +346,11 @@ async fn panic_recovery_uses_a_fresh_backend_and_never_replays_the_mutation() ->
         .await
         .err()
         .ok_or("panic result")?;
-    assert_eq!(error.kind(), StorageErrorKind::OutcomeUnknown);
+    assert_eq!(
+        error.failure(),
+        Failure::Backend(BackendFailure::Unavailable)
+    );
+    assert_eq!(error.outcome(), ah_vfs_storage::MutationOutcome::Unknown);
     faults.fail_factory.store(true, Ordering::SeqCst);
     assert!(open(&driver).await.is_err());
     faults.fail_factory.store(false, Ordering::SeqCst);
@@ -327,8 +358,13 @@ async fn panic_recovery_uses_a_fresh_backend_and_never_replays_the_mutation() ->
     assert_eq!(stat(new.as_ref()).await?, 2);
     assert_ne!(dispatcher.generation(), original);
     assert_eq!(
-        reader.next_chunk().await.err().ok_or("old reader")?.kind(),
-        StorageErrorKind::StaleHandle
+        reader
+            .next_chunk()
+            .await
+            .err()
+            .ok_or("old reader")?
+            .failure(),
+        Failure::Backend(BackendFailure::Stale)
     );
     assert!(old.is_stale());
     drop(old);
@@ -421,8 +457,13 @@ async fn grpc_generation_changes_do_not_rebind_streams_or_release_new_handles() 
     // stream cannot release resources owned by its replacement.
     assert_eq!(new_reader.next_chunk().await?, None);
     assert_eq!(
-        reader.next_chunk().await.err().ok_or("old reader")?.kind(),
-        StorageErrorKind::StaleHandle
+        reader
+            .next_chunk()
+            .await
+            .err()
+            .ok_or("old reader")?
+            .failure(),
+        Failure::Backend(BackendFailure::Stale)
     );
     assert!(old.is_stale());
     drop(server);
@@ -571,8 +612,8 @@ async fn cancelled_initialization_requires_a_fresh_backend_and_acks_are_idempote
         .err()
         .ok_or("different settings")?;
     assert_eq!(
-        error.storage_error().ok_or("category")?.kind(),
-        StorageErrorKind::Conflict
+        error.lifecycle_error().ok_or("category")?.failure(),
+        ah_vfs::application::driver_error::LifecycleFailure::Conflict
     );
     dispatcher
         .call(
@@ -1201,8 +1242,8 @@ async fn resource_capacity_is_shared_across_sessions_and_released_on_disconnect(
         .err()
         .ok_or("global resource capacity")?;
     assert_eq!(
-        error.storage_error().ok_or("category")?.kind(),
-        StorageErrorKind::CapacityExceeded
+        error.storage_error().ok_or("category")?.failure(),
+        Failure::Backend(BackendFailure::CapacityExceeded)
     );
     drop(first);
     assert!(matches!(
@@ -1336,8 +1377,8 @@ async fn corrupt_backend_data_does_not_retire_a_valid_protocol_session() -> Resu
         error
             .downcast_ref::<StorageError>()
             .ok_or("storage error")?
-            .kind(),
-        StorageErrorKind::InvalidData
+            .failure(),
+        Failure::Backend(BackendFailure::CorruptData)
     );
     assert!(!storage.is_stale());
     faults.corrupt_data.store(false, Ordering::SeqCst);

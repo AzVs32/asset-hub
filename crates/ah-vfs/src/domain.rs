@@ -12,12 +12,10 @@
 pub mod namespace;
 pub mod storage;
 
-mod driver_error;
 mod driver_instance;
 mod driver_key;
 mod instance_id;
 
-pub use driver_error::{DriverError, InstanceConfigErrorKind};
 pub use driver_instance::DriverInstance;
 pub use driver_key::{DriverKey, DriverKeyError};
 pub use instance_id::{InstanceId, InstanceIdError};

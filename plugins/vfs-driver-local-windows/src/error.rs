@@ -1,37 +1,34 @@
 //! Local instance configuration failures.
 
-use ah_vfs::domain::{
-    DriverError, DriverKeyError,
-    storage::{StorageCapabilitiesError, StorageError, StorageErrorKind},
-};
+use ah_vfs::application::driver_error::DriverError;
+use ah_vfs::application::driver_error::{LifecycleError, LifecycleFailure};
+use ah_vfs::domain::DriverKeyError;
+use ah_vfs_storage::{Failure, Rejection};
 use std::{io, path::PathBuf};
 use thiserror::Error;
 
 /// Classify native failures only at the adapter boundary; callers never inspect errno.
-pub(crate) fn io_error_kind(error: &io::Error) -> StorageErrorKind {
+pub(crate) fn io_failure(error: &io::Error) -> Failure {
     match error.raw_os_error().map(|code| code as u32) {
-        Some(32 | 33 | 303) => return StorageErrorKind::Conflict,
-        Some(17) => return StorageErrorKind::CrossDevice,
-        Some(50 | 4390 | 4392 | 4393 | 4394) => return StorageErrorKind::UnsupportedOperation,
-        Some(123 | 161 | 206) => return StorageErrorKind::InvalidPath,
-        Some(145) => return StorageErrorKind::DirNotEmpty,
+        Some(32 | 33 | 303) => return Failure::Rejected(Rejection::Conflict),
+        Some(17) => return Failure::Rejected(Rejection::CrossDevice),
+        Some(50 | 4390 | 4392 | 4393 | 4394) => return Failure::Rejected(Rejection::Unsupported),
+        Some(123 | 161) => return Failure::Rejected(Rejection::UnsupportedName),
+        Some(206) => return Failure::Rejected(Rejection::NameTooLong),
+        Some(145) => return Failure::Rejected(Rejection::DirectoryNotEmpty),
         _ => {}
     }
-    ah_vfs::infrastructure::sqlite_error::io_error_kind(error)
+    ah_vfs::infrastructure::storage_io::io_failure(error)
 }
 
 impl From<WindowsLocalDriverError> for DriverError {
     fn from(error: WindowsLocalDriverError) -> Self {
-        let kind = match error {
-            WindowsLocalDriverError::Dir { ref source, .. } => io_error_kind(source),
-            WindowsLocalDriverError::NotDir(_) => StorageErrorKind::NotDir,
-            WindowsLocalDriverError::InvalidPathEncoding => StorageErrorKind::InvalidNameEncoding,
-            WindowsLocalDriverError::InvalidData => StorageErrorKind::InvalidData,
-            WindowsLocalDriverError::DriverKey(_) | WindowsLocalDriverError::Capabilities(_) => {
-                StorageErrorKind::ProtocolViolation
-            }
+        let failure = match &error {
+            WindowsLocalDriverError::DriverKey(_) => LifecycleFailure::InvalidDeclaration,
+            WindowsLocalDriverError::Dir { .. } => LifecycleFailure::Backend,
+            _ => LifecycleFailure::InvalidRecord,
         };
-        Self::Storage(StorageError::with_source(kind, error))
+        LifecycleError::with_source(failure, error).into()
     }
 }
 
@@ -39,8 +36,6 @@ impl From<WindowsLocalDriverError> for DriverError {
 pub enum WindowsLocalDriverError {
     #[error("driver key declaration is invalid")]
     DriverKey(#[from] DriverKeyError),
-    #[error("storage capability declaration is invalid")]
-    Capabilities(#[from] StorageCapabilitiesError),
     #[error("local directory '{path}' is unavailable")]
     Dir {
         path: PathBuf,

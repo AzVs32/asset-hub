@@ -7,13 +7,10 @@ pub use storage_contract::{
     assert_same_path_rename_contract,
 };
 
-use crate::{
-    application::{
-        dto::{InstanceConfig, InstanceQuery, RemoveInstanceOutcome},
-        port::DriverFuture,
-    },
-    domain::{DriverError, InstanceId},
-};
+use crate::application::driver_error::{DriverError, LifecycleError, LifecycleFailure};
+use crate::application::dto::{InstanceConfig, InstanceQuery, RemoveInstanceOutcome};
+use crate::application::port::DriverFuture;
+use crate::domain::InstanceId;
 use std::{error::Error, num::NonZeroUsize, sync::Arc};
 
 /// Isolated test fixture. Hooks affect its own records/database only.
@@ -84,7 +81,7 @@ pub async fn assert_registry_contract(fixture: &dyn RegistryFixture) -> Result<(
     fixture.close_database().await?;
     assert!(matches!(
         registry.get(records[1].id.clone()).await,
-        Err(DriverError::Storage(_))
+        Err(DriverError::Lifecycle(error)) if error.failure() == LifecycleFailure::Unavailable
     ));
     assert!(registry.list(InstanceQuery::default()).await.is_err());
     assert!(registry.remove(records[1].id.clone()).await.is_err());
@@ -105,10 +102,7 @@ pub fn register_driver(
         std::task::Poll::Ready(result) => result,
         std::task::Poll::Pending => Err(
             crate::application::error::DriverCatalogError::Initialization(
-                crate::domain::storage::StorageError::new(
-                    crate::domain::storage::StorageErrorKind::UnsupportedOperation,
-                )
-                .into(),
+                LifecycleError::new(LifecycleFailure::Unsupported).into(),
             ),
         ),
     }

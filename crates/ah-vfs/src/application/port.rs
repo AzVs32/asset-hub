@@ -61,12 +61,13 @@
 //! Bindings explicitly map named error categories, never Rust enum ordinals,
 //! Debug strings or backend error messages. DriverError distinguishes invalid
 //! configuration (safe field identifier plus InstanceConfigErrorKind), missing
-//! instance, and StorageErrorKind. Unknown remote categories map to Backend;
-//! malformed responses map to ProtocolViolation. Diagnostics and credentials are not
+//! instance, lifecycle failures, and StorageError. Storage failures preserve the
+//! operation, cause and mutation outcome independently; unknown remote tags are
+//! rejected as contract violations. Diagnostics and credentials are not
 //! transmitted in public errors. RPC status or a WASM trap alone does not establish
 //! whether a mutation happened. Operations without side effects preserve transport
 //! categories such as Unavailable, TimedOut and Cancelled. A dispatched mutation
-//! with uncertain effects returns OutcomeUnknown regardless of transport status
+//! with uncertain effects carries MutationOutcome::Unknown alongside its cause
 //! and must not be automatically replayed. Request correlation IDs alone do not provide
 //! deduplication. Cancellation before migration persistence leaves host records
 //! unchanged; cancellation during persistence requires reconciliation.
@@ -90,7 +91,7 @@
 //! dropping its future cannot guarantee rollback. Explicit close/drop only makes
 //! a best-effort release; disconnecting a gRPC Storage stream drops its entire
 //! resource scope without renewal or expiry. Abandoned writes are discarded,
-//! never published. A lost commit response is OutcomeUnknown. Transfers preserve backpressure and never
+//! never published. A lost commit response carries MutationOutcome::Unknown. Transfers preserve backpressure and never
 //! buffer an entire file merely to bridge transports.
 
 mod driver;

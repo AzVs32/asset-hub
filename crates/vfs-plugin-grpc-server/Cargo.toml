@@ -12,14 +12,13 @@ workspace = true
 
 [features]
 storage-contract = [
-    "dep:ah-vfs-storage",
     "dep:vfs-driver-memory",
     "vfs-plugin-grpc-wire/storage-contract",
 ]
 
 [dependencies]
 ah-vfs = { path = "../ah-vfs", version = "0.1.0" }
-ah-vfs-storage = { path = "../ah-vfs-storage", version = "0.1.0", optional = true }
+ah-vfs-storage = { path = "../ah-vfs-storage", version = "0.1.0" }
 vfs-driver-memory = { path = "../vfs-driver-memory", version = "0.1.0", optional = true }
 vfs-plugin-codec = { path = "../vfs-plugin-codec", version = "0.1.0" }
 vfs-plugin-protocol = { path = "../vfs-plugin-protocol", version = "0.1.0" }

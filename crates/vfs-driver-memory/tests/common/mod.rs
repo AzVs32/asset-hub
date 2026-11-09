@@ -1,12 +1,12 @@
 #![allow(dead_code)]
+use ah_vfs_storage::{Failure, Rejection};
 
-use ah_vfs::{
-    application::port::{Storage, StorageFileReader},
-    domain::storage::{
-        StorageCreateDirRequest, StoragePath, StorageReadFileRequest, StorageStatEntryRequest,
-        StorageWriteFileRequest,
-    },
+use ah_vfs::application::port::{Storage, StorageFileReader};
+use ah_vfs::domain::storage::{
+    StorageCreateDirRequest, StorageReadFileRequest, StorageStatEntryRequest,
+    StorageWriteFileRequest,
 };
+use ah_vfs_storage::StoragePath;
 
 pub type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -76,9 +76,7 @@ pub async fn exists(storage: &dyn Storage, name: &str) -> TestResult<bool> {
         .await
     {
         Ok(_) => Ok(true),
-        Err(error) if error.kind() == ah_vfs::domain::storage::StorageErrorKind::NotFound => {
-            Ok(false)
-        }
+        Err(error) if error.failure() == Failure::Rejected(Rejection::NotFound) => Ok(false),
         Err(error) => Err(error.into()),
     }
 }

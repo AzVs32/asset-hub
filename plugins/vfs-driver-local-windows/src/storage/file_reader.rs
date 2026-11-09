@@ -3,7 +3,8 @@
 use super::{CHUNK_SIZE, blocking, fs};
 use ah_vfs::application::port::{StorageFileReader, StorageFuture};
 use ah_vfs::domain::storage::StorageReadFileRequest;
-use ah_vfs::domain::storage::{StorageError, StorageErrorKind};
+use ah_vfs_storage::{BackendFailure, Failure, Operation, StorageError};
+
 use cap_std::fs::{Dir, File};
 use std::io::{Read, Seek, SeekFrom};
 
@@ -19,7 +20,8 @@ struct FileReadSession {
 
 impl LocalFileReader {
     pub(super) fn open(root: &Dir, request: StorageReadFileRequest) -> Result<Self, StorageError> {
-        let mut file = fs::open_file(root, &request.path)?;
+        let operation = Operation::Read;
+        let mut file = fs::open_file(operation, root, &request.path)?;
         let mut eof = request.length == Some(0);
         if !eof {
             match file.seek(SeekFrom::Start(request.offset)) {
@@ -27,11 +29,15 @@ impl LocalFileReader {
                 // Native seeks may reject u64 offsets that still denote empty ranges.
                 Err(cause)
                     if cause.kind() == std::io::ErrorKind::InvalidInput
-                        && request.offset >= file.metadata().map_err(fs::error)?.len() =>
+                        && request.offset
+                            >= file
+                                .metadata()
+                                .map_err(|cause| fs::error(operation, cause))?
+                                .len() =>
                 {
                     eof = true;
                 }
-                Err(cause) => return Err(fs::error(cause)),
+                Err(cause) => return Err(fs::error(operation, cause)),
             }
         }
         Ok(Self {
@@ -46,12 +52,14 @@ impl LocalFileReader {
 
 impl StorageFileReader for LocalFileReader {
     fn next_chunk(&mut self) -> StorageFuture<'_, Option<Vec<u8>>> {
+        let operation = Operation::Read;
         Box::pin(async move {
-            let mut session = self
-                .session
-                .take()
-                .ok_or(StorageError::new(StorageErrorKind::SessionClosed))?;
-            let (session, bytes) = blocking(move || {
+            let mut session = self.session.take().ok_or(StorageError::without_effects(
+                operation,
+                Failure::Backend(BackendFailure::Closed),
+                None,
+            ))?;
+            let (session, bytes) = blocking(operation, false, move || {
                 if session.eof || session.remaining == Some(0) {
                     return Ok((session, None));
                 }
@@ -59,7 +67,10 @@ impl StorageFileReader for LocalFileReader {
                     .remaining
                     .map_or(CHUNK_SIZE, |left| left.min(CHUNK_SIZE as u64) as usize);
                 let mut bytes = vec![0; size];
-                let length = session.file.read(&mut bytes).map_err(fs::error)?;
+                let length = session
+                    .file
+                    .read(&mut bytes)
+                    .map_err(|cause| fs::error(operation, cause))?;
                 bytes.truncate(length);
                 session.remaining = session.remaining.map(|left| left - length as u64);
                 session.eof = length == 0;

@@ -1,5 +1,5 @@
 //! Protobuf boundary for the memory-backed storage contract session.
-tonic::include_proto!("assethub.storage.v1");
+tonic::include_proto!("assethub.storage.v2");
 
 mod conversion;
 pub use conversion::*;

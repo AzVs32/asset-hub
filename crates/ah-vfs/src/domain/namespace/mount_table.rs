@@ -1,8 +1,6 @@
 use super::{ChildMountPolicy, Mount, MountId, VirtualPath};
-use crate::domain::{
-    DriverKey,
-    storage::{StoragePath, StoragePathError},
-};
+use crate::domain::DriverKey;
+use ah_vfs_storage::{PathError, StoragePath};
 use thiserror::Error;
 
 /// A virtual namespace with one required root mount and unique mount IDs and paths.
@@ -60,9 +58,9 @@ impl<'mount, 'path> MountResolution<'mount, 'path> {
     ///
     /// Namespace prefixes may contain characters such as `:` that storage addresses
     /// reject. Only the suffix is checked: mounting at `/cloud:archive` is valid,
-    /// while a suffix such as `file:stream` returns [`StoragePathError::InvalidSegment`].
+    /// while a suffix such as `file:stream` returns [`PathError::InvalidComponent`].
     /// The mount point itself maps to [`StoragePath::root`]. No backend is opened.
-    pub fn storage_path(&self) -> Result<StoragePath, StoragePathError> {
+    pub fn storage_path(&self) -> Result<StoragePath, PathError> {
         StoragePath::parse(self.relative_path)
     }
 }

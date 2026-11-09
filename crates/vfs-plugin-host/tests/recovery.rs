@@ -1,13 +1,10 @@
-use ah_vfs::{
-    application::port::*,
-    domain::{
-        InstanceId,
-        storage::{
-            Entry, StorageError, StorageErrorKind, StoragePath, StorageReadFileRequest,
-            StorageStatEntryRequest, StorageWriteFileRequest,
-        },
-    },
+use ah_vfs::application::port::*;
+use ah_vfs::domain::InstanceId;
+use ah_vfs::domain::storage::{
+    StorageReadFileRequest, StorageStatEntryRequest, StorageWriteFileRequest,
 };
+use ah_vfs_storage::{BackendFailure, Failure, Operation, Rejection, StorageError};
+use ah_vfs_storage::{Entry, StoragePath};
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
@@ -91,12 +88,21 @@ impl Transport for Peer {
             if matches!(op, Op::Describe(p::Empty {})) {
                 self.descriptions.fetch_add(1, Ordering::SeqCst);
                 if self.fail_describe.swap(false, Ordering::SeqCst) {
-                    return Err(StorageError::new(StorageErrorKind::Unavailable).into());
+                    return Err(ah_vfs::application::driver_error::LifecycleError::new(
+                        ah_vfs::application::driver_error::LifecycleFailure::Unavailable,
+                    )
+                    .into());
                 }
                 return Ok(p::Reply::new(Value::Description(self.description().into())));
             }
             if generation != current.to_string() {
-                return Err(StorageError::new(StorageErrorKind::StaleHandle).into());
+                return Err(vfs_plugin_host::convert::call_error(
+                    &op,
+                    Failure::Backend(BackendFailure::Stale),
+                    false,
+                    None,
+                )
+                .into());
             }
             let value = match op {
                 Op::Initialize(p::Initialize {
@@ -134,7 +140,12 @@ impl Transport for Peer {
                 Op::Commit(_) => {
                     self.commits.fetch_add(1, Ordering::SeqCst);
                     self.restart();
-                    return Err(StorageError::new(StorageErrorKind::OutcomeUnknown).into());
+                    return Err(StorageError::after_dispatch(
+                        Operation::Write,
+                        Failure::Backend(BackendFailure::Unavailable),
+                        None,
+                    )
+                    .into());
                 }
                 _ => Value::Unit(p::Empty {}),
             };
@@ -160,7 +171,13 @@ async fn open(driver: &PluginDriver) -> Result<Arc<dyn Storage>> {
 async fn stat(storage: &dyn Storage) -> std::result::Result<Entry, StorageError> {
     storage
         .stat_entry(StorageStatEntryRequest {
-            path: StoragePath::parse("file")?,
+            path: StoragePath::parse("file").map_err(|cause| {
+                StorageError::without_effects(
+                    Operation::Stat,
+                    Failure::Rejected(Rejection::UnsupportedName),
+                    Some(Box::new(cause)),
+                )
+            })?,
         })
         .await
 }
@@ -179,8 +196,8 @@ async fn new_opens_share_recovery_and_old_resources_stay_stale() -> Result {
             .await
             .err()
             .ok_or("old generation")?
-            .kind(),
-        StorageErrorKind::StaleHandle
+            .failure(),
+        Failure::Backend(BackendFailure::Stale)
     );
     assert!(old.is_stale());
     let mut opens = vec![];
@@ -193,7 +210,10 @@ async fn new_opens_share_recovery_and_old_resources_stay_stale() -> Result {
     }
     for task in opens {
         let storage = task.await??;
-        assert_eq!(stat(storage.as_ref()).await?.size, Some(2));
+        assert_eq!(
+            stat(storage.as_ref()).await?.entry_type(),
+            ah_vfs_storage::EntryType::file(Some(2))
+        );
     }
     assert_eq!(peer.descriptions.load(Ordering::SeqCst), 2);
     let initialized = peer
@@ -204,12 +224,21 @@ async fn new_opens_share_recovery_and_old_resources_stay_stale() -> Result {
     assert_eq!(initialized.len(), 2);
     assert_eq!(initialized[0].1, initialized[1].1);
     assert_eq!(
-        reader.next_chunk().await.err().ok_or("old reader")?.kind(),
-        StorageErrorKind::StaleHandle
+        reader
+            .next_chunk()
+            .await
+            .err()
+            .ok_or("old reader")?
+            .failure(),
+        Failure::Backend(BackendFailure::Stale)
     );
     assert_eq!(
-        stat(old.as_ref()).await.err().ok_or("old storage")?.kind(),
-        StorageErrorKind::StaleHandle
+        stat(old.as_ref())
+            .await
+            .err()
+            .ok_or("old storage")?
+            .failure(),
+        Failure::Backend(BackendFailure::Stale)
     );
     driver.reconnect().await?;
     // A fresh control transport replays settings even for the same backend.
@@ -228,15 +257,26 @@ async fn unknown_commit_is_not_replayed_during_recovery() -> Result {
     let mut writer = old
         .write_file(StorageWriteFileRequest::new(StoragePath::parse("file")?))
         .await?;
+    let error = writer.commit().await.err().ok_or("lost response")?;
+    assert_eq!(error.operation(), Operation::Write);
     assert_eq!(
-        writer.commit().await.err().ok_or("lost response")?.kind(),
-        StorageErrorKind::OutcomeUnknown
+        error.failure(),
+        Failure::Backend(BackendFailure::Unavailable)
     );
+    assert_eq!(error.outcome(), ah_vfs_storage::MutationOutcome::Unknown);
     let new = open(&driver).await?;
-    assert_eq!(stat(new.as_ref()).await?.size, Some(2));
     assert_eq!(
-        writer.commit().await.err().ok_or("terminal writer")?.kind(),
-        StorageErrorKind::SessionClosed
+        stat(new.as_ref()).await?.entry_type(),
+        ah_vfs_storage::EntryType::file(Some(2))
+    );
+    assert_eq!(
+        writer
+            .commit()
+            .await
+            .err()
+            .ok_or("terminal writer")?
+            .failure(),
+        Failure::Backend(BackendFailure::Closed)
     );
     assert_eq!(peer.commits.load(Ordering::SeqCst), 1);
     Ok(())
@@ -255,13 +295,13 @@ async fn changed_declarations_require_a_new_registration() -> Result {
             .await
             .err()
             .ok_or("changed description")?
-            .storage_error()
+            .lifecycle_error()
             .ok_or("category")?
-            .kind(),
-        StorageErrorKind::ProtocolViolation
+            .failure(),
+        ah_vfs::application::driver_error::LifecycleFailure::InvalidDeclaration
     );
     assert!(old.is_stale());
-    assert!(driver.info().capabilities().stat_entry());
+    assert!(driver.info().capabilities().stat());
     assert!(open(&driver).await.is_err());
     assert_eq!(
         peer.initialized.lock().map_err(|_| "settings lock")?.len(),
@@ -288,7 +328,10 @@ async fn failed_and_cancelled_recovery_can_be_followed_by_new_opens() -> Result 
     task.abort();
     peer.resume.notify_one();
     let new = open(&driver).await?;
-    assert_eq!(stat(new.as_ref()).await?.size, Some(2));
+    assert_eq!(
+        stat(new.as_ref()).await?.entry_type(),
+        ah_vfs_storage::EntryType::file(Some(2))
+    );
     assert_eq!(
         peer.initialized.lock().map_err(|_| "settings lock")?.len(),
         2
@@ -332,7 +375,10 @@ impl Transport for ReopeningControl {
         Some(Box::pin(async move {
             if self.reject_open {
                 self.peer.restart();
-                return Err(StorageError::new(StorageErrorKind::StaleHandle).into());
+                return Err(ah_vfs::application::driver_error::LifecycleError::new(
+                    ah_vfs::application::driver_error::LifecycleFailure::Stale,
+                )
+                .into());
             }
             let Value::Storage(storage) = self
                 .peer
@@ -363,7 +409,10 @@ async fn stale_open_recreates_transport_describes_initializes_and_opens_once_mor
         .initialize([("setting".into(), "original".into())].into())
         .await?;
     let storage = open(&driver).await?;
-    assert_eq!(stat(storage.as_ref()).await?.size, Some(2));
+    assert_eq!(
+        stat(storage.as_ref()).await?.entry_type(),
+        ah_vfs_storage::EntryType::file(Some(2))
+    );
     assert_eq!(factory.connections.load(Ordering::SeqCst), 2);
     assert_eq!(peer.descriptions.load(Ordering::SeqCst), 2);
     let initialized = peer.initialized.lock().map_err(|_| "settings lock")?;

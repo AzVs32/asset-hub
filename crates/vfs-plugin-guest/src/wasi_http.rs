@@ -1,10 +1,12 @@
 //! Synchronous Rust HTTP client over standard WASIp2 imports.
 //! The host remains asynchronous and authoritatively enforces egress permissions.
+#[cfg(target_os = "wasi")]
+use ah_vfs_storage::BackendFailure;
+use ah_vfs_storage::{Failure, Rejection};
 use http::{Request, Response};
-use vfs_plugin_protocol::{Failure, FailureCode};
 #[cfg(not(target_os = "wasi"))]
 pub fn send(_request: Request<Vec<u8>>) -> Result<Response<Vec<u8>>, Failure> {
-    Err(Failure::new(FailureCode::UnsupportedOperation))
+    Err(Failure::Rejected(Rejection::Unsupported))
 }
 #[cfg(target_os = "wasi")]
 pub fn send(request: Request<Vec<u8>>) -> Result<Response<Vec<u8>>, Failure> {
@@ -13,34 +15,36 @@ pub fn send(request: Request<Vec<u8>>) -> Result<Response<Vec<u8>>, Failure> {
         io::streams::StreamError,
     };
     fn fail() -> Failure {
-        Failure::new(FailureCode::InvalidRequest)
+        Failure::Rejected(Rejection::Conflict)
     }
     fn failed() -> Failure {
-        Failure::new(FailureCode::Unavailable)
+        Failure::Backend(BackendFailure::Unavailable)
     }
     fn code(error: ErrorCode) -> Failure {
-        Failure::new(match error {
+        match error {
             ErrorCode::HttpRequestDenied | ErrorCode::DestinationIpProhibited => {
-                FailureCode::PermissionDenied
+                Failure::Rejected(Rejection::AccessDenied)
             }
             ErrorCode::HttpRequestBodySize(_)
             | ErrorCode::HttpResponseBodySize(_)
             | ErrorCode::HttpRequestHeaderSectionSize(_)
-            | ErrorCode::HttpResponseHeaderSectionSize(_) => FailureCode::TooLarge,
+            | ErrorCode::HttpResponseHeaderSectionSize(_) => {
+                Failure::Rejected(Rejection::LimitExceeded)
+            }
             ErrorCode::ConnectionTimeout
             | ErrorCode::ConnectionReadTimeout
             | ErrorCode::ConnectionWriteTimeout
             | ErrorCode::DnsTimeout
-            | ErrorCode::HttpResponseTimeout => FailureCode::TimedOut,
-            _ => FailureCode::Unavailable,
-        })
+            | ErrorCode::HttpResponseTimeout => Failure::Backend(BackendFailure::TimedOut),
+            _ => Failure::Backend(BackendFailure::Unavailable),
+        }
     }
     fn stream(error: StreamError) -> Failure {
         match error {
             StreamError::LastOperationFailed(error) => http_error_code(&error)
                 .map(code)
-                .unwrap_or_else(|| Failure::new(FailureCode::Unavailable)),
-            StreamError::Closed => Failure::new(FailureCode::Unavailable),
+                .unwrap_or_else(|| Failure::Backend(BackendFailure::Unavailable)),
+            StreamError::Closed => Failure::Backend(BackendFailure::Unavailable),
         }
     }
     let (parts, body) = request.into_parts();
@@ -88,7 +92,8 @@ pub fn send(request: Request<Vec<u8>>) -> Result<Response<Vec<u8>>, Failure> {
     let outgoing_body = outgoing.body().map_err(|_| fail())?;
     let future = outgoing_handler::handle(outgoing, None).map_err(code)?;
     let output = outgoing_body.write().map_err(|_| failed())?;
-    for chunk in body.chunks(16 * 1024) {
+    // WASI blocking-write-and-flush accepts at most 4096 bytes per call.
+    for chunk in body.chunks(4096) {
         output.blocking_write_and_flush(chunk).map_err(stream)?;
     }
     drop(output);
