@@ -16,11 +16,11 @@ use ah_vfs::application::port::{
 };
 use ah_vfs::application::service::{EntryService, MountService};
 use ah_vfs::domain::namespace::{ChildMountPolicy, VirtualPath};
-use ah_vfs::domain::storage::{StorageReadFileRequest, StorageWriteFileRequest};
+use ah_vfs::domain::storage::StorageWriteFileRequest;
 use ah_vfs::domain::{DriverInstance, DriverKey, InstanceId};
 use ah_vfs::infrastructure::mount_repository::SqliteMountRepository;
 use ah_vfs_storage::{
-    AttributeSupport, Capabilities, ReadSupport, WriteMode, WriteModes, WriteSupport,
+    AttributeSupport, Capabilities, ReadRange, ReadSupport, WriteMode, WriteModes, WriteSupport,
 };
 use ah_vfs_storage::{Entry, Permissions, StoragePath, XattrName};
 use std::{
@@ -109,7 +109,8 @@ impl Storage for TestStorage {
     }
     fn read_file(
         &self,
-        _: StorageReadFileRequest,
+        _: ah_vfs_storage::ReadRequest,
+        _: ah_vfs::application::port::LookupContext,
     ) -> StorageFuture<'_, Box<dyn StorageFileReader>> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         Box::pin(async { Ok(Box::new(TestReader) as Box<dyn StorageFileReader>) })
@@ -242,12 +243,38 @@ async fn unsupported_requests_are_rejected_before_backend_side_effects() -> Test
     assert!(
         matches!(service.write_file(request(true)?).await, Err(error) if error.storage_error().is_some_and(|e| e.failure() == Failure::Rejected(Rejection::Unsupported)))
     );
-    assert!(
-        matches!(service.read_file(ReadFileRequest { path: VirtualPath::parse("/file")?, offset: 1, length: None }).await, Err(error) if error.storage_error().is_some_and(|e| e.failure() == Failure::Rejected(Rejection::Unsupported)))
-    );
+    let read = ReadFileRequest {
+        path: VirtualPath::parse("/file")?,
+        range: ReadRange::new(1, None)?,
+    };
+    assert!(matches!(service.read_file(read).await, Err(error)
+        if error.storage_error().is_some_and(|e| e.failure() == Failure::Rejected(Rejection::Unsupported))));
     assert_eq!(calls.load(Ordering::SeqCst), 0);
     let mut writer = service.write_file(request(false)?).await?;
     writer.abort().await?;
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn sequential_reads_admit_a_bounded_prefix_before_opening_the_backend() -> TestResult {
+    let capabilities = Capabilities::default().with_read(ReadSupport::Sequential);
+    let (unavailable, _) = fixture(capabilities, Some(LifecycleFailure::Unavailable)).await?;
+    let path = VirtualPath::parse("/file")?;
+    assert!(matches!(
+        unavailable.read_file(ReadFileRequest {
+            path: path.clone(),
+            range: ReadRange::new(1, Some(1))?,
+        }).await,
+        Err(error) if error.storage_error().is_some_and(|e| e.failure() == Failure::Rejected(Rejection::Unsupported))
+    ));
+    let (service, calls) = fixture(capabilities, None).await?;
+    let _reader = service
+        .read_file(ReadFileRequest {
+            path,
+            range: ReadRange::new(0, Some(1))?,
+        })
+        .await?;
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     Ok(())
 }
@@ -260,8 +287,7 @@ async fn invalid_routed_suffix_is_rejected_before_backend_open_or_io() -> TestRe
     let error = service
         .read_file(ReadFileRequest {
             path: VirtualPath::parse("/file:stream")?,
-            offset: 0,
-            length: None,
+            range: ReadRange::FULL,
         })
         .await
         .err()
@@ -282,15 +308,18 @@ async fn opening_streaming_and_committing_keep_domain_error_categories() -> Test
         .with_read(ReadSupport::Range)
         .with_write(WriteSupport::staged(WriteModes::CreateNew, false));
     let (service, _) = fixture(caps, Some(LifecycleFailure::Unavailable)).await?;
-    assert!(
-        matches!(service.read_file(ReadFileRequest { path: VirtualPath::parse("/file")?, offset: 0, length: None }).await, Err(EntryError::Driver(DriverError::Lifecycle(error))) if error.failure() == LifecycleFailure::Unavailable)
-    );
+    let path = VirtualPath::parse("/file")?;
+    let read = ReadFileRequest {
+        path: path.clone(),
+        range: ReadRange::FULL,
+    };
+    assert!(matches!(service.read_file(read).await, Err(EntryError::Driver(DriverError::Lifecycle(error)))
+        if error.failure() == LifecycleFailure::Unavailable));
     let (service, _) = fixture(caps, None).await?;
     let mut reader = service
         .read_file(ReadFileRequest {
-            path: VirtualPath::parse("/file")?,
-            offset: 0,
-            length: None,
+            path,
+            range: ReadRange::FULL,
         })
         .await?;
     assert!(

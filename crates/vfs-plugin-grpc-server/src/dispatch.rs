@@ -3,11 +3,13 @@ use ah_vfs::application::driver_error::{DriverError, LifecycleError, LifecycleFa
 use ah_vfs::application::port::*;
 use ah_vfs::domain::InstanceId;
 use ah_vfs::domain::storage::{
-    StorageCreateDirRequest, StorageDirQuery, StorageMoveEntryRequest, StorageReadFileRequest,
-    StorageRemoveEntryRequest, StorageWriteFileRequest,
+    StorageCreateDirRequest, StorageDirQuery, StorageMoveEntryRequest, StorageRemoveEntryRequest,
+    StorageWriteFileRequest,
 };
 use ah_vfs_storage::{BackendFailure, Failure, Operation, Rejection, StorageError};
-use ah_vfs_storage::{Permissions, ReadLinkRequest, StoragePath, WriteMode, XattrName, XattrWriteMode};
+use ah_vfs_storage::{
+    Permissions, ReadLinkRequest, StoragePath, WriteMode, XattrName, XattrWriteMode,
+};
 use futures_util::FutureExt;
 use std::{
     collections::HashMap,
@@ -501,12 +503,23 @@ impl Session {
                     )
                     .await;
             }
-            Op::Read(p::Read {
-                handle,
-                path: raw,
-                offset,
-                length,
-            }) => {
+            Op::Read(read) => {
+                let handle = read.handle;
+                let (request, working_directory, intermediate_symlinks) =
+                    p::decode_read(read).map_err(invalid_lookup)?;
+                self.generation
+                    .driver
+                    .info()
+                    .capabilities()
+                    .require_read(&request)
+                    .map_err(|reason| {
+                        StorageError::without_effects(
+                            Operation::Read,
+                            Failure::Rejected(reason),
+                            None,
+                        )
+                    })?;
+                let storage = self.storage(Operation::Read, handle).await?;
                 let capacity = self.generation.reserve().map_err(|source| {
                     StorageError::without_effects(
                         Operation::Read,
@@ -514,14 +527,14 @@ impl Session {
                         Some(Box::new(source)),
                     )
                 })?;
-                let reader = self
-                    .storage(Operation::Read, handle)
-                    .await?
-                    .read_file(StorageReadFileRequest {
-                        path: path(&raw)?,
-                        offset,
-                        length,
-                    })
+                let reader = storage
+                    .read_file(
+                        request,
+                        LookupContext {
+                            working_directory,
+                            intermediate_symlinks,
+                        },
+                    )
                     .await?;
                 let mut resources = self.resources.lock().await;
                 let handle = resources.allocate(Operation::Read)?;

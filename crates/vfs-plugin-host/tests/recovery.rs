@@ -1,6 +1,6 @@
 use ah_vfs::application::port::*;
 use ah_vfs::domain::InstanceId;
-use ah_vfs::domain::storage::{StorageReadFileRequest, StorageWriteFileRequest};
+use ah_vfs::domain::storage::StorageWriteFileRequest;
 use ah_vfs_storage::{BackendFailure, Failure, Operation, Rejection, StorageError};
 use ah_vfs_storage::{Entry, StoragePath};
 use std::sync::{
@@ -211,7 +211,13 @@ async fn new_opens_share_recovery_and_old_resources_stay_stale() -> Result {
     let driver = connect(&peer).await?;
     let old = open(&driver).await?;
     let mut reader = old
-        .read_file(StorageReadFileRequest::new(StoragePath::parse("file")?))
+        .read_file(
+            ah_vfs_storage::ReadRequest::new(
+                StoragePath::parse("file")?.to_rooted_expr(),
+                ah_vfs_storage::ReadRange::FULL,
+            ),
+            Default::default(),
+        )
         .await?;
     peer.restart();
     assert_eq!(

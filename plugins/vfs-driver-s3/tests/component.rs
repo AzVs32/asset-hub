@@ -8,9 +8,7 @@ use ah_vfs::application::mount_runtime::MountRuntime;
 use ah_vfs::application::port::*;
 use ah_vfs::application::service::{EntryService, InstanceService, MountService};
 use ah_vfs::domain::namespace::VirtualPath;
-use ah_vfs::domain::storage::{
-    StorageDirQuery, StorageMoveEntryRequest, StorageReadFileRequest, StorageWriteFileRequest,
-};
+use ah_vfs::domain::storage::{StorageDirQuery, StorageMoveEntryRequest, StorageWriteFileRequest};
 use ah_vfs::domain::{DriverInstance, InstanceId};
 use ah_vfs::infrastructure::instance_record_repository::SqliteInstanceRecordRepository;
 use ah_vfs::infrastructure::mount_repository::SqliteMountRepository;
@@ -124,30 +122,74 @@ async fn component(origins: Vec<String>) -> Result<Arc<PluginDriver>> {
 
 #[tokio::test]
 #[ignore = "requires the built S3 WASM component; no external service"]
-async fn protobuf_bootstrap_uses_the_shared_description_and_config_messages() -> Result {
+async fn protobuf_bootstrap_and_reads_bind_a_single_s3_version() -> Result {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let endpoint = format!("http://{}", listener.local_addr()?);
     let server = tokio::spawn(async move {
-        let (mut stream, _) = listener.accept().await?;
-        let mut request = Vec::new();
-        while !request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
-            let mut chunk = [0; 4096];
-            let read = stream.read(&mut chunk).await?;
-            if read == 0 {
-                return Err(std::io::Error::other("request closed"));
+        for (expected, status, length, extra, body) in [
+            ("head /fixture/ ", "200 OK", 0, "", vec![]),
+            ("head /fixture/ ", "200 OK", 0, "", vec![]),
+            (
+                "head /fixture/file ",
+                "200 OK",
+                65540,
+                "etag: \"original\"\r\n",
+                vec![],
+            ),
+            (
+                "get /fixture/?",
+                "200 OK",
+                19,
+                "",
+                b"<ListBucketResult/>".to_vec(),
+            ),
+            (
+                "get /fixture/file ",
+                "206 Partial Content",
+                65536,
+                "etag: \"original\"\r\ncontent-range: bytes 1-65536/65540\r\n",
+                vec![7; 65536],
+            ),
+            (
+                "get /fixture/file ",
+                "412 Precondition Failed",
+                0,
+                "",
+                vec![],
+            ),
+        ] {
+            let (mut stream, _) = listener.accept().await?;
+            let mut request = Vec::new();
+            while !request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+                let mut chunk = [0; 4096];
+                let read = stream.read(&mut chunk).await?;
+                if read == 0 {
+                    return Err(std::io::Error::other("request closed"));
+                }
+                request.extend_from_slice(&chunk[..read]);
+                assert!(request.len() < 16384);
             }
-            request.extend_from_slice(&chunk[..read]);
-            assert!(request.len() < 16384);
+            let request = String::from_utf8_lossy(&request).to_ascii_lowercase();
+            assert!(request.starts_with(expected), "{request}");
+            assert!(request.contains("authorization: aws4-hmac-sha256 "));
+            assert!(request.contains("x-amz-date:"));
+            if expected == "get /fixture/file " {
+                assert!(request.contains("if-match: \"original\"\r\n"));
+                assert!(request.contains("signedheaders=host;if-match;range;"));
+                let range = if length == 0 {
+                    "65537-65539"
+                } else {
+                    "1-65536"
+                };
+                assert!(request.contains(&format!("range: bytes={range}\r\n")));
+            }
+            stream.write_all(format!(
+                "HTTP/1.1 {status}\r\nContent-Length: {length}\r\n{extra}Connection: close\r\n\r\n"
+            ).as_bytes()).await?;
+            stream.write_all(&body).await?;
+            stream.shutdown().await?;
         }
-        let request = String::from_utf8_lossy(&request).to_ascii_lowercase();
-        assert!(request.starts_with("head /fixture"));
-        assert!(request.contains("authorization: aws4-hmac-sha256 "));
-        assert!(request.contains("x-amz-date:"));
-        stream
-            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
-            .await?;
-        stream.shutdown().await?;
         std::io::Result::Ok(())
     });
     let driver = component(vec![endpoint.clone()]).await?;
@@ -172,6 +214,23 @@ async fn protobuf_bootstrap_uses_the_shared_description_and_config_messages() ->
     );
     assert_eq!(provisioner.migrate_config(1, config.clone()).await?, config);
     provisioner.test_connection(&config).await?;
+    let storage = driver
+        .open(OpenContext::new(InstanceId::parse("fixture")?, config))
+        .await?;
+    let mut reader = storage
+        .read_file(
+            ah_vfs_storage::ReadRequest::new(
+                StoragePath::parse("file")?.to_rooted_expr(),
+                ah_vfs_storage::ReadRange::new(1, None)?,
+            ),
+            Default::default(),
+        )
+        .await?;
+    assert_eq!(reader.next_chunk().await?, Some(vec![7; 65536]));
+    assert!(matches!(reader.next_chunk().await, Err(error)
+        if error.failure() == Failure::Rejected(Rejection::Conflict)));
+    assert!(matches!(reader.next_chunk().await, Err(error)
+        if error.failure() == Failure::Backend(ah_vfs_storage::BackendFailure::Closed)));
     tokio::time::timeout(std::time::Duration::from_secs(5), server).await???;
     Ok(())
 }
@@ -288,7 +347,7 @@ async fn s3_component_runs_through_host_records_mounts_and_streams() -> Result {
             storage
                 .stat_entry(
                     ah_vfs_storage::StatRequest::new(
-                        (StoragePath::parse("staged")?).to_rooted_expr(),
+                        StoragePath::parse("staged")?.to_rooted_expr(),
                         ah_vfs_storage::SymlinkAction::Preserve
                     ),
                     Default::default()
@@ -305,11 +364,13 @@ async fn s3_component_runs_through_host_records_mounts_and_streams() -> Result {
         let large = vec![0x5a; 9 * 1024 * 1024 + 17];
         put(storage.as_ref(), "multipart", &large).await?;
         let mut reader = storage
-            .read_file(StorageReadFileRequest {
-                path: StoragePath::parse("multipart")?,
-                offset: 5 * 1024 * 1024 - 3,
-                length: Some(70_000),
-            })
+            .read_file(
+                ah_vfs_storage::ReadRequest::new(
+                    StoragePath::parse("multipart")?.to_rooted_expr(),
+                    ah_vfs_storage::ReadRange::new(5 * 1024 * 1024 - 3, Some(70_000))?,
+                ),
+                Default::default(),
+            )
             .await?;
         let mut bytes = Vec::new();
         while let Some(chunk) = reader.next_chunk().await? {
@@ -354,8 +415,7 @@ async fn s3_component_runs_through_host_records_mounts_and_streams() -> Result {
         let mut reader = entries
             .read_file(ReadFileRequest {
                 path: VirtualPath::parse("/through-vfs")?,
-                offset: 0,
-                length: None,
+                range: ah_vfs_storage::ReadRange::new(0, None)?,
             })
             .await?;
         assert_eq!(

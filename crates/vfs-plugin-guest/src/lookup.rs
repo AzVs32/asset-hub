@@ -1,70 +1,79 @@
 use crate::api::{ErrorContext, Result};
-use ah_vfs_storage::{Failure, Operation, Rejection};
+use ah_vfs_storage::{
+    ContractViolation, Entry, EntryType, Failure, IntermediateSymlinks, LookupStart, Operation,
+    PathComponent, PathLookup, Rejection, StoragePath, SymlinkAction,
+};
 use vfs_plugin_protocol as p;
 
-/// Decode metadata operands for a backend with only direct instance-root addressing.
-/// Operations requiring bound working directories or navigation must be rejected.
+/// Resolve metadata on a backend with direct instance-root addressing.
 pub fn direct_stat(
     value: p::Stat,
-    mut stat: impl FnMut(&ah_vfs_storage::StoragePath) -> Result<ah_vfs_storage::Entry>,
-) -> Result<ah_vfs_storage::Entry> {
-    use ah_vfs_storage::{LookupStart, PathComponent, StoragePath};
+    mut stat: impl FnMut(&StoragePath) -> Result<Entry>,
+) -> Result<Entry> {
     let (request, base, links) =
         p::decode_stat(value).map_err(|_| p::Failure::new(p::FailureCode::InvalidRequest))?;
-    let context = ErrorContext::storage(Operation::Stat);
-    let unsupported = || context.failure(Failure::Rejected(Rejection::Unsupported));
-    if request.path().start() == LookupStart::BaseDirectory && !base.is_root() {
+    let (entry, ()) = direct_lookup(request.lookup(), &base, links, Operation::Stat, |path| {
+        Ok((stat(path)?, ()))
+    })?;
+    Ok(entry)
+}
+
+/// Resolve a typed lookup and return its metadata together with backend binding data.
+/// Direct-address backends reject navigation requiring stable directory identities.
+pub fn direct_lookup<T>(
+    lookup: PathLookup<'_>,
+    base: &StoragePath,
+    links: IntermediateSymlinks,
+    operation: Operation,
+    mut select: impl FnMut(&StoragePath) -> Result<(Entry, T)>,
+) -> Result<(Entry, T)> {
+    let context = ErrorContext::storage(operation);
+    let reject = |reason| context.failure(Failure::Rejected(reason));
+    let unsupported = || reject(Rejection::Unsupported);
+    if lookup.path().start() == LookupStart::BaseDirectory && !base.is_root() {
         return Err(unsupported());
     }
     let mut path = StoragePath::root();
-    let components = request.path().components();
+    let components = lookup.path().components();
     if components
         .iter()
         .any(|part| !matches!(part, PathComponent::Name(_)))
     {
         return Err(unsupported());
     }
+    let mut checked = |path: &StoragePath| {
+        let result = select(path)?;
+        if result.0.path() != path {
+            return Err(context.failure(Failure::Contract(ContractViolation::InvalidEntry)));
+        }
+        Ok(result)
+    };
     for (index, component) in components.iter().enumerate() {
         let PathComponent::Name(name) = component else {
             return Err(unsupported());
         };
         path = path
             .join(name)
-            .map_err(|_| context.failure(Failure::Rejected(Rejection::PathTooLong)))?;
+            .map_err(|_| reject(Rejection::PathTooLong))?;
         if index + 1 < components.len() {
-            let parent = stat(&path)?;
-            if parent.path() != &path {
-                return Err(context.failure(Failure::Contract(
-                    ah_vfs_storage::ContractViolation::InvalidEntry,
-                )));
-            }
-            if parent.entry_type() == ah_vfs_storage::EntryType::Symlink {
-                let reason = if links == ah_vfs_storage::IntermediateSymlinks::Reject {
-                    Rejection::SymlinkNotAllowed
-                } else {
-                    Rejection::Unsupported
-                };
-                return Err(context.failure(Failure::Rejected(reason)));
-            }
-            if parent.entry_type() != ah_vfs_storage::EntryType::Directory {
-                return Err(context.failure(Failure::Rejected(Rejection::NotDirectory)));
+            match checked(&path)?.0.entry_type() {
+                EntryType::Directory => {}
+                EntryType::Symlink if links == IntermediateSymlinks::Reject => {
+                    return Err(reject(Rejection::SymlinkNotAllowed));
+                }
+                EntryType::Symlink => return Err(unsupported()),
+                _ => return Err(reject(Rejection::NotDirectory)),
             }
         }
     }
-    let entry = stat(&path)?;
-    if entry.path() != &path {
-        return Err(context.failure(Failure::Contract(
-            ah_vfs_storage::ContractViolation::InvalidEntry,
-        )));
-    }
-    if entry.entry_type() == ah_vfs_storage::EntryType::Symlink
-        && request.lookup().final_symlink() == ah_vfs_storage::SymlinkAction::FollowWithinInstance
+    let result = checked(&path)?;
+    if result.0.entry_type() == EntryType::Symlink
+        && lookup.final_symlink() == SymlinkAction::FollowWithinInstance
     {
         return Err(unsupported());
     }
-    request
-        .lookup()
-        .check_existing_target(&path, entry.entry_type())
-        .map_err(|cause| context.failure(Failure::Rejected(cause)))?;
-    Ok(entry)
+    lookup
+        .check_existing_target(&path, result.0.entry_type())
+        .map_err(reject)?;
+    Ok(result)
 }

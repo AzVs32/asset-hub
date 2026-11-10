@@ -2,9 +2,7 @@
 use ah_vfs_storage::{Failure, Rejection};
 
 use ah_vfs::application::port::{Storage, StorageFileReader};
-use ah_vfs::domain::storage::{
-    StorageCreateDirRequest, StorageReadFileRequest, StorageWriteFileRequest,
-};
+use ah_vfs::domain::storage::{StorageCreateDirRequest, StorageWriteFileRequest};
 use ah_vfs_storage::StoragePath;
 
 pub type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -52,7 +50,13 @@ pub async fn collect(reader: &mut dyn StorageFileReader) -> TestResult<Vec<u8>> 
 pub async fn get(storage: &dyn Storage, name: &str) -> TestResult<Vec<u8>> {
     collect(
         storage
-            .read_file(StorageReadFileRequest::new(path(name)?))
+            .read_file(
+                ah_vfs_storage::ReadRequest::new(
+                    (path(name)?).to_rooted_expr(),
+                    ah_vfs_storage::ReadRange::FULL,
+                ),
+                Default::default(),
+            )
             .await?
             .as_mut(),
     )

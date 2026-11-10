@@ -225,19 +225,53 @@ struct FormalSession {
 }
 impl FormalSession {
     async fn call(&mut self, operation: p::StorageOp) -> TestResult<p::Reply> {
+        self.invoke(p::Operation::Storage(p::StorageCall {
+            handle: self.handle,
+            operation: Some(operation),
+        }))
+        .await
+    }
+
+    async fn invoke(&mut self, operation: p::Operation) -> TestResult<p::Reply> {
         // Deliberately let the server validate even malformed test requests.
         self.tx
             .send(p::Request {
-                operation: Some(p::Operation::Storage(p::StorageCall {
-                    handle: self.handle,
-                    operation: Some(operation),
-                })),
+                operation: Some(operation),
                 ..Default::default()
             })
             .await?;
         Ok(tokio::time::timeout(TIMEOUT, self.replies.message())
             .await??
             .ok_or("missing response")?)
+    }
+
+    async fn read(&mut self, path: &str, range: d::ReadRange) -> TestResult<u64> {
+        let request = d::ReadRequest::new(d::PathExpr::parse(path)?, range);
+        let reply = self
+            .invoke(p::Operation::Read(p::encode_read(
+                self.handle,
+                &request,
+                &d::StoragePath::root(),
+                d::IntermediateSymlinks::FollowWithinInstance,
+            )))
+            .await?;
+        let Some(p::Value::Reader(reader)) = reply.result else {
+            return Err("expected reader".into());
+        };
+        Ok(reader.handle)
+    }
+
+    async fn next_chunk(&mut self, handle: u64) -> TestResult<Option<Vec<u8>>> {
+        let reply = self
+            .invoke(p::Operation::ReaderNext(p::Handle { handle }))
+            .await?;
+        match reply.result {
+            Some(p::Value::Chunk(p::Chunk { eof: true })) if reply.data.is_empty() => Ok(None),
+            Some(p::Value::Chunk(p::Chunk { eof: false })) if !reply.data.is_empty() => {
+                Ok(Some(reply.data))
+            }
+            _ => Err("expected formal read chunk or EOF".into()),
+        }
     }
 
     async fn stat_entry(&mut self, op: p::StorageOp) -> TestResult<d::Entry> {
@@ -268,11 +302,15 @@ fn stat(path: &str, follow: bool) -> p::StorageOp {
 }
 
 fn stat_failure(reply: p::Reply, cause: d::Failure) -> TestResult {
+    formal_failure(reply, d::Operation::Stat, cause)
+}
+
+fn formal_failure(reply: p::Reply, operation: d::Operation, cause: d::Failure) -> TestResult {
     let Some(p::Value::Failure(failure)) = reply.result else {
-        return Err("expected formal Stat failure".into());
+        return Err("expected formal storage failure".into());
     };
-    let failure = p::decode_storage_error(failure.storage.ok_or("missing Stat failure")?)?;
-    assert_eq!(failure.operation(), d::Operation::Stat);
+    let failure = p::decode_storage_error(failure.storage.ok_or("missing storage failure")?)?;
+    assert_eq!(failure.operation(), operation);
     assert_eq!(failure.failure(), cause);
     assert_eq!(failure.outcome(), d::MutationOutcome::Unchanged);
     Ok(())
@@ -301,13 +339,6 @@ fn select(path: &str, page_size: u32) -> Action {
     Action::SelectDirectory(wire::List {
         path: path.into(),
         page_size,
-    })
-}
-fn read(path: &str, offset: u64, length: Option<u64>) -> Action {
-    Action::BeginRead(wire::Read {
-        path: path.into(),
-        offset,
-        length,
     })
 }
 fn error(
@@ -465,6 +496,38 @@ async fn formal_lookup_preserves_policy_instance_and_link_bytes() -> TestResult 
     )?;
     assert_eq!(fixture.storage.used_bytes(), 0);
 
+    operations
+        .begin("docs/file", wire::WriteMode::CreateNew)
+        .await?;
+    operations.stage(b"scoped read").await?;
+    operations.commit().await?;
+    let read = p::encode_read(
+        formal.handle,
+        &d::ReadRequest::new(d::PathExpr::parse("../file")?, d::ReadRange::FULL),
+        &d::StoragePath::parse("docs/sub")?,
+        d::IntermediateSymlinks::FollowWithinInstance,
+    );
+    let Some(p::Value::Reader(reader)) = formal.invoke(p::Operation::Read(read)).await?.result
+    else {
+        return Err("expected relative lookup to open a reader".into());
+    };
+    assert_eq!(
+        formal.next_chunk(reader.handle).await?,
+        Some(b"scoped read".to_vec())
+    );
+    let released = formal
+        .invoke(p::Operation::Release(p::ResourceRef {
+            kind: p::ResourceKind::Reader.into(),
+            handle: reader.handle,
+        }))
+        .await?;
+    assert!(matches!(released.result, Some(p::Value::Unit(_))));
+    formal_failure(
+        formal.invoke(p::Operation::ReaderNext(reader)).await?,
+        d::Operation::Read,
+        d::Failure::Backend(d::BackendFailure::Closed),
+    )?;
+
     let mut invalid = wire::encode_entry(root)?;
     invalid.kind = p::EntryKind::File.into();
     assert_eq!(
@@ -582,7 +645,7 @@ async fn staging_releases_resources_and_commit_revalidates_slot_and_parent() -> 
 
     first.begin("file", wire::WriteMode::Replace).await?;
     first.stage(b"staged").await?;
-    first.unit(read("file", 0, None)).await?;
+    let retained = formal.read("/file", d::ReadRange::FULL).await?;
     second.begin("file", wire::WriteMode::Replace).await?;
     second.stage(b"winner").await?;
     second.stage(b"!").await?;
@@ -599,23 +662,18 @@ async fn staging_releases_resources_and_commit_revalidates_slot_and_parent() -> 
         formal.stat_entry(stat("file", true)).await?.entry_type(),
         d::EntryType::file(Some(7))
     );
-    assert!(matches!(
-        first.call(Action::ReadNext(wire::Unit {})).await?,
-        Reply::Chunk(bytes) if bytes == b"old"
-    ));
-    assert!(matches!(
-        first.call(Action::ReadNext(wire::Unit {})).await?,
-        Reply::EndOfFile(_)
-    ));
-    second.unit(read("file", 1, Some(3))).await?;
-    assert!(matches!(
-        second.call(Action::ReadNext(wire::Unit {})).await?,
-        Reply::Chunk(bytes) if bytes == b"inn"
-    ));
-    assert!(matches!(
-        second.call(Action::ReadNext(wire::Unit {})).await?,
-        Reply::EndOfFile(_)
-    ));
+    assert_eq!(formal.next_chunk(retained).await?, Some(b"old".to_vec()));
+    assert_eq!(formal.next_chunk(retained).await?, None);
+    let range = formal.read("/file", d::ReadRange::new(1, Some(3))?).await?;
+    assert_eq!(formal.next_chunk(range).await?, Some(b"inn".to_vec()));
+    assert_eq!(formal.next_chunk(range).await?, None);
+    for range in [
+        d::ReadRange::new(0, Some(0))?,
+        d::ReadRange::new(u64::MAX, None)?,
+    ] {
+        let empty = formal.read("/file", range).await?;
+        assert_eq!(formal.next_chunk(empty).await?, None);
+    }
     assert_eq!(fixture.storage.used_bytes(), 7);
 
     second.entry(mkdir("parent", false)).await?;

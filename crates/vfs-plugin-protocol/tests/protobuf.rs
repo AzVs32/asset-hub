@@ -47,7 +47,11 @@ fn generated_bindings_preserve_integer_precision_and_field_presence() -> Result 
         data: vec![],
         operation: Some(wire::request::Operation::Read(wire::Read {
             handle: 1,
-            path: "file".into(),
+            lookup: Some(p::Lookup {
+                operand: "/file".into(),
+                intermediate_links: p::IntermediateLink::FollowIntermediate.into(),
+                ..Default::default()
+            }),
             offset: u64::MAX,
             length: Some(0),
         })),
@@ -55,17 +59,20 @@ fn generated_bindings_preserve_integer_precision_and_field_presence() -> Result 
     let (_, operation, _) = p::decode_request(&independent.encode_to_vec())?;
     assert_eq!(
         operation,
-        Op::Read(p::Read {
-            handle: 1,
-            path: "file".into(),
-            offset: u64::MAX,
-            length: Some(0)
-        })
+        Op::Read(p::encode_read(
+            1,
+            &ah_vfs_storage::ReadRequest::new(
+                ah_vfs_storage::PathExpr::parse("/file")?,
+                ah_vfs_storage::ReadRange::new(u64::MAX, Some(0))?
+            ),
+            &ah_vfs_storage::StoragePath::root(),
+            ah_vfs_storage::IntermediateSymlinks::FollowWithinInstance
+        ))
     );
     // Encoded independently by protoc --encode from the schema's text format.
     let protoc = [
-        10, 1, 103, 82, 21, 8, 1, 18, 4, 102, 105, 108, 101, 24, 255, 255, 255, 255, 255, 255, 255,
-        255, 255, 1, 32, 0,
+        10, 1, 103, 82, 26, 8, 1, 18, 9, 10, 5, 47, 102, 105, 108, 101, 24, 1, 24, 255, 255, 255,
+        255, 255, 255, 255, 255, 255, 1, 32, 0,
     ];
     assert_eq!(independent.encode_to_vec(), protoc);
     Ok(())
@@ -193,7 +200,7 @@ fn bounds_apply_to_control_data_and_nested_configuration() {
 fn exported_descriptor_contains_the_complete_language_independent_contract() -> Result {
     let descriptor = prost_types::FileDescriptorSet::decode(p::FILE_DESCRIPTOR_SET)?;
     let file = descriptor.file.first().ok_or("schema")?;
-    assert_eq!(file.package.as_deref(), Some("assethub.vfs.v5"));
+    assert_eq!(file.package.as_deref(), Some("assethub.vfs.v6"));
     let storage_info = file
         .message_type
         .iter()
@@ -232,11 +239,11 @@ fn exported_descriptor_contains_the_complete_language_independent_contract() -> 
     for method in &file.service.first().ok_or("Plugin")?.method {
         assert_eq!(
             method.input_type.as_deref(),
-            Some(".assethub.vfs.v5.Request")
+            Some(".assethub.vfs.v6.Request")
         );
         assert_eq!(
             method.output_type.as_deref(),
-            Some(".assethub.vfs.v5.Reply")
+            Some(".assethub.vfs.v6.Reply")
         );
     }
     Ok(())
@@ -357,5 +364,27 @@ fn malformed_protobuf_retains_the_original_decode_error() -> Result {
         assert!(matches!(error, p::CodecError::Decode(_)));
         assert!(error.source().is_some());
     }
+    Ok(())
+}
+
+#[test]
+fn read_rejects_an_overflowing_range_before_dispatch() -> Result {
+    let request = wire::Request {
+        operation: Some(Op::Read(wire::Read {
+            handle: 1,
+            lookup: Some(p::Lookup {
+                operand: "../file".into(),
+                working_directory: "docs".into(),
+                intermediate_links: p::IntermediateLink::RejectIntermediate.into(),
+            }),
+            offset: u64::MAX,
+            length: Some(1),
+        })),
+        ..Default::default()
+    };
+    assert!(matches!(
+        p::decode_request(&request.encode_to_vec()),
+        Err(p::CodecError::InvalidData)
+    ));
     Ok(())
 }

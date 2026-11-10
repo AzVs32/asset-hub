@@ -1,6 +1,6 @@
 use super::{Blob, CHUNK_SIZE};
 use ah_vfs::application::port::{StorageFileReader, StorageFuture};
-use ah_vfs_storage::{BackendFailure, Failure, Operation, StorageError};
+use ah_vfs_storage::{BackendFailure, Failure, Operation, ReadRange, StorageError};
 use std::sync::Arc;
 
 pub(super) struct MemoryFileReader {
@@ -10,28 +10,23 @@ pub(super) struct MemoryFileReader {
 }
 
 impl MemoryFileReader {
-    pub(super) fn new(blob: Arc<Blob>, offset: u64, length: Option<u64>) -> Self {
-        let position = usize::try_from(offset)
+    pub(super) fn new(blob: Arc<Blob>, range: ReadRange) -> Self {
+        let position = usize::try_from(range.offset())
             .unwrap_or(usize::MAX)
             .min(blob.bytes.len());
-        let length = length
+        let length = range
+            .length()
             .and_then(|length| usize::try_from(length).ok())
             .unwrap_or(usize::MAX)
             .min(blob.bytes.len() - position);
         Self {
-            blob: Some(blob),
+            blob: (length != 0).then_some(blob),
             position,
             end: position + length,
         }
     }
 
-    pub(super) fn next_bytes(
-        &mut self,
-    ) -> Result<Option<Vec<u8>>, std::collections::TryReserveError> {
-        if self.position == self.end {
-            self.blob = None;
-            return Ok(None);
-        }
+    fn next_bytes(&mut self) -> Result<Option<Vec<u8>>, std::collections::TryReserveError> {
         let Some(blob) = self.blob.as_ref() else {
             return Ok(None);
         };
@@ -40,6 +35,9 @@ impl MemoryFileReader {
         chunk.try_reserve_exact(next - self.position)?;
         chunk.extend_from_slice(&blob.bytes[self.position..next]);
         self.position = next;
+        if next == self.end {
+            self.blob = None;
+        }
         Ok(Some(chunk))
     }
 }

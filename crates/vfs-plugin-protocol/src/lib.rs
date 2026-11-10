@@ -1,6 +1,6 @@
 //! Shared protobuf messages, validation and VFS protocol semantics.
 pub mod wire {
-    include!(concat!(env!("OUT_DIR"), "/assethub.vfs.v5.rs"));
+    include!(concat!(env!("OUT_DIR"), "/assethub.vfs.v6.rs"));
 }
 pub use wire::*;
 pub use wire::{reply::Result as Value, request::Operation, storage_call::Operation as StorageOp};
@@ -8,7 +8,10 @@ mod codec;
 mod lookup;
 mod values;
 pub use codec::*;
-pub use lookup::{LookupValueError, decode_lookup, decode_stat, encode_lookup, encode_stat};
+pub use lookup::{
+    LookupValueError, decode_lookup, decode_read, decode_stat, encode_lookup, encode_read,
+    encode_stat,
+};
 pub use values::{
     EntryValueError, decode_capabilities, decode_entry, decode_time, encode_capabilities,
     encode_entry, encode_time,
@@ -18,7 +21,7 @@ pub const FILE_DESCRIPTOR_SET: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "
 /// JSON values at application/configuration boundaries, never a wire message.
 pub type JsonObject = std::collections::BTreeMap<String, serde_json::Value>;
 
-pub const PROTOCOL_MAJOR: u32 = 5;
+pub const PROTOCOL_MAJOR: u32 = 6;
 pub const PROTOCOL_MINOR: u32 = 0;
 pub const MAX_CONTROL_BYTES: usize = 1024 * 1024;
 pub const MAX_DATA_BYTES: usize = 8 * 1024 * 1024;

@@ -4,7 +4,7 @@ mod common;
 use ah_vfs::application::driver_error::DriverError;
 use ah_vfs::application::dto::*;
 use ah_vfs::application::port::*;
-use ah_vfs::domain::storage::{StorageReadFileRequest, StorageWriteFileRequest};
+use ah_vfs::domain::storage::StorageWriteFileRequest;
 use ah_vfs_storage::StoragePath;
 use vfs_driver_local_windows::WindowsLocalDriver;
 type Result = std::result::Result<(), Box<dyn std::error::Error>>;
@@ -52,7 +52,15 @@ async fn host_creation_opens_for_read_write_and_rejects_root_changes() -> Result
         .await?;
     writer.write_chunk(b"data").await?;
     writer.commit().await?;
-    let mut reader = storage.read_file(StorageReadFileRequest::new(path)).await?;
+    let mut reader = storage
+        .read_file(
+            ah_vfs_storage::ReadRequest::new(
+                (path).to_rooted_expr(),
+                ah_vfs_storage::ReadRange::FULL,
+            ),
+            Default::default(),
+        )
+        .await?;
     assert_eq!(reader.next_chunk().await?.ok_or("chunk")?, b"data");
     assert!(reader.next_chunk().await?.is_none());
     assert_eq!(

@@ -4,8 +4,8 @@ mod common;
 
 use ah_vfs::application::port::{Driver, Storage, StorageFileReader};
 use ah_vfs::domain::storage::{
-    StorageCreateDirRequest, StorageDirQuery, StorageMoveEntryRequest, StorageReadFileRequest,
-    StorageRemoveEntryRequest, StorageWriteFileRequest,
+    StorageCreateDirRequest, StorageDirQuery, StorageMoveEntryRequest, StorageRemoveEntryRequest,
+    StorageWriteFileRequest,
 };
 use ah_vfs_storage::WriteMode;
 use ah_vfs_storage::{EntryType, StoragePath};
@@ -81,7 +81,7 @@ async fn metadata_and_sorted_pagination_use_instance_relative_paths() -> TestRes
         .storage
         .stat_entry(
             ah_vfs_storage::StatRequest::new(
-                (path("c.txt")?).to_rooted_expr(),
+                path("c.txt")?.to_rooted_expr(),
                 ah_vfs_storage::SymlinkAction::Preserve,
             ),
             Default::default(),
@@ -92,7 +92,7 @@ async fn metadata_and_sorted_pagination_use_instance_relative_paths() -> TestRes
     assert!(file.modified().is_some());
     assert!(matches!(
         f.storage
-            .stat_entry(ah_vfs_storage::StatRequest::new((path("missing")?).to_rooted_expr(), ah_vfs_storage::SymlinkAction::Preserve), Default::default())
+            .stat_entry(ah_vfs_storage::StatRequest::new(path("missing")?.to_rooted_expr(), ah_vfs_storage::SymlinkAction::Preserve), Default::default())
             .await,
         Err(error) if error.failure() == Failure::Rejected(Rejection::NotFound)
     ));
@@ -288,13 +288,16 @@ async fn chunked_writes_publish_only_at_commit_and_reads_honor_ranges() -> TestR
 
     let mut reader = f
         .storage
-        .read_file(StorageReadFileRequest::new(path("data")?))
+        .read_file(
+            ah_vfs_storage::ReadRequest::new(
+                path("data")?.to_rooted_expr(),
+                ah_vfs_storage::ReadRange::FULL,
+            ),
+            Default::default(),
+        )
         .await?;
-    let first = reader.next_chunk().await?.ok_or("missing chunk")?;
-    assert!(first.len() <= f.storage.chunk_size().get());
-    let mut actual = first;
-    actual.extend(read_all(reader.as_mut()).await?);
-    assert_eq!(actual, bytes);
+    let mut actual = reader.next_chunk().await?.ok_or("missing chunk")?;
+    assert!(actual.len() <= f.storage.chunk_size().get());
     for (offset, length, expected) in [
         (7, Some(11), bytes[7..18].to_vec()),
         (
@@ -308,18 +311,23 @@ async fn chunked_writes_publish_only_at_commit_and_reads_honor_ranges() -> TestR
         (i64::MAX as u64 + 1, None, Vec::new()),
         (u64::MAX, None, Vec::new()),
         (u64::MAX, Some(0), Vec::new()),
-        (u64::MAX, Some(1), Vec::new()),
     ] {
         let mut reader = f
             .storage
-            .read_file(StorageReadFileRequest {
-                path: path("data")?,
-                offset,
-                length,
-            })
+            .read_file(
+                ah_vfs_storage::ReadRequest::new(
+                    path("data")?.to_rooted_expr(),
+                    ah_vfs_storage::ReadRange::new(offset, length)?,
+                ),
+                Default::default(),
+            )
             .await?;
         assert_eq!(read_all(reader.as_mut()).await?, expected);
     }
+    std::fs::write(f.root.join("replacement"), b"new version")?;
+    std::fs::rename(f.root.join("replacement"), f.root.join("data"))?;
+    actual.extend(read_all(reader.as_mut()).await?);
+    assert_eq!(actual, bytes);
     Ok(())
 }
 
@@ -467,7 +475,13 @@ async fn sessions_keep_resources_after_the_storage_handle_is_dropped() -> TestRe
     std::fs::write(f.root.join("read"), b"retained")?;
     let mut reader = f
         .storage
-        .read_file(StorageReadFileRequest::new(path("read")?))
+        .read_file(
+            ah_vfs_storage::ReadRequest::new(
+                path("read")?.to_rooted_expr(),
+                ah_vfs_storage::ReadRange::FULL,
+            ),
+            Default::default(),
+        )
         .await?;
     let mut writer = f
         .storage
@@ -489,7 +503,7 @@ async fn wrong_entry_types_and_root_writes_are_rejected() -> TestResult {
     for name in ["", "directory"] {
         assert!(matches!(
             f.storage
-                .read_file(StorageReadFileRequest::new(path(name)?))
+                .read_file(ah_vfs_storage::ReadRequest::new((path(name)?).to_rooted_expr(), ah_vfs_storage::ReadRange::FULL), Default::default())
                 .await,
             Err(error) if error.failure() == Failure::Rejected(Rejection::IsDirectory)
         ));
@@ -520,7 +534,7 @@ async fn wrong_entry_types_and_root_writes_are_rejected() -> TestResult {
     ));
     assert!(matches!(
         f.storage
-            .read_file(StorageReadFileRequest::new(path("missing")?))
+            .read_file(ah_vfs_storage::ReadRequest::new(path("missing")?.to_rooted_expr(), ah_vfs_storage::ReadRange::FULL), Default::default())
             .await,
         Err(error) if error.failure() == Failure::Rejected(Rejection::NotFound)
     ));
@@ -708,9 +722,9 @@ async fn lookup_policy_controls_links_without_escaping_the_instance() -> TestRes
     );
     assert!(matches!(
         f.storage
-            .read_file(StorageReadFileRequest::new(path("leaf")?))
+            .read_file(ah_vfs_storage::ReadRequest::new(path("leaf")?.to_rooted_expr(), ah_vfs_storage::ReadRange::FULL), Default::default())
             .await,
-        Err(error) if error.failure() == Failure::Rejected(Rejection::Unsupported)
+        Err(error) if error.failure() == Failure::Rejected(Rejection::NotFound)
     ));
     assert!(matches!(
         f.storage
@@ -729,7 +743,7 @@ async fn lookup_policy_controls_links_without_escaping_the_instance() -> TestRes
     ));
     assert!(matches!(
         f.storage
-            .stat_entry(ah_vfs_storage::StatRequest::new((path("linked/file")?).to_rooted_expr(), ah_vfs_storage::SymlinkAction::Preserve), ah_vfs::application::port::LookupContext {
+            .stat_entry(ah_vfs_storage::StatRequest::new(path("linked/file")?.to_rooted_expr(), ah_vfs_storage::SymlinkAction::Preserve), ah_vfs::application::port::LookupContext {
                 intermediate_symlinks: ah_vfs_storage::IntermediateSymlinks::Reject,
                 ..Default::default()
             })
@@ -744,7 +758,13 @@ async fn lookup_policy_controls_links_without_escaping_the_instance() -> TestRes
     );
     assert!(
         f.storage
-            .read_file(StorageReadFileRequest::new(path("linked/file")?))
+            .read_file(
+                ah_vfs_storage::ReadRequest::new(
+                    path("linked/file")?.to_rooted_expr(),
+                    ah_vfs_storage::ReadRange::FULL
+                ),
+                Default::default()
+            )
             .await
             .is_err()
     );
@@ -835,7 +855,13 @@ async fn an_open_writer_pins_its_parent_even_when_the_dir_is_replaced_by_a_link(
     assert!(!outside.path().join("file").exists());
     assert!(
         f.storage
-            .read_file(StorageReadFileRequest::new(path("parent/file")?))
+            .read_file(
+                ah_vfs_storage::ReadRequest::new(
+                    path("parent/file")?.to_rooted_expr(),
+                    ah_vfs_storage::ReadRange::FULL
+                ),
+                Default::default()
+            )
             .await
             .is_err()
     );

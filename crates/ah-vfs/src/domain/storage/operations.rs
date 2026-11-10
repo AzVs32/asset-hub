@@ -47,22 +47,6 @@ pub struct StorageDirPage {
     pub next_after: Option<EntryName>,
 }
 
-/// Read a byte range. An offset beyond EOF or zero length gives an empty stream.
-pub struct StorageReadFileRequest {
-    pub path: StoragePath,
-    pub offset: u64,
-    pub length: Option<u64>,
-}
-impl StorageReadFileRequest {
-    pub fn new(path: StoragePath) -> Self {
-        Self {
-            path,
-            offset: 0,
-            length: None,
-        }
-    }
-}
-
 /// A complete-file write staged until its writer commits publication.
 pub struct StorageWriteFileRequest {
     /// Require atomic complete-file publication. Never emulate with incremental overwrite.

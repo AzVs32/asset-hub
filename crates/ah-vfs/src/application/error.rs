@@ -93,8 +93,6 @@ impl InstanceError {
 #[derive(Debug, Error)]
 pub enum EntryError {
     #[error(transparent)]
-    InvalidReadRange(#[from] ah_vfs_storage::RangeError),
-    #[error(transparent)]
     Table(#[from] MountTableError),
     #[error(transparent)]
     Repository(#[from] MountRepositoryError),

@@ -2,7 +2,7 @@ use ah_vfs::application::driver_error::DriverError;
 use ah_vfs::application::driver_error::LifecycleFailure;
 use ah_vfs::application::port::*;
 use ah_vfs::domain::InstanceId;
-use ah_vfs::domain::storage::{StorageReadFileRequest, StorageWriteFileRequest};
+use ah_vfs::domain::storage::StorageWriteFileRequest;
 use ah_vfs_storage::{BackendFailure, Failure, Operation, Rejection, StorageError};
 use ah_vfs_storage::{Entry, StoragePath};
 use std::{future::poll_fn, sync::Arc, task::Poll, time::Duration};
@@ -235,7 +235,13 @@ async fn storage_timeout_is_local_and_other_stores_make_progress_concurrently() 
     let stalled = open(&driver, "stalled").await?;
     let healthy = open(&driver, "healthy").await?;
     let mut old_reader = stalled
-        .read_file(StorageReadFileRequest::new(StoragePath::parse("file")?))
+        .read_file(
+            ah_vfs_storage::ReadRequest::new(
+                StoragePath::parse("file")?.to_rooted_expr(),
+                ah_vfs_storage::ReadRange::FULL,
+            ),
+            Default::default(),
+        )
         .await?;
     let mut call = Box::pin(stat(stalled.as_ref(), "hang"));
     poll_fn(|cx| {
@@ -538,7 +544,13 @@ async fn storage_and_reader_keep_the_compiled_factory_alive_after_driver_drop() 
         ah_vfs_storage::EntryType::file(Some(1))
     );
     let mut reader = storage
-        .read_file(StorageReadFileRequest::new(StoragePath::parse("file")?))
+        .read_file(
+            ah_vfs_storage::ReadRequest::new(
+                StoragePath::parse("file")?.to_rooted_expr(),
+                ah_vfs_storage::ReadRange::FULL,
+            ),
+            Default::default(),
+        )
         .await?;
     drop(storage);
     assert_eq!(reader.next_chunk().await?, Some(vec![0, 255, 1]));

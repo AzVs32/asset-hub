@@ -170,20 +170,39 @@ impl GuestStorage for S3Storage {
         };
         Ok(p::Reply::new(value))
     }
-    fn read(&self, path: String, offset: u64, length: Option<u64>) -> Result<api::Reader> {
+    fn read(
+        &self,
+        request: ah_vfs_storage::ReadRequest,
+        base: ah_vfs_storage::StoragePath,
+        links: ah_vfs_storage::IntermediateSymlinks,
+    ) -> Result<api::Reader> {
         let client = self.client.for_operation(Operation::Read);
         let context = client.context.clone();
-        let entry = client.stat(&path)?;
-        let EntryType::File { size, .. } = entry.entry_type() else {
-            return Err(context.failure(Failure::Rejected(Rejection::IsDirectory)));
+        let (entry, etag) =
+            api::direct_lookup(request.lookup(), &base, links, Operation::Read, |path| {
+                client.stat_object(path.as_str())
+            })?;
+        let EntryType::File {
+            size: Some(size), ..
+        } = entry.entry_type()
+        else {
+            return Err(context.failure(Failure::Backend(BackendFailure::CorruptData)));
         };
-        let size =
-            size.ok_or_else(|| context.failure(Failure::Backend(BackendFailure::CorruptData)))?;
+        let offset = request.range().offset();
+        let remaining = request
+            .range()
+            .length()
+            .unwrap_or(u64::MAX)
+            .min(size.saturating_sub(offset));
+        if remaining != 0 && etag.is_none() {
+            return Err(context.failure(Failure::Rejected(Rejection::Unsupported)));
+        }
         Ok(api::Reader::new(S3Reader {
-            client: client.clone(),
-            path,
-            offset: Cell::new(offset),
-            remaining: Cell::new(length.unwrap_or(u64::MAX).min(size.saturating_sub(offset))),
+            client,
+            path: entry.path().as_str().into(),
+            etag,
+            size,
+            position: Cell::new(Some((offset, remaining))),
         }))
     }
     fn write(&self, path: String, replace: bool, _atomic: bool) -> Result<api::Writer> {
@@ -236,38 +255,50 @@ fn path_check_target(client: &s3::Client, name: &str, replace: bool) -> Result<(
 struct S3Reader {
     client: s3::Client,
     path: String,
-    offset: Cell<u64>,
-    remaining: Cell<u64>,
+    etag: Option<String>,
+    size: u64,
+    position: Cell<Option<(u64, u64)>>,
 }
 impl GuestReader for S3Reader {
     fn next(&self) -> Result<Option<Vec<u8>>> {
         let context = api::ErrorContext::storage(Operation::Read);
-        let remaining = self.remaining.get();
+        // A failed request leaves the stream closed rather than skipping bytes.
+        let (offset, remaining) = self
+            .position
+            .take()
+            .ok_or_else(|| context.failure(Failure::Backend(BackendFailure::Closed)))?;
         if remaining == 0 {
+            self.position.set(Some((offset, 0)));
             return Ok(None);
         }
         let length = remaining.min(64 * 1024);
-        let offset = self.offset.get();
-        // Mark the session exhausted before I/O: failure must not skip bytes on retry.
-        self.remaining.set(0);
+        let end = offset + length - 1;
+        let etag = self
+            .etag
+            .as_ref()
+            .ok_or_else(|| context.failure(Failure::Rejected(Rejection::Unsupported)))?;
         let response = self.client.request(
             "GET",
             &self.path,
             vec![],
-            vec![(
-                "range".into(),
-                format!("bytes={offset}-{}", offset + length - 1),
-            )],
+            vec![
+                ("range".into(), format!("bytes={offset}-{end}")),
+                ("if-match".into(), etag.clone()),
+            ],
             vec![],
         )?;
+        if s3::header(&response, "etag").as_deref() != Some(etag.as_str()) {
+            return Err(context.failure(Failure::Rejected(Rejection::Conflict)));
+        }
+        let range = format!("bytes {offset}-{end}/{}", self.size);
         if response.status().as_u16() != 206
-            || response.body().is_empty()
-            || response.body().len() as u64 > length
+            || s3::header(&response, "content-range").as_deref() != Some(range.as_str())
+            || response.body().len() as u64 != length
         {
             return Err(context.failure(Failure::Backend(BackendFailure::CorruptData)));
         }
-        self.offset.set(offset + response.body().len() as u64);
-        self.remaining.set(remaining - response.body().len() as u64);
+        self.position
+            .set(Some((offset + length, remaining - length)));
         Ok(Some(response.into_body()))
     }
 }

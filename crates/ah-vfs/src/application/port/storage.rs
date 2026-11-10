@@ -3,11 +3,11 @@
 use super::{StoragePermissions, StorageXattrs};
 use crate::domain::storage::{
     StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageMoveEntryRequest,
-    StorageReadFileRequest, StorageRemoveEntryRequest, StorageWriteFileRequest,
+    StorageRemoveEntryRequest, StorageWriteFileRequest,
 };
 use ah_vfs_storage::Capabilities;
 use ah_vfs_storage::{
-    Entry, IntermediateSymlinks, LinkTarget, ReadLinkRequest, StatRequest, StoragePath,
+    Entry, IntermediateSymlinks, LinkTarget, ReadLinkRequest, ReadRequest, StatRequest, StoragePath,
 };
 use ah_vfs_storage::{Failure, Operation, Rejection, StorageError};
 
@@ -76,10 +76,13 @@ pub trait Storage: Send + Sync {
         unsupported(Operation::List)
     }
 
-    /// Open a range-limited stream of raw file bytes, independent of this handle.
+    /// Resolve the request once and open a range-limited stream bound to the selected file.
+    /// Check capabilities before acquiring a reader. Empty ranges and offsets at or
+    /// past EOF still perform lookup and return a stream at EOF for a regular file.
     fn read_file(
         &self,
-        _request: StorageReadFileRequest,
+        _request: ReadRequest,
+        _context: LookupContext,
     ) -> StorageFuture<'_, Box<dyn StorageFileReader>> {
         unsupported(Operation::Read)
     }
@@ -111,8 +114,9 @@ pub trait Storage: Send + Sync {
 /// A backend file read session retained for the lifetime of the stream.
 pub trait StorageFileReader: Send {
     /// Read the next chunk; `None` denotes EOF and `Some` contains non-empty bytes.
-    /// Repeated reads after EOF return `None`. After an error or cancellation,
-    /// implementations may close the session rather than risk skipping bytes.
+    /// Repeated reads after EOF return `None`. Dropping the reader releases the
+    /// bound resource. Failed or cancelled in-flight reads close the reader if
+    /// progress cannot be determined. Retired remote resources are never reopened.
     fn next_chunk(&mut self) -> StorageFuture<'_, Option<Vec<u8>>>;
 }
 

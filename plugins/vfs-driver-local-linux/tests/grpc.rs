@@ -6,7 +6,7 @@ mod common;
 use ah_vfs::application::driver_catalog::DriverCatalog;
 use ah_vfs::application::dto::*;
 use ah_vfs::application::port::*;
-use ah_vfs::domain::storage::{StorageReadFileRequest, StorageWriteFileRequest};
+use ah_vfs::domain::storage::StorageWriteFileRequest;
 use ah_vfs_storage::StoragePath;
 use std::{
     io::{BufRead, BufReader},
@@ -115,7 +115,13 @@ async fn native_process_passes_shared_storage_contracts_over_grpc() -> Result {
     drop(catalog);
     writer.commit().await?;
     let mut reader = storage
-        .read_file(StorageReadFileRequest::new(StoragePath::parse("retained")?))
+        .read_file(
+            ah_vfs_storage::ReadRequest::new(
+                StoragePath::parse("retained")?.to_rooted_expr(),
+                ah_vfs_storage::ReadRange::FULL,
+            ),
+            Default::default(),
+        )
         .await?;
     drop(storage);
     let mut bytes = Vec::new();

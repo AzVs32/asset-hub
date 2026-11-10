@@ -664,8 +664,12 @@ impl Client {
                 return Err(context.failure(Failure::Rejected(Rejection::Unsupported)));
             }
         }
-        if etag.is_some_and(|etag| header(&response, "etag").is_some_and(|actual| actual != etag)) {
-            return Err(context.failure(Failure::Rejected(Rejection::Conflict)));
+        if let Some(etag) = etag {
+            match header(&response, "etag").as_deref() {
+                Some(actual) if actual == etag => {}
+                Some(_) => return Err(context.failure(Failure::Rejected(Rejection::Conflict))),
+                None => return Err(context.failure(Failure::Rejected(Rejection::Unsupported))),
+            }
         }
         match response.status().as_u16() {
             206 => {

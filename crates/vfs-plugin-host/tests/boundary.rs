@@ -1,7 +1,7 @@
 use ah_vfs::application::driver_error::DriverError;
 use ah_vfs::application::port::*;
 use ah_vfs::domain::InstanceId;
-use ah_vfs::domain::storage::{StorageReadFileRequest, StorageWriteFileRequest};
+use ah_vfs::domain::storage::StorageWriteFileRequest;
 use ah_vfs_storage::Capabilities;
 use ah_vfs_storage::{BackendFailure, ContractViolation, Failure, Operation};
 use ah_vfs_storage::{Entry, EntryType, PermissionsError, StoragePath, XattrName, XattrNameError};
@@ -182,7 +182,13 @@ async fn empty_non_eof_chunks_close_the_read_session() -> Result {
         ))
         .await?;
     let mut reader = storage
-        .read_file(StorageReadFileRequest::new(StoragePath::parse("file")?))
+        .read_file(
+            ah_vfs_storage::ReadRequest::new(
+                StoragePath::parse("file")?.to_rooted_expr(),
+                ah_vfs_storage::ReadRange::FULL,
+            ),
+            Default::default(),
+        )
         .await?;
     assert_eq!(
         reader

@@ -1,7 +1,7 @@
-use super::{FinalLink, IntermediateLink, Lookup, Stat};
+use super::{FinalLink, IntermediateLink, Lookup, Read, Stat};
 use ah_vfs_storage::{
-    IntermediateSymlinks, PathError, PathExpr, PathExprError, StatRequest, StoragePath,
-    SymlinkAction,
+    IntermediateSymlinks, PathError, PathExpr, PathExprError, RangeError, ReadRange, ReadRequest,
+    StatRequest, StoragePath, SymlinkAction,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -15,6 +15,8 @@ pub enum LookupValueError {
     WorkingDirectory(#[from] PathError),
     #[error("invalid symbolic link policy")]
     Policy,
+    #[error("invalid read range")]
+    Range(#[from] RangeError),
 }
 
 pub fn encode_lookup(
@@ -70,4 +72,26 @@ pub fn decode_stat(
         _ => return Err(LookupValueError::Policy),
     };
     Ok((StatRequest::new(operand, final_link), base, links))
+}
+
+pub fn encode_read(
+    handle: u64,
+    request: &ReadRequest,
+    base: &StoragePath,
+    links: IntermediateSymlinks,
+) -> Read {
+    Read {
+        handle,
+        lookup: Some(encode_lookup(request.path(), base, links)),
+        offset: request.range().offset(),
+        length: request.range().length(),
+    }
+}
+
+pub fn decode_read(
+    value: Read,
+) -> Result<(ReadRequest, StoragePath, IntermediateSymlinks), LookupValueError> {
+    let range = ReadRange::new(value.offset, value.length)?;
+    let (operand, base, links) = decode_lookup(value.lookup)?;
+    Ok((ReadRequest::new(operand, range), base, links))
 }

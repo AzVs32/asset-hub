@@ -52,7 +52,7 @@ fn xml<'a>(context: &api::ErrorContext, bytes: &'a [u8]) -> Result<&'a str> {
     std::str::from_utf8(bytes)
         .map_err(|_| context.failure(Failure::Backend(BackendFailure::CorruptData)))
 }
-fn header(response: &http::Response<Vec<u8>>, key: &str) -> Option<String> {
+pub(super) fn header(response: &http::Response<Vec<u8>>, key: &str) -> Option<String> {
     response
         .headers()
         .get(key)
@@ -146,6 +146,7 @@ impl Client {
             403 => Err(context.failure(Failure::Rejected(Rejection::AccessDenied))),
             404 => Err(context.failure(Failure::Rejected(Rejection::NotFound))),
             409 => Err(context.failure(Failure::Rejected(Rejection::Conflict))),
+            412 if method == "GET" => Err(context.failure(Failure::Rejected(Rejection::Conflict))),
             412 => Err(context.failure(Failure::Rejected(Rejection::AlreadyExists))),
             429 => Err(context.failure(Failure::Backend(BackendFailure::RateLimited))),
             500..=599 => Err(context.failure(Failure::Backend(BackendFailure::Unavailable))),
@@ -238,7 +239,7 @@ impl Client {
         self.request("HEAD", "", vec![], vec![], vec![])?;
         Ok(())
     }
-    pub fn head(&self, name: &str) -> Result<Option<Entry>> {
+    pub fn head(&self, name: &str) -> Result<Option<(Entry, Option<String>)>> {
         let context = &self.context;
         path(context, name)?;
         let response = match self.request("HEAD", name, vec![], vec![], vec![]) {
@@ -262,12 +263,19 @@ impl Client {
             .map(|time| p::decode_time(time.unix_timestamp(), time.nanosecond()))
             .transpose()
             .map_err(|_| context.failure(Failure::Backend(BackendFailure::CorruptData)))?;
-        Ok(Some(entry(
-            context,
-            name,
-            EntryType::file(Some(size)),
-            modified,
-        )?))
+        let etag = header(&response, "etag").filter(|tag| {
+            tag.len() >= 2
+                && tag.len() <= 4096
+                && tag.starts_with('"')
+                && tag.ends_with('"')
+                && tag.as_bytes()[1..tag.len() - 1]
+                    .iter()
+                    .all(|byte| *byte >= 0x21 && *byte != b'"' && *byte != 0x7f)
+        });
+        Ok(Some((
+            entry(context, name, EntryType::file(Some(size)), modified)?,
+            etag,
+        )))
     }
     fn listing(
         &self,
@@ -293,10 +301,14 @@ impl Client {
             .map_err(|_| context.failure(Failure::Backend(BackendFailure::CorruptData)))
     }
     pub fn stat(&self, name: &str) -> Result<Entry> {
+        self.stat_object(name).map(|(entry, _)| entry)
+    }
+
+    pub fn stat_object(&self, name: &str) -> Result<(Entry, Option<String>)> {
         let context = &self.context;
         path(context, name)?;
         if name.is_empty() {
-            return entry(context, "", EntryType::Directory, None);
+            return Ok((entry(context, "", EntryType::Directory, None)?, None));
         }
         let file = self.head(name)?;
         let prefix = format!("{name}/");
@@ -305,7 +317,7 @@ impl Client {
         match (file, directory) {
             (Some(_), true) => Err(context.failure(Failure::Backend(BackendFailure::CorruptData))),
             (Some(file), false) => Ok(file),
-            (None, true) => entry(context, name, EntryType::Directory, None),
+            (None, true) => Ok((entry(context, name, EntryType::Directory, None)?, None)),
             (None, false) => Err(context.failure(Failure::Rejected(Rejection::NotFound))),
         }
     }

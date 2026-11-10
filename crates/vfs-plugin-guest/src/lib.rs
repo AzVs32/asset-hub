@@ -8,7 +8,7 @@ pub mod api {
     use super::*;
     pub use crate::error::Failure;
     pub use crate::error_context::ErrorContext;
-    pub use crate::lookup::direct_stat;
+    pub use crate::lookup::{direct_lookup, direct_stat};
     pub type Result<T> = std::result::Result<T, Failure>;
     pub trait Guest {
         fn describe() -> p::Description;
@@ -24,7 +24,12 @@ pub mod api {
     pub trait GuestStorage {
         fn info(&self) -> p::StorageInfo;
         fn call(&self, request: p::StorageOp, data: Vec<u8>) -> Result<p::Reply>;
-        fn read(&self, path: String, offset: u64, length: Option<u64>) -> Result<Reader>;
+        fn read(
+            &self,
+            request: ah_vfs_storage::ReadRequest,
+            working_directory: ah_vfs_storage::StoragePath,
+            intermediate_symlinks: ah_vfs_storage::IntermediateSymlinks,
+        ) -> Result<Reader>;
         fn write(&self, path: String, replace: bool, atomic: bool) -> Result<Writer>;
     }
     pub trait GuestReader {
@@ -244,14 +249,16 @@ impl<D: api::Guest> Dispatcher<D> {
                 handle,
                 operation: Some(request),
             }) => return self.storage(&context, handle)?.call(request, data),
-            Op::Read(p::Read {
-                handle,
-                path,
-                offset,
-                length,
-            }) => {
+            Op::Read(read) => {
+                let handle = read.handle;
+                let (request, base, links) = p::decode_read(read)
+                    .map_err(|_| p::Failure::new(p::FailureCode::InvalidRequest))?;
+                p::decode_capabilities(&D::describe().capabilities)
+                    .map_err(|cause| context.failure(ah_vfs_storage::Failure::Contract(cause)))?
+                    .require_read(&request)
+                    .map_err(|reason| context.failure(ah_vfs_storage::Failure::Rejected(reason)))?;
                 self.capacity(&context)?;
-                let reader = self.storage(&context, handle)?.read(path, offset, length)?;
+                let reader = self.storage(&context, handle)?.read(request, base, links)?;
                 Value::Reader(p::Handle {
                     handle: self.insert(Resource::Reader(reader)),
                 })

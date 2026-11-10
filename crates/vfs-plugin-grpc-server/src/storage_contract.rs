@@ -8,7 +8,7 @@ use std::{pin::Pin, sync::Arc};
 use tokio::sync::mpsc;
 use tokio_stream::{Stream, wrappers::ReceiverStream};
 use tonic::{Request, Response, Status};
-use vfs_driver_memory::{ContractReader, ContractWriter, MemoryStorage};
+use vfs_driver_memory::{ContractWriter, MemoryStorage};
 pub use vfs_plugin_grpc_wire::storage_contract as wire;
 use wire::{command::Action, reply::Result as Reply};
 
@@ -51,7 +51,6 @@ impl wire::storage_contract_server::StorageContract for ContractService {
         let mut session = Session {
             storage: self.storage.clone(),
             listing: None,
-            reader: None,
             writer: None,
         };
         let admission = self.admission.clone();
@@ -136,7 +135,6 @@ struct Listing {
 struct Session {
     storage: Arc<MemoryStorage>,
     listing: Option<Listing>,
-    reader: Option<ContractReader>,
     writer: Option<ContractWriter>,
 }
 
@@ -180,25 +178,6 @@ impl Session {
         };
         let unit = || Reply::Unit(wire::Unit {});
         match frame.action.ok_or_else(invalid_request)? {
-            Action::BeginRead(request) => {
-                let range = d::ReadRange::new(request.offset, request.length)
-                    .map_err(|_| invalid_request())?;
-                let request = d::ReadRequest::new(path(&request.path)?, range);
-                self.reader = Some(self.storage.read(&request, links)?);
-                Ok(unit())
-            }
-            Action::ReadNext(_) => {
-                let mut reader = self
-                    .reader
-                    .take()
-                    .ok_or_else(|| closed(d::Operation::Read))?;
-                let chunk = reader.next_chunk()?;
-                self.reader = Some(reader);
-                Ok(match chunk {
-                    Some(bytes) => Reply::Chunk(bytes),
-                    None => Reply::EndOfFile(wire::Unit {}),
-                })
-            }
             Action::SelectDirectory(request) => {
                 self.listing = None;
                 let size = usize::try_from(request.page_size)

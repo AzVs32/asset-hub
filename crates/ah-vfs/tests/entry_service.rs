@@ -13,7 +13,7 @@ use ah_vfs::application::service::{EntryService, MountService};
 use ah_vfs::domain::namespace::{ChildMountPolicy, VirtualPath};
 use ah_vfs::domain::storage::{
     StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageMoveEntryRequest,
-    StorageReadFileRequest, StorageRemoveEntryRequest, StorageWriteFileRequest,
+    StorageRemoveEntryRequest, StorageWriteFileRequest,
 };
 use ah_vfs::domain::{DriverInstance, DriverKey, InstanceId};
 use ah_vfs::infrastructure::mount_repository::SqliteMountRepository;
@@ -135,7 +135,8 @@ impl Storage for TestStorage {
     }
     fn read_file(
         &self,
-        _: StorageReadFileRequest,
+        _: ah_vfs_storage::ReadRequest,
+        _: ah_vfs::application::port::LookupContext,
     ) -> StorageFuture<'_, Box<dyn StorageFileReader>> {
         unsupported(Operation::Read)
     }
@@ -296,8 +297,7 @@ async fn mount_points_and_synthetic_dirs_keep_distinct_namespace_behavior() -> T
         let error = files
             .read_file(ReadFileRequest {
                 path: path.clone(),
-                offset: 0,
-                length: None,
+                range: ah_vfs_storage::ReadRange::new(0, None)?,
             })
             .await
             .err()
@@ -327,8 +327,7 @@ async fn mount_points_and_synthetic_dirs_keep_distinct_namespace_behavior() -> T
     let error = files
         .read_file(ReadFileRequest {
             path: nested,
-            offset: 0,
-            length: None,
+            range: ah_vfs_storage::ReadRange::new(0, None)?,
         })
         .await
         .err()

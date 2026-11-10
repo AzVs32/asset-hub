@@ -6,18 +6,17 @@ use ah_vfs_storage::{
     PathLookup, Rejection, StorageError, StoragePath, SymlinkAction,
 };
 use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt};
-use cap_std::fs::{Dir, Metadata, OpenOptions, OpenOptionsExt};
+use cap_std::fs::{Dir, File, Metadata, OpenOptions, OpenOptionsExt};
 use windows_sys::Win32::Storage::FileSystem::{
     FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES,
     FILE_SHARE_READ, FILE_SHARE_WRITE, SYNCHRONIZE,
 };
 
-const OP: Operation = Operation::Stat;
-fn rejected(reason: Rejection) -> StorageError {
-    StorageError::without_effects(OP, Failure::Rejected(reason), None)
+fn rejected(op: Operation, reason: Rejection) -> StorageError {
+    StorageError::without_effects(op, Failure::Rejected(reason), None)
 }
-fn stale() -> StorageError {
-    StorageError::without_effects(OP, Failure::Backend(BackendFailure::Stale), None)
+fn stale(op: Operation) -> StorageError {
+    StorageError::without_effects(op, Failure::Backend(BackendFailure::Stale), None)
 }
 
 pub(super) fn stat(
@@ -25,19 +24,65 @@ pub(super) fn stat(
     lookup: PathLookup<'_>,
     context: LookupContext,
 ) -> Result<Entry, StorageError> {
-    let root_dir = root.try_clone().map_err(|cause| fs::error(OP, cause))?;
+    Ok(select(root, lookup, context, Operation::Stat)?.0)
+}
+
+pub(super) fn open_reader(
+    root: &Dir,
+    lookup: PathLookup<'_>,
+    context: LookupContext,
+) -> Result<File, StorageError> {
+    use std::os::windows::io::{AsRawHandle, FromRawHandle};
+    use windows_sys::Win32::{
+        Foundation::INVALID_HANDLE_VALUE,
+        Storage::FileSystem::{FILE_GENERIC_READ, FILE_SHARE_DELETE, ReOpenFile},
+    };
+    let op = Operation::Read;
+    let (_, selected) = select(root, lookup, context, op)?;
+    let selected = selected.ok_or_else(|| rejected(op, Rejection::IsDirectory))?;
+    // SAFETY: the selected handle stays live for the call. ReOpenFile returns
+    // a new owned handle to that object, regardless of its namespace address.
+    let handle = unsafe {
+        ReOpenFile(
+            selected.as_raw_handle(),
+            FILE_GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            FILE_FLAG_OPEN_REPARSE_POINT,
+        )
+    };
+    if handle == INVALID_HANDLE_VALUE {
+        return Err(fs::error(op, std::io::Error::last_os_error()));
+    }
+    // SAFETY: the successful call transferred ownership of this distinct handle.
+    let file = File::from_std(unsafe {
+        std::fs::File::from_raw_handle(handle)
+    });
+    let metadata = file.metadata().map_err(|cause| fs::error(op, cause))?;
+    fs::regular_file(op, &metadata)?;
+    Ok(file)
+}
+
+fn select(
+    root: &Dir,
+    lookup: PathLookup<'_>,
+    context: LookupContext,
+    op: Operation,
+) -> Result<(Entry, Option<File>), StorageError> {
+    let root_dir = root.try_clone().map_err(|cause| fs::error(op, cause))?;
     let mut stack = vec![(StoragePath::root(), root_dir)];
     if lookup.path().start() == LookupStart::BaseDirectory {
         for name in context.working_directory.entry_names() {
-            let (parent, dir) = stack.last().ok_or_else(stale)?;
-            let selected = open(dir, name.as_str()).map_err(|error| match error.failure() {
-                Failure::Rejected(Rejection::NotFound | Rejection::NotDirectory) => stale(),
+            let (parent, dir) = stack.last().ok_or_else(|| stale(op))?;
+            let selected = open(op, dir, name.as_str()).map_err(|error| match error.failure() {
+                Failure::Rejected(Rejection::NotFound | Rejection::NotDirectory) => stale(op),
                 _ => error,
             })?;
-            let (Some(dir), _) = selected else {
-                return Err(stale());
-            };
-            let path = parent.join(&name).map_err(|_| stale())?;
+            let (dir, metadata) = selected;
+            if !metadata.is_dir() || fs::reparse(&metadata) {
+                return Err(stale(op));
+            }
+            let dir = Dir::from_std_file(dir.into_std());
+            let path = parent.join(&name).map_err(|_| stale(op))?;
             stack.push((path, dir));
         }
     }
@@ -51,15 +96,16 @@ pub(super) fn stat(
             }
             PathComponent::ParentDirectory => {}
             PathComponent::Name(name) => {
-                let (parent, dir) = stack.last().ok_or_else(stale)?;
+                let (parent, dir) = stack.last().ok_or_else(|| stale(op))?;
                 let path = parent
                     .join(name)
-                    .map_err(|_| rejected(Rejection::PathTooLong))?;
-                let (opened_directory, metadata) = open(dir, name.as_str())?;
+                    .map_err(|_| rejected(op, Rejection::PathTooLong))?;
+                let (file, metadata) = open(op, dir, name.as_str())?;
                 let last = index + 1 == components.len();
                 if fs::reparse(&metadata) {
                     if !last || lookup.final_symlink() == SymlinkAction::FollowWithinInstance {
                         return Err(rejected(
+                            op,
                             if !last
                                 && metadata.file_type().is_symlink()
                                 && context.intermediate_symlinks == IntermediateSymlinks::Reject
@@ -73,10 +119,12 @@ pub(super) fn stat(
                     }
                 }
                 if last {
-                    final_entry = Some(fs::entry(OP, path, metadata)?);
+                    final_entry = Some((fs::entry(op, path, metadata)?, Some(file)));
                 } else {
-                    let dir = opened_directory.ok_or_else(|| rejected(Rejection::NotDirectory))?;
-                    stack.push((path, dir));
+                    if !metadata.is_dir() {
+                        return Err(rejected(op, Rejection::NotDirectory));
+                    }
+                    stack.push((path, Dir::from_std_file(file.into_std())));
                 }
             }
         }
@@ -84,19 +132,19 @@ pub(super) fn stat(
     let selected = match final_entry {
         Some(entry) => entry,
         None => {
-            let (path, dir) = stack.last().ok_or_else(stale)?;
-            let metadata = dir.dir_metadata().map_err(|cause| fs::error(OP, cause))?;
-            fs::entry(OP, path.clone(), metadata)?
+            let (path, dir) = stack.last().ok_or_else(|| stale(op))?;
+            let metadata = dir.dir_metadata().map_err(|cause| fs::error(op, cause))?;
+            (fs::entry(op, path.clone(), metadata)?, None)
         }
     };
     lookup
-        .check_existing_target(selected.path(), selected.entry_type())
-        .map_err(rejected)?;
+        .check_existing_target(selected.0.path(), selected.0.entry_type())
+        .map_err(|reason| rejected(op, reason))?;
     Ok(selected)
 }
 
-fn open(dir: &Dir, name: &str) -> Result<(Option<Dir>, Metadata), StorageError> {
-    fs::validate_name(OP, name)?;
+fn open(op: Operation, dir: &Dir, name: &str) -> Result<(File, Metadata), StorageError> {
+    fs::validate_name(op, name)?;
     let mut options = OpenOptions::new();
     options
         .read(true)
@@ -106,12 +154,10 @@ fn open(dir: &Dir, name: &str) -> Result<(Option<Dir>, Metadata), StorageError> 
         .follow(FollowSymlinks::No);
     let file = dir
         .open_with(name, &options)
-        .map_err(|cause| fs::error(OP, cause))?;
-    if native::actual_name(OP, &file)? != name {
-        return Err(rejected(Rejection::NotFound));
+        .map_err(|cause| fs::error(op, cause))?;
+    if native::actual_name(op, &file)? != name {
+        return Err(rejected(op, Rejection::NotFound));
     }
-    let metadata = file.metadata().map_err(|cause| fs::error(OP, cause))?;
-    let opened_directory =
-        (metadata.is_dir() && !fs::reparse(&metadata)).then(|| Dir::from_std_file(file.into_std()));
-    Ok((opened_directory, metadata))
+    let metadata = file.metadata().map_err(|cause| fs::error(op, cause))?;
+    Ok((file, metadata))
 }

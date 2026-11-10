@@ -6,7 +6,7 @@ mod common;
 #[cfg(unix)]
 use ah_vfs::application::driver_catalog::DriverCatalog;
 use ah_vfs::application::driver_error::DriverError;
-use ah_vfs::application::dto::MountRequest;
+use ah_vfs::application::dto::{MountRequest, ReadFileRequest};
 use ah_vfs::application::error::EntryError;
 use ah_vfs::application::port::{Driver, Storage};
 use ah_vfs::application::service::{EntryService, MountService};
@@ -15,7 +15,7 @@ use ah_vfs::domain::storage::StorageWriteFileRequest;
 use ah_vfs::domain::{DriverInstance, DriverKey, InstanceId};
 use ah_vfs::infrastructure::mount_repository::SqliteMountRepository;
 use ah_vfs_storage::{Permissions, StoragePath, XattrName, XattrWriteMode};
-use ah_vfs_storage::{ReadSupport, RenameMode};
+use ah_vfs_storage::{ReadRange, ReadSupport, RenameMode};
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use std::num::NonZeroUsize;
@@ -108,7 +108,7 @@ async fn io_and_opening_errors_keep_categories_and_original_sources() -> TestRes
         .storage
         .stat_entry(
             ah_vfs_storage::StatRequest::new(
-                (path("missing")?).to_rooted_expr(),
+                path("missing")?.to_rooted_expr(),
                 ah_vfs_storage::SymlinkAction::Preserve,
             ),
             Default::default(),
@@ -138,7 +138,7 @@ async fn io_and_opening_errors_keep_categories_and_original_sources() -> TestRes
         f.storage
             .stat_entry(
                 ah_vfs_storage::StatRequest::new(
-                    (path("file")?).to_rooted_expr(),
+                    path("file")?.to_rooted_expr(),
                     ah_vfs_storage::SymlinkAction::Preserve
                 ),
                 Default::default()
@@ -314,7 +314,7 @@ async fn attribute_access_never_follows_file_or_parent_symlinks() -> TestResult 
 }
 
 #[tokio::test]
-async fn stat_and_read_link_do_not_route_again_through_child_mounts() -> TestResult {
+async fn instance_lookup_does_not_route_again_through_child_mounts() -> TestResult {
     let f = fixture().await?;
     let (entries, mounts) = services(&f).await?;
     let other_root = f._dir.path().join("other");
@@ -342,6 +342,15 @@ async fn stat_and_read_link_do_not_route_again_through_child_mounts() -> TestRes
         .await?;
     assert_eq!(via_alias.kind, ah_vfs_storage::EntryType::file(Some(25)));
     assert_eq!(via_mount.kind, ah_vfs_storage::EntryType::file(Some(7)));
+    let mut reader = entries
+        .read_file(ReadFileRequest {
+            path: VirtualPath::parse("/alias/file")?,
+            range: ReadRange::new(9, Some(7))?,
+        })
+        .await?;
+    assert_eq!(reader.next_chunk().await?, Some(b"in root".to_vec()));
+    assert_eq!(reader.next_chunk().await?, None);
+    assert_eq!(reader.next_chunk().await?, None);
     let target = entries.read_link(&VirtualPath::parse("/alias")?).await?;
     assert_eq!(target.as_bytes(), b"/mounted");
     assert!(matches!(

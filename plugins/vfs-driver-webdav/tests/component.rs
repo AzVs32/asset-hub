@@ -2,13 +2,13 @@ use ah_vfs::application::dto::*;
 use ah_vfs::application::port::*;
 use ah_vfs::domain::InstanceId;
 use ah_vfs::domain::storage::{
-    StorageCreateDirRequest, StorageDirQuery, StorageReadFileRequest, StorageRemoveEntryRequest,
-    StorageWriteFileRequest,
+    StorageCreateDirRequest, StorageDirQuery, StorageRemoveEntryRequest, StorageWriteFileRequest,
 };
 use ah_vfs_storage::{EntryType, StoragePath};
 use ah_vfs_storage::{Failure, Rejection};
 use std::{
     collections::BTreeMap,
+    hash::{DefaultHasher, Hash, Hasher},
     sync::{
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
@@ -23,6 +23,7 @@ struct Fixture {
     origin: String,
     task: tokio::task::JoinHandle<()>,
     deletes: Arc<AtomicUsize>,
+    entries: Entries,
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
@@ -36,9 +37,10 @@ impl Fixture {
         let entries: Entries = Arc::new(Mutex::new(BTreeMap::from([(String::new(), None)])));
         let deletes = Arc::new(AtomicUsize::new(0));
         let observed = deletes.clone();
+        let served = entries.clone();
         let task = tokio::spawn(async move {
             while let Ok((stream, _)) = listener.accept().await {
-                let entries = entries.clone();
+                let entries = served.clone();
                 let deletes = observed.clone();
                 tokio::spawn(async move {
                     let _ = handle(stream, entries, deletes).await;
@@ -49,8 +51,25 @@ impl Fixture {
             origin,
             task,
             deletes,
+            entries,
         })
     }
+
+    fn replace(&self, path: &str, data: Vec<u8>) -> Result {
+        self.entries
+            .lock()
+            .map_err(|_| "entries lock")?
+            .insert(path.into(), Some(data));
+        Ok(())
+    }
+}
+fn etag(path: &str, data: &[u8]) -> Option<String> {
+    if path == "unversioned" {
+        return None;
+    }
+    let mut hash = DefaultHasher::new();
+    data.hash(&mut hash);
+    Some(format!("\"{:x}\"", hash.finish()))
 }
 fn metadata(path: &str, data: &Option<Vec<u8>>) -> String {
     let kind = if data.is_none() {
@@ -63,8 +82,13 @@ fn metadata(path: &str, data: &Option<Vec<u8>>) -> String {
     } else {
         ""
     };
+    let version = data
+        .as_deref()
+        .and_then(|data| etag(path, data))
+        .map(|tag| format!("<d:getetag>{tag}</d:getetag>"))
+        .unwrap_or_default();
     format!(
-        "<d:response><d:href>/dav/{path}{suffix}</d:href><d:propstat><d:prop><d:resourcetype>{kind}</d:resourcetype><d:getcontentlength>{}</d:getcontentlength><d:getetag>\"fixture\"</d:getetag></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>",
+        "<d:response><d:href>/dav/{path}{suffix}</d:href><d:propstat><d:prop><d:resourcetype>{kind}</d:resourcetype><d:getcontentlength>{}</d:getcontentlength>{version}</d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>",
         data.as_ref().map_or(0, Vec::len)
     )
 }
@@ -158,21 +182,29 @@ async fn handle(
             }
             "GET" => {
                 let data = entries.get(path).and_then(|v| v.as_ref()).ok_or("file")?;
-                let range = fields
-                    .get("range")
-                    .and_then(|v| v.strip_prefix("bytes="))
-                    .ok_or("range")?;
-                let (start, end) = range.split_once('-').ok_or("range bounds")?;
-                let start: usize = start.parse()?;
-                let end: usize = end.parse()?;
-                (
-                    "206 Partial Content",
-                    data[start..=end].to_vec(),
-                    format!(
-                        "content-range: bytes {start}-{end}/{}\r\netag: \"fixture\"\r\n",
-                        data.len()
-                    ),
-                )
+                let version = etag(path, data);
+                if fields.get("if-match") != version.as_ref() {
+                    ("412 Precondition Failed", vec![], String::new())
+                } else {
+                    let range = fields
+                        .get("range")
+                        .and_then(|v| v.strip_prefix("bytes="))
+                        .ok_or("range")?;
+                    let (start, end) = range.split_once('-').ok_or("range bounds")?;
+                    let start: usize = start.parse()?;
+                    let end: usize = end.parse()?;
+                    let version_header = version
+                        .map(|tag| format!("etag: {tag}\r\n"))
+                        .unwrap_or_default();
+                    (
+                        "206 Partial Content",
+                        data[start..=end].to_vec(),
+                        format!(
+                            "content-range: bytes {start}-{end}/{}\r\n{version_header}",
+                            data.len()
+                        ),
+                    )
+                }
             }
             "DELETE" => {
                 deletes.fetch_add(1, Ordering::SeqCst);
@@ -245,11 +277,13 @@ async fn protobuf_component_opens_writes_commits_reads_and_lists() -> Result {
     assert_eq!(entry.entry_type(), ah_vfs_storage::EntryType::file(Some(4)));
     assert_eq!(entry.path(), &file);
     let mut reader = storage
-        .read_file(StorageReadFileRequest {
-            path: file.clone(),
-            offset: 1,
-            length: Some(2),
-        })
+        .read_file(
+            ah_vfs_storage::ReadRequest::new(
+                file.clone().to_rooted_expr(),
+                ah_vfs_storage::ReadRange::new(1, Some(2))?,
+            ),
+            Default::default(),
+        )
         .await?;
     assert_eq!(reader.next_chunk().await?, Some(vec![255, 1]));
     assert_eq!(reader.next_chunk().await?, None);
@@ -265,6 +299,30 @@ async fn protobuf_component_opens_writes_commits_reads_and_lists() -> Result {
         .list_entries(StorageDirQuery::new(StoragePath::root()))
         .await?;
     assert_eq!(page.entries.len(), 2);
+    for path in ["versioned", "unversioned"] {
+        let chunk = storage.chunk_size().get();
+        fixture.replace(path, vec![1; chunk + 4])?;
+        let mut stream = storage
+            .read_file(
+                ah_vfs_storage::ReadRequest::new(
+                    StoragePath::parse(path)?.to_rooted_expr(),
+                    ah_vfs_storage::ReadRange::new(1, None)?,
+                ),
+                Default::default(),
+            )
+            .await?;
+        assert_eq!(stream.next_chunk().await?, Some(vec![1; chunk]));
+        fixture.replace(path, vec![2; chunk + 4])?;
+        if path == "unversioned" {
+            assert_eq!(stream.next_chunk().await?, Some(vec![1; 3]));
+            assert_eq!(stream.next_chunk().await?, None);
+        } else {
+            assert!(matches!(stream.next_chunk().await, Err(error)
+                if error.failure() == Failure::Rejected(Rejection::Conflict)));
+            assert!(matches!(stream.next_chunk().await, Err(error)
+                if error.failure() == Failure::Backend(ah_vfs_storage::BackendFailure::Closed)));
+        }
+    }
     assert_eq!(
         storage
             .remove_entry(StorageRemoveEntryRequest { path: file })

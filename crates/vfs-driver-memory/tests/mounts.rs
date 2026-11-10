@@ -91,8 +91,7 @@ async fn read(entries: &EntryService, value: &str) -> TestResult<Vec<u8>> {
     let mut reader = entries
         .read_file(ReadFileRequest {
             path: virtual_path(value)?,
-            offset: 0,
-            length: None,
+            range: ah_vfs_storage::ReadRange::new(0, None)?,
         })
         .await?;
     let mut bytes = Vec::new();
@@ -130,8 +129,7 @@ async fn mount_disable_enable_unmount_remount_preserves_instance_and_open_stream
         .entries
         .read_file(ReadFileRequest {
             path: virtual_path("/ram/file")?,
-            offset: 0,
-            length: None,
+            range: ah_vfs_storage::ReadRange::new(0, None)?,
         })
         .await?;
     f.mounts.disable(mounted.id).await?;
@@ -139,8 +137,7 @@ async fn mount_disable_enable_unmount_remount_preserves_instance_and_open_stream
         f.entries
             .read_file(ReadFileRequest {
                 path: virtual_path("/ram/file")?,
-                offset: 0,
-                length: None
+                range: ah_vfs_storage::ReadRange::new(0, None)?,
             })
             .await,
         Err(EntryError::Table(MountTableError::Disabled(_)))
@@ -242,8 +239,7 @@ async fn nested_mounts_overlay_backend_entries_and_synthesize_missing_parents() 
         f.entries
             .read_file(ReadFileRequest {
                 path: virtual_path("/virtual/ram/file")?,
-                offset: 0,
-                length: None
+                range: ah_vfs_storage::ReadRange::new(0, None)?,
             })
             .await
             .is_err()

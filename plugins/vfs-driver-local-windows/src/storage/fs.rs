@@ -8,12 +8,11 @@ use ah_vfs_storage::{
 };
 use ah_vfs_storage::{Entry, EntryName, EntryType, StoragePath};
 use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt};
-use cap_std::fs::{Dir, File, Metadata, MetadataExt, OpenOptions, OpenOptionsExt};
+use cap_std::fs::{Dir, Metadata, MetadataExt, OpenOptions, OpenOptionsExt};
 use std::io;
 use windows_sys::Win32::Storage::FileSystem::{
     FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
-    FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ,
-    FILE_SHARE_WRITE, SYNCHRONIZE,
+    FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES, FILE_SHARE_READ, FILE_SHARE_WRITE, SYNCHRONIZE,
 };
 
 pub(super) fn error(operation: Operation, error: io::Error) -> StorageError {
@@ -230,36 +229,6 @@ pub(super) fn regular_file(operation: Operation, metadata: &Metadata) -> Result<
         ));
     }
     Ok(())
-}
-pub(super) fn open_file(
-    operation: Operation,
-    root: &Dir,
-    path: &StoragePath,
-) -> Result<File, StorageError> {
-    if path.is_root() {
-        return Err(StorageError::without_effects(
-            operation,
-            Failure::Rejected(Rejection::IsDirectory),
-            None,
-        ));
-    }
-    let (parent, name) = parent(operation, root, path)?;
-    regular_file(operation, &checked_metadata(operation, &parent, &name)?)?;
-    let mut options = OpenOptions::new();
-    options
-        .read(true)
-        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
-        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
-        .follow(FollowSymlinks::No);
-    let file = parent
-        .open_with(&name, &options)
-        .map_err(|cause| error(operation, cause))?;
-    native::public_handle(operation, &file)?;
-    regular_file(
-        operation,
-        &file.metadata().map_err(|cause| error(operation, cause))?,
-    )?;
-    Ok(file)
 }
 fn list_path_error(operation: Operation, cause: ah_vfs_storage::PathError) -> StorageError {
     StorageError::without_effects(

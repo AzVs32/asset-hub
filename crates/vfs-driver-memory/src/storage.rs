@@ -3,13 +3,15 @@ use ah_vfs::application::port::LookupContext;
 use ah_vfs::application::port::{Storage, StorageFileReader, StorageFileWriter, StorageFuture};
 use ah_vfs::domain::storage::{
     StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageMoveEntryRequest,
-    StorageReadFileRequest, StorageRemoveEntryRequest, StorageWriteFileRequest,
+    StorageRemoveEntryRequest, StorageWriteFileRequest,
 };
 use ah_vfs_storage::WriteMode;
 use ah_vfs_storage::{
     BackendFailure, ContractViolation, Failure, Operation, Rejection, StorageError,
 };
-use ah_vfs_storage::{Entry, EntryType, LinkTarget, ReadLinkRequest, StatRequest, StoragePath};
+use ah_vfs_storage::{
+    Entry, EntryType, LinkTarget, ReadLinkRequest, ReadRequest, StatRequest, StoragePath,
+};
 use std::{
     collections::BTreeMap,
     num::NonZeroUsize,
@@ -24,7 +26,6 @@ pub(crate) mod contract;
 mod file_reader;
 mod file_writer;
 
-use file_reader::MemoryFileReader;
 use file_writer::MemoryFileWriter;
 
 const CHUNK_SIZE: usize = 64 * 1024;
@@ -344,23 +345,11 @@ impl Storage for MemoryStorage {
 
     fn read_file(
         &self,
-        request: StorageReadFileRequest,
+        request: ReadRequest,
+        context: LookupContext,
     ) -> StorageFuture<'_, Box<dyn StorageFileReader>> {
         Box::pin(async move {
-            let operation = Operation::Read;
-            let entries = self.shared.lock(operation)?;
-            require_parents(operation, &entries, &request.path)?;
-            let entry = entries
-                .get(request.path.as_str())
-                .ok_or_else(|| error(operation, Failure::Rejected(Rejection::NotFound)))?;
-            let EntryData::File(blob) = &entry.data else {
-                return Err(error(operation, Failure::Rejected(Rejection::IsDirectory)));
-            };
-            Ok(Box::new(MemoryFileReader::new(
-                blob.clone(),
-                request.offset,
-                request.length,
-            )) as Box<dyn StorageFileReader>)
+            Ok(Box::new(self.open_reader(&request, context)?) as Box<dyn StorageFileReader>)
         })
     }
 

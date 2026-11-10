@@ -6,10 +6,10 @@ use ah_vfs::application::port::{
 };
 use ah_vfs::domain::storage::{
     StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageMoveEntryRequest,
-    StorageReadFileRequest, StorageRemoveEntryRequest, StorageWriteFileRequest,
+    StorageRemoveEntryRequest, StorageWriteFileRequest,
 };
 use ah_vfs_storage::{BackendFailure, Failure, Operation, StorageError};
-use ah_vfs_storage::{Entry, LinkTarget, ReadLinkRequest, StatRequest};
+use ah_vfs_storage::{Entry, LinkTarget, ReadLinkRequest, ReadRequest, StatRequest};
 
 use cap_std::fs::Dir;
 use std::num::NonZeroUsize;
@@ -117,12 +117,16 @@ impl Storage for LinuxLocalStorage {
 
     fn read_file(
         &self,
-        request: StorageReadFileRequest,
+        request: ReadRequest,
+        context: LookupContext,
     ) -> StorageFuture<'_, Box<dyn StorageFileReader>> {
         let dir = self.dir.clone();
         Box::pin(blocking(Operation::Read, false, move || {
-            Ok(Box::new(file_reader::LocalFileReader::open(&dir, request)?)
-                as Box<dyn StorageFileReader>)
+            let file = lookup::open_reader(&dir, request.lookup(), context)?;
+            Ok(
+                Box::new(file_reader::LocalFileReader::open(file, request.range())?)
+                    as Box<dyn StorageFileReader>,
+            )
         }))
     }
 

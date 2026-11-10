@@ -45,6 +45,33 @@ pub(super) fn read_link(
     link_bytes(op, &selected.file)
 }
 
+pub(super) fn open_reader(
+    root: &Dir,
+    lookup: PathLookup<'_>,
+    context: LookupContext,
+) -> Result<File, StorageError> {
+    use std::os::fd::AsRawFd;
+    let op = Operation::Read;
+    let selected = Walk::select(root, lookup, context, op)?;
+    // The procfs descriptor refers to the pinned inode even after a rename.
+    // Reopening the selected name would race a replacement with a different file.
+    let descriptor = format!("/proc/self/fd/{}", selected.file.as_raw_fd());
+    let fd = rustix::fs::open(
+        descriptor.as_str(),
+        OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NONBLOCK,
+        Mode::empty(),
+    )
+    .map_err(|cause| match cause {
+        Errno::NOENT | Errno::NOTDIR => rejected(op, Rejection::Unsupported),
+        _ => fs::error(op, cause.into()),
+    })?;
+    let file = File::from_std(fd.into());
+    if identity(op, &selected.file)? != identity(op, &file)? {
+        return Err(stale(op));
+    }
+    Ok(file)
+}
+
 fn link_bytes(op: Operation, file: &File) -> Result<LinkTarget, StorageError> {
     // Linux accepts an empty path for an O_PATH descriptor of the link itself.
     // Reading by descriptor keeps the bytes and the classified type on one object.

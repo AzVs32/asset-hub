@@ -66,8 +66,7 @@ pub struct DirPage {
 
 pub struct ReadFileRequest {
     pub path: VirtualPath,
-    pub offset: u64,
-    pub length: Option<u64>,
+    pub range: ah_vfs_storage::ReadRange,
 }
 
 pub struct WriteFileRequest {

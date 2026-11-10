@@ -11,10 +11,10 @@ use ah_vfs::application::dto::*;
 use ah_vfs::application::port::*;
 use ah_vfs::domain::storage::{
     StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageMoveEntryRequest,
-    StorageReadFileRequest, StorageRemoveEntryRequest, StorageWriteFileRequest,
+    StorageRemoveEntryRequest, StorageWriteFileRequest,
 };
 use ah_vfs_storage::{Entry, Permissions, StoragePath, XattrName, XattrWriteMode};
-use ah_vfs_storage::{LinkTarget, ReadLinkRequest, StatRequest, WriteMode};
+use ah_vfs_storage::{LinkTarget, ReadLinkRequest, ReadRequest, StatRequest, WriteMode};
 use std::{
     collections::HashSet,
     future::Future,
@@ -781,18 +781,25 @@ impl Storage for RemoteStorage {
     }
     fn read_file(
         &self,
-        r: StorageReadFileRequest,
+        request: ReadRequest,
+        context: LookupContext,
     ) -> StorageFuture<'_, Box<dyn StorageFileReader>> {
         Box::pin(async move {
+            self.driver_info
+                .capabilities()
+                .require_read(&request)
+                .map_err(|reason| {
+                    StorageError::without_effects(Operation::Read, Failure::Rejected(reason), None)
+                })?;
             let value = self
                 .resource
                 .runtime
-                .value(Op::Read(p::Read {
-                    handle: self.resource.handle,
-                    path: r.path.as_str().into(),
-                    offset: r.offset,
-                    length: r.length,
-                }))
+                .value(Op::Read(p::encode_read(
+                    self.resource.handle,
+                    &request,
+                    &context.working_directory,
+                    context.intermediate_symlinks,
+                )))
                 .await
                 .map_err(|error| convert::storage_error(Operation::Read, false, error))?;
             match value {
@@ -806,7 +813,7 @@ impl Storage for RemoteStorage {
                         .map_err(|error| convert::storage_error(Operation::Read, false, error))?,
                     ),
                     eof: false,
-                    remaining: r.length,
+                    remaining: request.range().length(),
                 })
                     as Box<dyn StorageFileReader>),
                 _ => Err(bad_response(Operation::Read, false)),

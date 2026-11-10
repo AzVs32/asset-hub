@@ -2,9 +2,7 @@ use ah_vfs::application::driver_info::DriverInfo;
 use ah_vfs::application::dto::*;
 use ah_vfs::application::port::*;
 use ah_vfs::domain::InstanceId;
-use ah_vfs::domain::storage::{
-    StorageReadFileRequest, StorageRemoveEntryRequest, StorageWriteFileRequest,
-};
+use ah_vfs::domain::storage::{StorageRemoveEntryRequest, StorageWriteFileRequest};
 use ah_vfs_storage::{
     BackendFailure, ContractViolation, Failure, Operation, Rejection, StorageError,
 };
@@ -178,7 +176,8 @@ impl Storage for BackendStorage {
     }
     fn read_file(
         &self,
-        _: StorageReadFileRequest,
+        _: ah_vfs_storage::ReadRequest,
+        _: ah_vfs::application::port::LookupContext,
     ) -> StorageFuture<'_, Box<dyn StorageFileReader>> {
         Box::pin(async move {
             Ok(Box::new(Reader {
@@ -301,7 +300,7 @@ async fn stat(storage: &dyn Storage) -> Result<u64> {
     let entry = storage
         .stat_entry(
             ah_vfs_storage::StatRequest::new(
-                (StoragePath::parse("file")?).to_rooted_expr(),
+                StoragePath::parse("file")?.to_rooted_expr(),
                 ah_vfs_storage::SymlinkAction::Preserve,
             ),
             Default::default(),
@@ -316,7 +315,13 @@ async fn stat(storage: &dyn Storage) -> Result<u64> {
 }
 async fn read(storage: &dyn Storage) -> Result<Box<dyn StorageFileReader>> {
     Ok(storage
-        .read_file(StorageReadFileRequest::new(StoragePath::parse("file")?))
+        .read_file(
+            ah_vfs_storage::ReadRequest::new(
+                StoragePath::parse("file")?.to_rooted_expr(),
+                ah_vfs_storage::ReadRange::FULL,
+            ),
+            Default::default(),
+        )
         .await?)
 }
 
@@ -815,12 +820,15 @@ impl RawSession {
     async fn reader(&mut self) -> Result<u64> {
         match self
             .call(
-                Op::Read(p::Read {
-                    handle: 1,
-                    path: "file".into(),
-                    offset: 0,
-                    length: None,
-                }),
+                Op::Read(p::encode_read(
+                    1,
+                    &ah_vfs_storage::ReadRequest::new(
+                        ah_vfs_storage::PathExpr::parse("/file")?,
+                        ah_vfs_storage::ReadRange::new(0, None)?,
+                    ),
+                    &ah_vfs_storage::StoragePath::root(),
+                    ah_vfs_storage::IntermediateSymlinks::FollowWithinInstance,
+                )),
                 vec![],
             )
             .await?
@@ -1240,13 +1248,17 @@ async fn resource_capacity_is_shared_across_sessions_and_released_on_disconnect(
     };
     let first = dispatcher.open_session(&generation, opening()).await?;
     let second = dispatcher.open_session(&generation, opening()).await?;
+    let request = ah_vfs_storage::ReadRequest::new(
+        ah_vfs_storage::PathExpr::parse("/file")?,
+        ah_vfs_storage::ReadRange::FULL,
+    );
     let read = || {
-        Op::Read(p::Read {
-            handle: 1,
-            path: "file".into(),
-            offset: 0,
-            length: None,
-        })
+        Op::Read(p::encode_read(
+            1,
+            &request,
+            &StoragePath::root(),
+            ah_vfs_storage::IntermediateSymlinks::FollowWithinInstance,
+        ))
     };
     for _ in 0..p::MAX_RESOURCES - 2 {
         first.call(read(), vec![]).await?;

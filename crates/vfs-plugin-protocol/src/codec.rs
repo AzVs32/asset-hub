@@ -209,6 +209,9 @@ pub fn validate_request(request: &Request) -> Result<()> {
             }
             _ => {}
         },
+        O::Read(read) => {
+            super::decode_read(read.clone()).map_err(|_| CodecError::InvalidData)?;
+        }
         O::Release(v) => check_resource(v)?,
         _ => {}
     }

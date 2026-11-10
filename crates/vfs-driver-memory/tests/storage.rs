@@ -3,8 +3,8 @@ mod common;
 
 use ah_vfs::application::port::{Driver, Storage, validate_storage_extensions};
 use ah_vfs::domain::storage::{
-    StorageCreateDirRequest, StorageDirQuery, StorageMoveEntryRequest, StorageReadFileRequest,
-    StorageRemoveEntryRequest, StorageWriteFileRequest,
+    StorageCreateDirRequest, StorageDirQuery, StorageMoveEntryRequest, StorageRemoveEntryRequest,
+    StorageWriteFileRequest,
 };
 use ah_vfs_storage::EntryType;
 use ah_vfs_storage::{AttributeSupport, WriteMode};
@@ -124,16 +124,18 @@ async fn ranges_chunking_and_repeated_eof_follow_the_stream_contract() -> TestRe
     for (offset, length, expected) in [
         (0, None, bytes.as_slice()),
         (65_535, Some(70_000), &bytes[65_535..135_535]),
-        (149_999, Some(u64::MAX), &bytes[149_999..]),
+        (149_999, Some(u64::MAX - 149_999), &bytes[149_999..]),
         (u64::MAX, None, &[]),
         (1, Some(0), &[]),
     ] {
         let mut reader = storage
-            .read_file(StorageReadFileRequest {
-                path: path("file")?,
-                offset,
-                length,
-            })
+            .read_file(
+                ah_vfs_storage::ReadRequest::new(
+                    path("file")?.to_rooted_expr(),
+                    ah_vfs_storage::ReadRange::new(offset, length)?,
+                ),
+                Default::default(),
+            )
             .await?;
         let mut actual = Vec::new();
         while let Some(chunk) = reader.next_chunk().await? {
@@ -192,7 +194,13 @@ async fn readers_pin_old_versions_and_their_capacity_until_released() -> TestRes
     let storage = storage(12)?;
     put(&storage, "file", b"oldold").await?;
     let mut old = storage
-        .read_file(StorageReadFileRequest::new(path("file")?))
+        .read_file(
+            ah_vfs_storage::ReadRequest::new(
+                path("file")?.to_rooted_expr(),
+                ah_vfs_storage::ReadRange::FULL,
+            ),
+            Default::default(),
+        )
         .await?;
     let mut writer = storage
         .write_file(StorageWriteFileRequest {
@@ -209,7 +217,13 @@ async fn readers_pin_old_versions_and_their_capacity_until_released() -> TestRes
     assert_eq!(collect(old.as_mut()).await?, b"oldold");
     assert_eq!(storage.used_bytes(), 6);
     let reader = storage
-        .read_file(StorageReadFileRequest::new(path("file")?))
+        .read_file(
+            ah_vfs_storage::ReadRequest::new(
+                path("file")?.to_rooted_expr(),
+                ah_vfs_storage::ReadRange::FULL,
+            ),
+            Default::default(),
+        )
         .await?;
     storage
         .remove_entry(StorageRemoveEntryRequest {
@@ -335,7 +349,7 @@ async fn invalid_parents_types_and_root_mutations_have_domain_errors() -> TestRe
         storage
             .stat_entry(
                 ah_vfs_storage::StatRequest::new(
-                    (path("file/child")?).to_rooted_expr(),
+                    path("file/child")?.to_rooted_expr(),
                     ah_vfs_storage::SymlinkAction::Preserve
                 ),
                 Default::default()
@@ -348,7 +362,13 @@ async fn invalid_parents_types_and_root_mutations_have_domain_errors() -> TestRe
     );
     assert_eq!(
         storage
-            .read_file(StorageReadFileRequest::new(path("")?))
+            .read_file(
+                ah_vfs_storage::ReadRequest::new(
+                    (path("")?).to_rooted_expr(),
+                    ah_vfs_storage::ReadRange::FULL
+                ),
+                Default::default()
+            )
             .await
             .err()
             .ok_or("dir")?
@@ -587,7 +607,13 @@ async fn streams_keep_resources_alive_after_the_storage_handle_is_dropped() -> T
     let storage = storage(16)?;
     put(&storage, "existing", b"retained").await?;
     let mut reader = storage
-        .read_file(StorageReadFileRequest::new(path("existing")?))
+        .read_file(
+            ah_vfs_storage::ReadRequest::new(
+                path("existing")?.to_rooted_expr(),
+                ah_vfs_storage::ReadRange::FULL,
+            ),
+            Default::default(),
+        )
         .await?;
     let mut writer = storage
         .write_file(StorageWriteFileRequest::new(path("new")?))

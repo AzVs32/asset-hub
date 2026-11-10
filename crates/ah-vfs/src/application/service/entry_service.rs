@@ -11,12 +11,11 @@ use crate::application::session::{FileReadHandle, FileWriteHandle};
 use crate::domain::namespace::{Mount, MountTable, VirtualPath};
 use crate::domain::storage::{
     MAX_DIR_PAGE_LIMIT, StorageCreateDirRequest, StorageDirQuery, StorageMoveEntryRequest,
-    StorageReadFileRequest, StorageRemoveEntryRequest, StorageWriteFileRequest,
-    validate_dir_page_limit,
+    StorageRemoveEntryRequest, StorageWriteFileRequest, validate_dir_page_limit,
 };
 use ah_vfs_storage::{
-    Capabilities, LinkTarget, Publication, ReadLinkRequest, ReadRange,
-    RenameMode, StatRequest, SymlinkAction,
+    Capabilities, LinkTarget, Publication, ReadLinkRequest, ReadRequest, RenameMode, StatRequest,
+    SymlinkAction,
 };
 use ah_vfs_storage::{EntryType, Permissions, StoragePath, XattrName, XattrWriteMode};
 use ah_vfs_storage::{Failure, Operation, Rejection, StorageError};
@@ -296,7 +295,7 @@ impl EntryService {
     /// Open a raw byte range; namespace directories cannot be read as files.
     pub async fn read_file(&self, request: ReadFileRequest) -> Result<FileReadHandle, EntryError> {
         let table = self.runtime.table().await?;
-        table.resolve(&request.path)?;
+        let resolution = table.resolve(&request.path)?;
         if !matches!(
             Self::classify(&table, &request.path),
             NamespaceEntry::Backend
@@ -308,17 +307,22 @@ impl EntryService {
             )
             .into());
         }
-        let (relative, storage, capabilities) = self.open(&table, &request.path).await?;
-        let range =
-            ReadRange::new(request.offset, request.length).map_err(EntryError::InvalidReadRange)?;
-        Self::require(Operation::Read, capabilities.read().supports(range))?;
-        let reader = storage
-            .read_file(StorageReadFileRequest {
-                path: relative,
-                offset: request.offset,
-                length: request.length,
-            })
-            .await?;
+        let reference = resolution.mount().driver_instance();
+        let driver = self
+            .runtime
+            .drivers
+            .get(reference.driver_key())
+            .ok_or_else(|| EntryError::DriverNotRegistered(reference.driver_key().clone()))?;
+        let request = ReadRequest::new(resolution.storage_path()?.to_rooted_expr(), request.range);
+        driver
+            .info()
+            .capabilities()
+            .require_read(&request)
+            .map_err(|reason| {
+                StorageError::without_effects(Operation::Read, Failure::Rejected(reason), None)
+            })?;
+        let storage = self.runtime.storage(reference, driver.as_ref()).await?;
+        let reader = storage.read_file(request, LookupContext::default()).await?;
         Ok(FileReadHandle::new(reader, storage.chunk_size()))
     }
 

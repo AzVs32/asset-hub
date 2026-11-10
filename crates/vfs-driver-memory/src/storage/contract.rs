@@ -80,26 +80,21 @@ impl MemoryStorage {
         }
     }
 
-    pub fn read(
+    pub(super) fn open_reader(
         &self,
         request: &ReadRequest,
-        links: IntermediateSymlinks,
-    ) -> Result<ContractReader, StorageError> {
+        context: LookupContext,
+    ) -> Result<MemoryFileReader, StorageError> {
         let op = Operation::Read;
         Self::supported_capabilities()
             .require_read(request)
             .map_err(|cause| rejected(op, cause))?;
         let mut nodes = self.lock(op)?;
-        let path = select(&mut nodes, request.lookup(), links, op)?;
+        let path = select_with_context(&mut nodes, request.lookup(), &context, op)?;
         let EntryData::File(blob) = &existing(&nodes, &path, op)?.data else {
             return Err(rejected(op, Rejection::NotRegularFile));
         };
-        let range = request.range();
-        Ok(ContractReader(MemoryFileReader::new(
-            blob.clone(),
-            range.offset(),
-            range.length(),
-        )))
+        Ok(MemoryFileReader::new(blob.clone(), request.range()))
     }
 
     pub fn select_directory(
@@ -234,21 +229,6 @@ impl MemoryStorage {
                     quota: self.shared.quota.clone(),
                 },
             }),
-        })
-    }
-}
-
-/// An immutable file version bound by a validated range read.
-pub struct ContractReader(MemoryFileReader);
-
-impl ContractReader {
-    pub fn next_chunk(&mut self) -> Result<Option<Vec<u8>>, StorageError> {
-        self.0.next_bytes().map_err(|cause| {
-            StorageError::without_effects(
-                Operation::Read,
-                Failure::Backend(BackendFailure::CapacityExceeded),
-                Some(Box::new(cause)),
-            )
         })
     }
 }

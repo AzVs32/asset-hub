@@ -19,7 +19,11 @@ impl Guest for Driver {
             name: "Fixture".into(),
             version: "1.0.0".into(),
             child_mounts: true,
-            capabilities: vec![p::Capability::Stat as i32, p::Capability::WriteNew as i32],
+            capabilities: vec![
+                p::Capability::Stat as i32,
+                p::Capability::WriteNew as i32,
+                p::Capability::RangeRead as i32,
+            ],
 
             settings_schema: None,
             instance_schema: None,
@@ -78,7 +82,12 @@ impl GuestStorage for Store {
             .into()),
         }
     }
-    fn read(&self, _: String, _: u64, _: Option<u64>) -> Result<Reader> {
+    fn read(
+        &self,
+        _: ah_vfs_storage::ReadRequest,
+        _: ah_vfs_storage::StoragePath,
+        _: ah_vfs_storage::IntermediateSymlinks,
+    ) -> Result<Reader> {
         Ok(Reader::new(Input(Cell::new(false))))
     }
     fn write(&self, _: String, _: bool, _: bool) -> Result<Writer> {
@@ -278,12 +287,15 @@ fn readers_binary_data_and_generation_checks_do_not_rebind_resources() -> TestRe
     let storage = open(&mut dispatcher, false)?;
     let Value::Reader(p::Handle { handle }) = call(
         &mut dispatcher,
-        Op::Read(p::Read {
-            handle: storage,
-            path: "file".into(),
-            offset: 0,
-            length: None,
-        }),
+        Op::Read(p::encode_read(
+            storage,
+            &ah_vfs_storage::ReadRequest::new(
+                ah_vfs_storage::PathExpr::parse("/file")?,
+                ah_vfs_storage::ReadRange::new(0, None)?,
+            ),
+            &ah_vfs_storage::StoragePath::root(),
+            ah_vfs_storage::IntermediateSymlinks::FollowWithinInstance,
+        )),
         vec![],
     )?
     .into_value()?

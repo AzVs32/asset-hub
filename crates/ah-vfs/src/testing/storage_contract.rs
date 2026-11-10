@@ -3,7 +3,7 @@
 use crate::application::port::{Storage, StorageFileReader};
 use crate::domain::storage::{
     MAX_DIR_PAGE_LIMIT, StorageCreateDirRequest, StorageDirQuery, StorageMoveEntryRequest,
-    StorageReadFileRequest, StorageWriteFileRequest,
+    StorageWriteFileRequest,
 };
 use ah_vfs_storage::RenameSupport;
 use ah_vfs_storage::{EntryType, StoragePath};
@@ -38,7 +38,13 @@ async fn collect(reader: &mut dyn StorageFileReader) -> TestResult<Vec<u8>> {
 async fn get(storage: &dyn Storage, name: &str) -> TestResult<Vec<u8>> {
     collect(
         storage
-            .read_file(StorageReadFileRequest::new(path(name)?))
+            .read_file(
+                ah_vfs_storage::ReadRequest::new(
+                    (path(name)?).to_rooted_expr(),
+                    ah_vfs_storage::ReadRange::FULL,
+                ),
+                Default::default(),
+            )
             .await?
             .as_mut(),
     )
@@ -90,22 +96,22 @@ pub async fn assert_range_read_contract(storage: &dyn Storage) -> TestResult {
         for (offset, length, expected) in [
             (u64::MAX, None, &[][..]),
             (u64::MAX, Some(0), &[][..]),
-            (u64::MAX, Some(1), &[][..]),
-            (u64::MAX, Some(u64::MAX), &[][..]),
             (i64::MAX as u64 + 1, None, &[][..]),
             (eof, None, &[][..]),
             (eof + 1, None, &[][..]),
             (0, Some(0), &[][..]),
             (0, None, content),
             (7, Some(11), content.get(7..18).unwrap_or(&[])),
-            (7, Some(u64::MAX), content.get(7..).unwrap_or(&[])),
+            (7, Some(u64::MAX - 7), content.get(7..).unwrap_or(&[])),
         ] {
             let mut reader = storage
-                .read_file(StorageReadFileRequest {
-                    path: path(name)?,
-                    offset,
-                    length,
-                })
+                .read_file(
+                    ah_vfs_storage::ReadRequest::new(
+                        (path(name)?).to_rooted_expr(),
+                        ah_vfs_storage::ReadRange::new(offset, length)?,
+                    ),
+                    Default::default(),
+                )
                 .await?;
             let mut actual = Vec::new();
             while let Some(chunk) = reader.next_chunk().await? {
@@ -129,11 +135,13 @@ pub async fn assert_range_read_contract(storage: &dyn Storage) -> TestResult {
     ] {
         for length in [None, Some(0)] {
             let error = storage
-                .read_file(StorageReadFileRequest {
-                    path: path(name)?,
-                    offset: u64::MAX,
-                    length,
-                })
+                .read_file(
+                    ah_vfs_storage::ReadRequest::new(
+                        path(name)?.to_rooted_expr(),
+                        ah_vfs_storage::ReadRange::new(u64::MAX, length)?,
+                    ),
+                    Default::default(),
+                )
                 .await
                 .err()
                 .ok_or("expected invalid read target")?;

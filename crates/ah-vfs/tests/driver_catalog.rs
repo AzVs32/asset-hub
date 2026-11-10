@@ -14,7 +14,7 @@ use ah_vfs::domain::namespace::{
 };
 use ah_vfs::domain::storage::{
     StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageMoveEntryRequest,
-    StorageReadFileRequest, StorageRemoveEntryRequest, StorageWriteFileRequest,
+    StorageRemoveEntryRequest, StorageWriteFileRequest,
 };
 use ah_vfs::domain::{DriverInstance, DriverKey, DriverKeyError, InstanceId};
 use ah_vfs_storage::Entry;
@@ -58,7 +58,8 @@ impl Storage for TestStorage {
     }
     fn read_file(
         &self,
-        _: StorageReadFileRequest,
+        _: ah_vfs_storage::ReadRequest,
+        _: ah_vfs::application::port::LookupContext,
     ) -> StorageFuture<'_, Box<dyn StorageFileReader>> {
         unsupported(Operation::Read)
     }

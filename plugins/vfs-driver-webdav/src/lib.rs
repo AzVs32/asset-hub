@@ -171,27 +171,49 @@ impl GuestStorage for WebdavStorage {
         };
         Ok(p::Reply::new(value))
     }
-    fn read(&self, path: String, offset: u64, length: Option<u64>) -> Result<api::Reader> {
+    fn read(
+        &self,
+        request: ah_vfs_storage::ReadRequest,
+        base: ah_vfs_storage::StoragePath,
+        links: ah_vfs_storage::IntermediateSymlinks,
+    ) -> Result<api::Reader> {
         let client = self.client.for_operation(Operation::Read);
         let context = client.context.clone();
-        let metadata = client.stat(&path)?;
-        if metadata.entry.entry_type() == EntryType::Directory {
-            return Err(context.failure(Failure::Rejected(Rejection::IsDirectory)));
-        }
-        let EntryType::File { size, .. } = metadata.entry.entry_type() else {
-            return Err(context.failure(Failure::Rejected(Rejection::Unsupported)));
+        let (entry, etag) =
+            api::direct_lookup(request.lookup(), &base, links, Operation::Read, |path| {
+                let metadata = client.stat(path.as_str())?;
+                let etag = metadata.strong_etag();
+                Ok((metadata.entry, etag))
+            })?;
+        let EntryType::File { size, .. } = entry.entry_type() else {
+            return Err(context.failure(Failure::Rejected(Rejection::NotRegularFile)));
         };
         let size =
             size.ok_or_else(|| context.failure(Failure::Rejected(Rejection::Unsupported)))?;
+        let path = entry.path().as_str().to_owned();
+        let offset = request.range().offset();
+        let remaining = request
+            .range()
+            .length()
+            .unwrap_or(u64::MAX)
+            .min(size.saturating_sub(offset));
+        let cached = if etag.is_none() && remaining != 0 {
+            // Bind one response instead of joining unversioned representations.
+            // The host applies its HTTP response limit to the whole range.
+            let (data, _) = client.read_range(&path, offset, remaining, size, None)?;
+            Some((offset, data))
+        } else {
+            None
+        };
         Ok(api::Reader::new(WebdavReader {
             session: RefCell::new(Some(ReadSession {
-                client: client.clone(),
+                client,
                 path,
                 offset,
-                remaining: length.unwrap_or(u64::MAX).min(size.saturating_sub(offset)),
+                remaining,
                 size,
-                etag: metadata.strong_etag(),
-                cached: None,
+                etag,
+                cached,
             })),
             eof: Cell::new(false),
         }))
@@ -221,7 +243,7 @@ struct ReadSession {
     remaining: u64,
     size: u64,
     etag: Option<String>,
-    cached: Option<Vec<u8>>,
+    cached: Option<(u64, Vec<u8>)>,
 }
 struct WebdavReader {
     session: RefCell<Option<ReadSession>>,
@@ -244,8 +266,8 @@ impl GuestReader for WebdavReader {
             return Ok(None);
         }
         let length = session.remaining.min(u64::from(CHUNK_SIZE));
-        let data = if let Some(bytes) = &session.cached {
-            let start = usize::try_from(session.offset)
+        let data = if let Some((base, bytes)) = &session.cached {
+            let start = usize::try_from(session.offset - base)
                 .map_err(|_| context.failure(Failure::Backend(BackendFailure::CorruptData)))?;
             let end = start
                 .checked_add(length as usize)
@@ -262,7 +284,7 @@ impl GuestReader for WebdavReader {
                 session.size,
                 session.etag.as_deref(),
             )?;
-            session.cached = full;
+            session.cached = full.map(|bytes| (0, bytes));
             data
         };
         if data.is_empty() || data.len() as u64 > length {
