@@ -1,12 +1,14 @@
 //! Shared protobuf messages, validation and VFS protocol semantics.
 pub mod wire {
-    include!(concat!(env!("OUT_DIR"), "/assethub.vfs.v4.rs"));
+    include!(concat!(env!("OUT_DIR"), "/assethub.vfs.v5.rs"));
 }
 pub use wire::*;
 pub use wire::{reply::Result as Value, request::Operation, storage_call::Operation as StorageOp};
 mod codec;
+mod lookup;
 mod values;
 pub use codec::*;
+pub use lookup::{LookupValueError, decode_lookup, decode_stat, encode_lookup, encode_stat};
 pub use values::{
     EntryValueError, decode_capabilities, decode_entry, decode_time, encode_capabilities,
     encode_entry, encode_time,
@@ -16,7 +18,7 @@ pub const FILE_DESCRIPTOR_SET: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "
 /// JSON values at application/configuration boundaries, never a wire message.
 pub type JsonObject = std::collections::BTreeMap<String, serde_json::Value>;
 
-pub const PROTOCOL_MAJOR: u32 = 4;
+pub const PROTOCOL_MAJOR: u32 = 5;
 pub const PROTOCOL_MINOR: u32 = 0;
 pub const MAX_CONTROL_BYTES: usize = 1024 * 1024;
 pub const MAX_DATA_BYTES: usize = 8 * 1024 * 1024;
@@ -179,7 +181,9 @@ impl Operation {
                 Some(StorageOp::List(_)) => matches!(value, Value::Page(_)),
                 Some(StorageOp::GetPermissions(_)) => matches!(value, Value::Permissions(_)),
                 Some(StorageOp::ListXattrs(_)) => matches!(value, Value::Names(_)),
-                Some(StorageOp::GetXattr(_)) => matches!(value, Value::Bytes(_)),
+                Some(StorageOp::GetXattr(_) | StorageOp::ReadLink(_)) => {
+                    matches!(value, Value::Bytes(_))
+                }
                 Some(
                     StorageOp::Remove(_)
                     | StorageOp::SetPermissions(_)
@@ -200,6 +204,7 @@ impl StorageOp {
         use ah_vfs_storage::Operation as D;
         match self {
             Self::Stat(_) => D::Stat,
+            Self::ReadLink(_) => D::ReadLink,
             Self::List(_) => D::List,
             Self::CreateDir(_) => D::CreateDirectory,
             Self::Remove(_) => D::Remove,

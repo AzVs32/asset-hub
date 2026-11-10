@@ -10,8 +10,6 @@ service StorageContract {
 }
 message Unit {}
 message Operand { string path = 1; }
-enum FinalLink { FINAL_LINK_UNSPECIFIED = 0; FOLLOW = 1; PRESERVE = 2; }
-message Stat { string path = 1; FinalLink final_link = 2; }
 message List { string path = 1; uint32 page_size = 2; }
 message CreateDirectory { string path = 1; bool recursive = 2; }
 enum RemoveKind { REMOVE_KIND_UNSPECIFIED = 0; NON_DIRECTORY = 1; EMPTY_DIRECTORY = 2; }
@@ -21,10 +19,10 @@ enum Publication { PUBLICATION_UNSPECIFIED = 0; STAGED = 1; ATOMIC = 2; }
 message Write { string path = 1; WriteMode mode = 2; Publication publication = 3; }
 message Read { string path = 1; uint64 offset = 2; optional uint64 length = 3; }
 message Command {
+  reserved 2, 11;
   // Applies to ordinary path lookups. The final link has its own policy.
   bool reject_intermediate_links = 1;
   oneof action {
-    Stat stat = 2;
     List select_directory = 3;
     Unit next_page = 4;
     CreateDirectory create_directory = 5;
@@ -33,7 +31,6 @@ message Command {
     bytes stage = 8;
     Unit commit = 9;
     Unit abort = 10;
-    Operand read_link = 11;
     Operand get_permissions = 12;
     Read begin_read = 13;
     Unit read_next = 14;
@@ -49,13 +46,13 @@ message Page {
   oneof completion { Unit end = 3; string after = 4; }
 }
 message Reply {
+  reserved 5;
   oneof result {
     Unit unit = 1;
-    assethub.vfs.v4.Entry entry = 2;
+    assethub.vfs.v5.Entry entry = 2;
     Selection selected_directory = 3;
     Page page = 4;
-    bytes link_target = 5;
-    assethub.vfs.v4.StorageFailure failure = 6;
+    assethub.vfs.v5.StorageFailure failure = 6;
     bytes chunk = 7;
     Unit end_of_file = 8;
   }

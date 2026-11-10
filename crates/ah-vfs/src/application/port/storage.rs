@@ -3,17 +3,26 @@
 use super::{StoragePermissions, StorageXattrs};
 use crate::domain::storage::{
     StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageMoveEntryRequest,
-    StorageReadFileRequest, StorageRemoveEntryRequest, StorageStatEntryRequest,
-    StorageWriteFileRequest,
+    StorageReadFileRequest, StorageRemoveEntryRequest, StorageWriteFileRequest,
 };
 use ah_vfs_storage::Capabilities;
-use ah_vfs_storage::Entry;
+use ah_vfs_storage::{
+    Entry, IntermediateSymlinks, LinkTarget, ReadLinkRequest, StatRequest, StoragePath,
+};
 use ah_vfs_storage::{Failure, Operation, Rejection, StorageError};
 
 use std::{future::Future, num::NonZeroUsize, pin::Pin};
 
 /// A boxed asynchronous result that allows storage ports to be used as trait objects.
 pub type StorageFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, StorageError>> + Send + 'a>>;
+
+/// Selects a base directory on the receiver's instance and an intermediate link policy.
+/// The adapter binds the selected directory for the duration of the call.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct LookupContext {
+    pub working_directory: StoragePath,
+    pub intermediate_symlinks: IntermediateSymlinks,
+}
 
 /// Operations on one configured storage instance, using instance-local addresses.
 /// Optional operations default to UnsupportedOperation. Implementors reject
@@ -44,9 +53,22 @@ pub trait Storage: Send + Sync {
     /// cache a validated, bounded value during open; this getter performs no I/O.
     fn chunk_size(&self) -> NonZeroUsize;
 
-    /// Retrieve entry metadata without following its final symbolic link.
-    fn stat_entry(&self, _request: StorageStatEntryRequest) -> StorageFuture<'_, Entry> {
+    /// Retrieve metadata for the entry selected by the request's lookup policy.
+    fn stat_entry(
+        &self,
+        _request: StatRequest,
+        _context: LookupContext,
+    ) -> StorageFuture<'_, Entry> {
         unsupported(Operation::Stat)
+    }
+
+    /// Read the exact stored bytes of the selected link.
+    fn read_link(
+        &self,
+        _request: ReadLinkRequest,
+        _context: LookupContext,
+    ) -> StorageFuture<'_, LinkTarget> {
+        unsupported(Operation::ReadLink)
     }
 
     /// List immediate backend entries without merging VFS mount points.

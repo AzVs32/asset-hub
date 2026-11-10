@@ -3,7 +3,7 @@
 use crate::application::port::{Storage, StorageFileReader};
 use crate::domain::storage::{
     MAX_DIR_PAGE_LIMIT, StorageCreateDirRequest, StorageDirQuery, StorageMoveEntryRequest,
-    StorageReadFileRequest, StorageStatEntryRequest, StorageWriteFileRequest,
+    StorageReadFileRequest, StorageWriteFileRequest,
 };
 use ah_vfs_storage::RenameSupport;
 use ah_vfs_storage::{EntryType, StoragePath};
@@ -57,7 +57,13 @@ async fn mkdir(storage: &dyn Storage, name: &str) -> TestResult {
 
 async fn exists(storage: &dyn Storage, name: &str) -> TestResult<bool> {
     match storage
-        .stat_entry(StorageStatEntryRequest { path: path(name)? })
+        .stat_entry(
+            ah_vfs_storage::StatRequest::new(
+                (path(name)?).to_rooted_expr(),
+                ah_vfs_storage::SymlinkAction::Preserve,
+            ),
+            Default::default(),
+        )
         .await
     {
         Ok(_) => Ok(true),
@@ -178,7 +184,13 @@ pub async fn assert_create_dir_contract(storage: &dyn Storage) -> TestResult {
 
     for name in ["", "dir"] {
         let before = storage
-            .stat_entry(StorageStatEntryRequest { path: path(name)? })
+            .stat_entry(
+                ah_vfs_storage::StatRequest::new(
+                    (path(name)?).to_rooted_expr(),
+                    ah_vfs_storage::SymlinkAction::Preserve,
+                ),
+                Default::default(),
+            )
             .await?;
         let entry = storage
             .create_dir(StorageCreateDirRequest {
@@ -190,7 +202,13 @@ pub async fn assert_create_dir_contract(storage: &dyn Storage) -> TestResult {
         assert_eq!(entry.entry_type(), EntryType::Directory);
         assert_eq!(entry.modified(), before.modified());
         let after = storage
-            .stat_entry(StorageStatEntryRequest { path: path(name)? })
+            .stat_entry(
+                ah_vfs_storage::StatRequest::new(
+                    (path(name)?).to_rooted_expr(),
+                    ah_vfs_storage::SymlinkAction::Preserve,
+                ),
+                Default::default(),
+            )
             .await?;
         assert_eq!(after.entry_type(), before.entry_type());
         assert_eq!(after.modified(), before.modified());
@@ -219,7 +237,13 @@ pub async fn assert_create_dir_contract(storage: &dyn Storage) -> TestResult {
     for name in ["new", "new/parents", "new/parents/leaf"] {
         assert_eq!(
             storage
-                .stat_entry(StorageStatEntryRequest { path: path(name)? })
+                .stat_entry(
+                    ah_vfs_storage::StatRequest::new(
+                        (path(name)?).to_rooted_expr(),
+                        ah_vfs_storage::SymlinkAction::Preserve
+                    ),
+                    Default::default()
+                )
                 .await?
                 .entry_type(),
             EntryType::Directory
@@ -324,7 +348,13 @@ pub async fn assert_same_path_rename_contract(
         }
         for name in ["file", "dir"] {
             let before = storage
-                .stat_entry(StorageStatEntryRequest { path: path(name)? })
+                .stat_entry(
+                    ah_vfs_storage::StatRequest::new(
+                        (path(name)?).to_rooted_expr(),
+                        ah_vfs_storage::SymlinkAction::Preserve,
+                    ),
+                    Default::default(),
+                )
                 .await?;
             let result = storage
                 .move_entry(StorageMoveEntryRequest {
@@ -348,7 +378,13 @@ pub async fn assert_same_path_rename_contract(
                 );
             }
             let after = storage
-                .stat_entry(StorageStatEntryRequest { path: path(name)? })
+                .stat_entry(
+                    ah_vfs_storage::StatRequest::new(
+                        (path(name)?).to_rooted_expr(),
+                        ah_vfs_storage::SymlinkAction::Preserve,
+                    ),
+                    Default::default(),
+                )
                 .await?;
             assert_eq!(after.path(), before.path());
             assert_eq!(after.entry_type(), before.entry_type());

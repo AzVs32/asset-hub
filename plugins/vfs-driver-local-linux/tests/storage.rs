@@ -5,7 +5,7 @@ mod common;
 use ah_vfs::application::port::{Driver, Storage, StorageFileReader};
 use ah_vfs::domain::storage::{
     StorageCreateDirRequest, StorageDirQuery, StorageMoveEntryRequest, StorageReadFileRequest,
-    StorageRemoveEntryRequest, StorageStatEntryRequest, StorageWriteFileRequest,
+    StorageRemoveEntryRequest, StorageWriteFileRequest,
 };
 use ah_vfs_storage::WriteMode;
 use ah_vfs_storage::{EntryType, StoragePath};
@@ -68,23 +68,31 @@ async fn metadata_and_sorted_pagination_use_instance_relative_paths() -> TestRes
     std::fs::write(f.root.join("文件"), b"utf8")?;
     let root = f
         .storage
-        .stat_entry(StorageStatEntryRequest { path: path("")? })
+        .stat_entry(
+            ah_vfs_storage::StatRequest::new(
+                (path("")?).to_rooted_expr(),
+                ah_vfs_storage::SymlinkAction::Preserve,
+            ),
+            Default::default(),
+        )
         .await?;
     assert_eq!(root.entry_type(), EntryType::Directory);
     let file = f
         .storage
-        .stat_entry(StorageStatEntryRequest {
-            path: path("c.txt")?,
-        })
+        .stat_entry(
+            ah_vfs_storage::StatRequest::new(
+                (path("c.txt")?).to_rooted_expr(),
+                ah_vfs_storage::SymlinkAction::Preserve,
+            ),
+            Default::default(),
+        )
         .await?;
     assert_eq!(file.path().as_str(), "c.txt");
     assert_eq!(file.entry_type(), EntryType::file(Some(3)));
     assert!(file.modified().is_some());
     assert!(matches!(
         f.storage
-            .stat_entry(StorageStatEntryRequest {
-                path: path("missing")?
-            })
+            .stat_entry(ah_vfs_storage::StatRequest::new((path("missing")?).to_rooted_expr(), ah_vfs_storage::SymlinkAction::Preserve), Default::default())
             .await,
         Err(error) if error.failure() == Failure::Rejected(Rejection::NotFound)
     ));
@@ -623,7 +631,7 @@ async fn staging_names_are_hidden_and_cannot_be_accessed() -> TestResult {
     );
     assert!(matches!(
         f.storage
-            .stat_entry(StorageStatEntryRequest { path: path(&name)? })
+            .stat_entry(ah_vfs_storage::StatRequest::new((path(&name)?).to_rooted_expr(), ah_vfs_storage::SymlinkAction::Preserve), Default::default())
             .await,
         Err(error) if error.failure() == Failure::Rejected(Rejection::AccessDenied)
     ));
@@ -647,7 +655,7 @@ async fn staging_names_are_hidden_and_cannot_be_accessed() -> TestResult {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn symlinks_are_visible_as_links_but_never_followed() -> TestResult {
+async fn lookup_policy_controls_links_without_escaping_the_instance() -> TestResult {
     use std::os::unix::fs::symlink;
     let f = fixture().await?;
     let outside = tempfile::tempdir()?;
@@ -658,12 +666,37 @@ async fn symlinks_are_visible_as_links_but_never_followed() -> TestResult {
     for name in ["linked", "leaf", "dangling"] {
         assert_eq!(
             f.storage
-                .stat_entry(StorageStatEntryRequest { path: path(name)? })
+                .stat_entry(
+                    ah_vfs_storage::StatRequest::new(
+                        (path(name)?).to_rooted_expr(),
+                        ah_vfs_storage::SymlinkAction::Preserve
+                    ),
+                    Default::default()
+                )
                 .await?
                 .entry_type(),
             EntryType::Symlink
         );
     }
+    let target = f
+        .storage
+        .read_link(
+            ah_vfs_storage::ReadLinkRequest::new(ah_vfs_storage::PathExpr::parse("/dangling")?),
+            Default::default(),
+        )
+        .await?;
+    use std::os::unix::ffi::OsStrExt;
+    assert_eq!(
+        target.as_bytes(),
+        outside.path().join("missing").as_os_str().as_bytes()
+    );
+    assert!(matches!(
+        f.storage.stat_entry(
+            ah_vfs_storage::StatRequest::new(ah_vfs_storage::PathExpr::parse("/linked/file")?, ah_vfs_storage::SymlinkAction::FollowWithinInstance),
+            Default::default(),
+        ).await,
+        Err(error) if error.failure() == Failure::Rejected(Rejection::NotFound)
+    ));
     let page = f
         .storage
         .list_entries(StorageDirQuery::new(path("")?))
@@ -696,11 +729,12 @@ async fn symlinks_are_visible_as_links_but_never_followed() -> TestResult {
     ));
     assert!(matches!(
         f.storage
-            .stat_entry(StorageStatEntryRequest {
-                path: path("linked/file")?
+            .stat_entry(ah_vfs_storage::StatRequest::new((path("linked/file")?).to_rooted_expr(), ah_vfs_storage::SymlinkAction::Preserve), ah_vfs::application::port::LookupContext {
+                intermediate_symlinks: ah_vfs_storage::IntermediateSymlinks::Reject,
+                ..Default::default()
             })
             .await,
-        Err(error) if error.failure() == Failure::Rejected(Rejection::Unsupported)
+        Err(error) if error.failure() == Failure::Rejected(Rejection::SymlinkNotAllowed)
     ));
     assert!(
         f.storage

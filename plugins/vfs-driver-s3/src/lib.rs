@@ -141,8 +141,9 @@ impl GuestStorage for S3Storage {
             return Err(context.failure(Failure::Rejected(Rejection::Conflict)));
         }
         let value = match request {
-            p::StorageOp::Stat(p::Path { path }) => {
-                Value::Entry(encode_entry(&context, &client.stat(&path)?)?)
+            p::StorageOp::Stat(request) => {
+                let entry = api::direct_stat(request, |path| client.stat(path.as_str()))?;
+                Value::Entry(encode_entry(&context, &entry)?)
             }
             p::StorageOp::List(p::List { path, after, limit }) => {
                 let (entries, next_after) = client.list(&path, after.as_deref(), limit)?;

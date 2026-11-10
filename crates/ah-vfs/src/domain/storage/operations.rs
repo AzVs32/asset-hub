@@ -5,10 +5,6 @@ use ah_vfs_storage::{Entry, EntryName, StoragePath, WriteMode};
 use ah_vfs_storage::{Failure, Operation, Rejection, StorageError};
 use std::num::NonZeroUsize;
 
-pub struct StorageStatEntryRequest {
-    pub path: StoragePath,
-}
-
 /// Immediate children in ascending UTF-8 name order.
 ///
 /// `after` is the previous page's last name, exclusively. This is a live listing,

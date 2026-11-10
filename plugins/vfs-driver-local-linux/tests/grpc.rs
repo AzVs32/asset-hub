@@ -6,9 +6,7 @@ mod common;
 use ah_vfs::application::driver_catalog::DriverCatalog;
 use ah_vfs::application::dto::*;
 use ah_vfs::application::port::*;
-use ah_vfs::domain::storage::{
-    StorageReadFileRequest, StorageStatEntryRequest, StorageWriteFileRequest,
-};
+use ah_vfs::domain::storage::{StorageReadFileRequest, StorageWriteFileRequest};
 use ah_vfs_storage::StoragePath;
 use std::{
     io::{BufRead, BufReader},
@@ -182,9 +180,13 @@ async fn process_restart_rejects_old_resources_without_replaying_commit() -> Res
         .register(fresh.clone(), Default::default())
         .await?;
     let old = storage
-        .stat_entry(StorageStatEntryRequest {
-            path: StoragePath::root(),
-        })
+        .stat_entry(
+            ah_vfs_storage::StatRequest::new(
+                (StoragePath::root()).to_rooted_expr(),
+                ah_vfs_storage::SymlinkAction::Preserve,
+            ),
+            Default::default(),
+        )
         .await
         .err()
         .ok_or("old generation must fail")?;

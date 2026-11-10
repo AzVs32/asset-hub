@@ -1,13 +1,13 @@
 //! Directory-handle based local storage, with staged complete-file writes.
 
+use ah_vfs::application::port::LookupContext;
 use ah_vfs::application::port::{Storage, StorageFileReader, StorageFileWriter, StorageFuture};
 use ah_vfs::domain::storage::{
     StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageMoveEntryRequest,
-    StorageReadFileRequest, StorageRemoveEntryRequest, StorageStatEntryRequest,
-    StorageWriteFileRequest,
+    StorageReadFileRequest, StorageRemoveEntryRequest, StorageWriteFileRequest,
 };
-use ah_vfs_storage::Entry;
 use ah_vfs_storage::{BackendFailure, Failure, Operation, StorageError};
+use ah_vfs_storage::{Entry, StatRequest};
 
 use cap_std::fs::Dir;
 use std::num::NonZeroUsize;
@@ -17,6 +17,7 @@ use std::sync::Arc;
 mod file_reader;
 mod file_writer;
 mod fs;
+mod lookup;
 mod native;
 
 const CHUNK_SIZE: usize = 64 * 1024;
@@ -80,10 +81,10 @@ impl Storage for WindowsLocalStorage {
         NonZeroUsize::new(CHUNK_SIZE).unwrap_or(NonZeroUsize::MIN)
     }
 
-    fn stat_entry(&self, request: StorageStatEntryRequest) -> StorageFuture<'_, Entry> {
+    fn stat_entry(&self, request: StatRequest, context: LookupContext) -> StorageFuture<'_, Entry> {
         let dir = self.dir.clone();
         Box::pin(blocking(Operation::Stat, false, move || {
-            fs::stat_entry(&dir, request.path)
+            lookup::stat(&dir, request.lookup(), context)
         }))
     }
 

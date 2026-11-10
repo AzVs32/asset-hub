@@ -4,11 +4,10 @@ use ah_vfs::application::port::*;
 use ah_vfs::domain::InstanceId;
 use ah_vfs::domain::storage::{
     StorageCreateDirRequest, StorageDirQuery, StorageMoveEntryRequest, StorageReadFileRequest,
-    StorageRemoveEntryRequest, StorageStatEntryRequest, StorageWriteFileRequest,
+    StorageRemoveEntryRequest, StorageWriteFileRequest,
 };
-use ah_vfs_storage::WriteMode;
 use ah_vfs_storage::{BackendFailure, Failure, Operation, Rejection, StorageError};
-use ah_vfs_storage::{Permissions, StoragePath, XattrName, XattrWriteMode};
+use ah_vfs_storage::{Permissions, ReadLinkRequest, StoragePath, WriteMode, XattrName, XattrWriteMode};
 use futures_util::FutureExt;
 use std::{
     collections::HashMap,
@@ -71,6 +70,10 @@ impl Resources {
 fn missing(operation: Operation) -> DriverError {
     StorageError::without_effects(operation, Failure::Backend(BackendFailure::Closed), None).into()
 }
+fn invalid_lookup(cause: p::LookupValueError) -> DriverError {
+    LifecycleError::with_source(LifecycleFailure::InvalidRequest, cause).into()
+}
+
 fn path(s: &str) -> Result<StoragePath, DriverError> {
     StoragePath::parse(s).map_err(|cause| {
         LifecycleError::with_source(LifecycleFailure::InvalidRequest, cause).into()
@@ -665,11 +668,37 @@ impl Session {
     ) -> Result<p::Reply, DriverError> {
         let operation = op.storage_operation();
         let value = match op {
-            p::StorageOp::Stat(p::Path { path: raw }) => Value::Entry(c::entry(
-                operation,
-                s.stat_entry(StorageStatEntryRequest { path: path(&raw)? })
-                    .await?,
-            )?),
+            p::StorageOp::Stat(stat) => {
+                let (request, working_directory, intermediate_symlinks) =
+                    p::decode_stat(stat).map_err(invalid_lookup)?;
+                let context = LookupContext {
+                    working_directory,
+                    intermediate_symlinks,
+                };
+                Value::Entry(c::entry(operation, s.stat_entry(request, context).await?)?)
+            }
+            p::StorageOp::ReadLink(request) => {
+                let (operand, working_directory, intermediate_symlinks) =
+                    p::decode_lookup(request.lookup).map_err(invalid_lookup)?;
+                let context = LookupContext {
+                    working_directory,
+                    intermediate_symlinks,
+                };
+                let target = s.read_link(ReadLinkRequest::new(operand), context).await?;
+                let data = target.into_bytes();
+                if data.len() > p::MAX_DATA_BYTES {
+                    return Err(StorageError::without_effects(
+                        operation,
+                        Failure::Rejected(Rejection::LimitExceeded),
+                        None,
+                    )
+                    .into());
+                }
+                return Ok(p::Reply {
+                    result: Some(Value::Bytes(p::Empty {})),
+                    data,
+                });
+            }
             p::StorageOp::List(p::List {
                 path: raw,
                 after,

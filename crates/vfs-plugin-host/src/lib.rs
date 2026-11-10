@@ -11,11 +11,10 @@ use ah_vfs::application::dto::*;
 use ah_vfs::application::port::*;
 use ah_vfs::domain::storage::{
     StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageMoveEntryRequest,
-    StorageReadFileRequest, StorageRemoveEntryRequest, StorageStatEntryRequest,
-    StorageWriteFileRequest,
+    StorageReadFileRequest, StorageRemoveEntryRequest, StorageWriteFileRequest,
 };
-use ah_vfs_storage::WriteMode;
 use ah_vfs_storage::{Entry, Permissions, StoragePath, XattrName, XattrWriteMode};
+use ah_vfs_storage::{LinkTarget, ReadLinkRequest, StatRequest, WriteMode};
 use std::{
     collections::HashSet,
     future::Future,
@@ -544,6 +543,33 @@ impl RemoteStorage {
         }
     }
 }
+// When traversal cannot redirect the operand, verify the selected address
+// rather than accepting an arbitrary response for this request.
+fn expected_stat_address(request: &StatRequest, context: &LookupContext) -> Option<StoragePath> {
+    use ah_vfs_storage::{IntermediateSymlinks, LookupStart, PathComponent, SymlinkAction};
+    let operand = request.path();
+    let components = operand.components();
+    if !components.is_empty()
+        && request.lookup().final_symlink() == SymlinkAction::FollowWithinInstance
+        || components.len() > 1 && context.intermediate_symlinks != IntermediateSymlinks::Reject
+    {
+        return None;
+    }
+    let mut path = match operand.start() {
+        LookupStart::InstanceRoot => StoragePath::root(),
+        LookupStart::BaseDirectory => context.working_directory.clone(),
+    };
+    for component in components {
+        match component {
+            PathComponent::Name(name) => path = path.join(name).ok()?,
+            PathComponent::CurrentDirectory => {}
+            PathComponent::ParentDirectory => {
+                path = path.parent().unwrap_or_else(StoragePath::root)
+            }
+        }
+    }
+    Some(path)
+}
 impl Storage for RemoteStorage {
     fn is_stale(&self) -> bool {
         self.resource.runtime.is_stale()
@@ -565,15 +591,85 @@ impl Storage for RemoteStorage {
             .can_read()
             .then_some(self)
     }
-    fn stat_entry(&self, r: StorageStatEntryRequest) -> StorageFuture<'_, Entry> {
+    fn stat_entry(&self, request: StatRequest, context: LookupContext) -> StorageFuture<'_, Entry> {
         Box::pin(async move {
-            self.entry(
-                p::StorageOp::Stat(p::Path {
-                    path: r.path.as_str().into(),
-                }),
-                r.path,
-            )
-            .await
+            let op = Operation::Stat;
+            if !self.driver_info.capabilities().stat() {
+                return Err(StorageError::without_effects(
+                    op,
+                    Failure::Rejected(Rejection::Unsupported),
+                    None,
+                ));
+            }
+            let reply = self
+                .call(
+                    p::StorageOp::Stat(p::encode_stat(
+                        &request,
+                        &context.working_directory,
+                        context.intermediate_symlinks,
+                    )),
+                    vec![],
+                )
+                .await?;
+            match reply.result {
+                Some(Value::Entry(entry)) if reply.data.is_empty() => {
+                    let entry = convert::decode_entry(op, entry)
+                        .map_err(|source| convert::response_error(op, false, source))?;
+                    let lookup = request.lookup();
+                    if lookup
+                        .check_existing_target(entry.path(), entry.entry_type())
+                        .is_err()
+                        || (lookup.final_symlink()
+                            == ah_vfs_storage::SymlinkAction::FollowWithinInstance
+                            && entry.entry_type() == ah_vfs_storage::EntryType::Symlink)
+                    {
+                        return Err(bad_response(op, false));
+                    }
+                    if let Some(expected) = expected_stat_address(&request, &context)
+                        && entry.path() != &expected
+                    {
+                        return Err(bad_response(op, false));
+                    }
+                    Ok(entry)
+                }
+                _ => Err(bad_response(op, false)),
+            }
+        })
+    }
+
+    fn read_link(
+        &self,
+        request: ReadLinkRequest,
+        context: LookupContext,
+    ) -> StorageFuture<'_, LinkTarget> {
+        Box::pin(async move {
+            let op = Operation::ReadLink;
+            if !self.driver_info.capabilities().read_link() {
+                return Err(StorageError::without_effects(
+                    op,
+                    Failure::Rejected(Rejection::Unsupported),
+                    None,
+                ));
+            }
+            let lookup = p::encode_lookup(
+                request.path(),
+                &context.working_directory,
+                context.intermediate_symlinks,
+            );
+            let reply = self
+                .call(
+                    p::StorageOp::ReadLink(p::ReadLink {
+                        lookup: Some(lookup),
+                    }),
+                    vec![],
+                )
+                .await?;
+            match reply.result {
+                Some(Value::Bytes(_)) if reply.data.len() <= p::MAX_DATA_BYTES => {
+                    Ok(LinkTarget::new(reply.data))
+                }
+                _ => Err(bad_response(op, false)),
+            }
         })
     }
     fn create_dir(&self, r: StorageCreateDirRequest) -> StorageFuture<'_, Entry> {

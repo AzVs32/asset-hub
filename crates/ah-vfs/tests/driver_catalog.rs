@@ -14,8 +14,7 @@ use ah_vfs::domain::namespace::{
 };
 use ah_vfs::domain::storage::{
     StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageMoveEntryRequest,
-    StorageReadFileRequest, StorageRemoveEntryRequest, StorageStatEntryRequest,
-    StorageWriteFileRequest,
+    StorageReadFileRequest, StorageRemoveEntryRequest, StorageWriteFileRequest,
 };
 use ah_vfs::domain::{DriverInstance, DriverKey, DriverKeyError, InstanceId};
 use ah_vfs_storage::Entry;
@@ -47,7 +46,11 @@ impl Storage for TestStorage {
     fn chunk_size(&self) -> NonZeroUsize {
         NonZeroUsize::MIN
     }
-    fn stat_entry(&self, _: StorageStatEntryRequest) -> StorageFuture<'_, Entry> {
+    fn stat_entry(
+        &self,
+        _: ah_vfs_storage::StatRequest,
+        _: ah_vfs::application::port::LookupContext,
+    ) -> StorageFuture<'_, Entry> {
         unsupported(Operation::Stat)
     }
     fn list_entries(&self, _: StorageDirQuery) -> StorageFuture<'_, StorageDirPage> {

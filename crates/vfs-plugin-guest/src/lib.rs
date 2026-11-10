@@ -8,6 +8,7 @@ pub mod api {
     use super::*;
     pub use crate::error::Failure;
     pub use crate::error_context::ErrorContext;
+    pub use crate::lookup::direct_stat;
     pub type Result<T> = std::result::Result<T, Failure>;
     pub trait Guest {
         fn describe() -> p::Description;
@@ -372,5 +373,6 @@ macro_rules! export_plugin {
 }
 
 mod error_context;
+mod lookup;
 
 mod error;

@@ -10,10 +10,9 @@ use crate::application::port::{
 };
 use crate::application::service::{EntryService, InstanceService, MountService};
 use crate::domain::namespace::{ChildMountPolicy, MountId, MountTableError, VirtualPath};
-use crate::domain::storage::StorageStatEntryRequest;
 use crate::domain::{DriverKey, InstanceId};
 use ah_vfs_storage::Capabilities;
-use ah_vfs_storage::{Entry, EntryType};
+use ah_vfs_storage::{Entry, EntryType, StoragePath};
 use std::{
     error::Error,
     future::{Future, pending, poll_fn},
@@ -132,9 +131,21 @@ impl Storage for TestStorage {
     fn chunk_size(&self) -> NonZeroUsize {
         NonZeroUsize::MIN
     }
-    fn stat_entry(&self, request: StorageStatEntryRequest) -> StorageFuture<'_, Entry> {
+    fn stat_entry(
+        &self,
+        request: ah_vfs_storage::StatRequest,
+        _: crate::application::port::LookupContext,
+    ) -> StorageFuture<'_, Entry> {
         Box::pin(async move {
-            Entry::new(request.path, EntryType::file(Some(1)), None).map_err(|cause| {
+            let operand = request.path().to_string();
+            let path = StoragePath::parse(operand.trim_start_matches('/')).map_err(|cause| {
+                StorageError::without_effects(
+                    Operation::Stat,
+                    Failure::Contract(ContractViolation::InvalidEntry),
+                    Some(Box::new(cause)),
+                )
+            })?;
+            Entry::new(path, EntryType::file(Some(1)), None).map_err(|cause| {
                 StorageError::without_effects(
                     Operation::Stat,
                     Failure::Contract(ContractViolation::InvalidResponse),

@@ -3,8 +3,7 @@ use ah_vfs::application::dto::*;
 use ah_vfs::application::port::*;
 use ah_vfs::domain::InstanceId;
 use ah_vfs::domain::storage::{
-    StorageReadFileRequest, StorageRemoveEntryRequest, StorageStatEntryRequest,
-    StorageWriteFileRequest,
+    StorageReadFileRequest, StorageRemoveEntryRequest, StorageWriteFileRequest,
 };
 use ah_vfs_storage::{
     BackendFailure, ContractViolation, Failure, Operation, Rejection, StorageError,
@@ -140,8 +139,20 @@ impl Storage for BackendStorage {
     fn chunk_size(&self) -> NonZeroUsize {
         NonZeroUsize::MIN
     }
-    fn stat_entry(&self, request: StorageStatEntryRequest) -> StorageFuture<'_, Entry> {
+    fn stat_entry(
+        &self,
+        request: ah_vfs_storage::StatRequest,
+        _: ah_vfs::application::port::LookupContext,
+    ) -> StorageFuture<'_, Entry> {
         Box::pin(async move {
+            let operand = request.path().to_string();
+            let path = StoragePath::parse(operand.trim_start_matches('/')).map_err(|cause| {
+                StorageError::without_effects(
+                    Operation::Stat,
+                    Failure::Contract(ContractViolation::InvalidEntry),
+                    Some(Box::new(cause)),
+                )
+            })?;
             if self.faults.invalid_stat.load(Ordering::SeqCst) {
                 return Err(StorageError::without_effects(
                     Operation::Stat,
@@ -156,12 +167,7 @@ impl Storage for BackendStorage {
                     None,
                 ));
             }
-            Entry::new(
-                request.path,
-                EntryType::file(Some(self.marker as u64)),
-                None,
-            )
-            .map_err(|cause| {
+            Entry::new(path, EntryType::file(Some(self.marker as u64)), None).map_err(|cause| {
                 StorageError::without_effects(
                     Operation::Stat,
                     Failure::Contract(ContractViolation::InvalidResponse),
@@ -293,9 +299,13 @@ async fn open(driver: &PluginDriver) -> Result<Arc<dyn Storage>> {
 }
 async fn stat(storage: &dyn Storage) -> Result<u64> {
     let entry = storage
-        .stat_entry(StorageStatEntryRequest {
-            path: StoragePath::parse("file")?,
-        })
+        .stat_entry(
+            ah_vfs_storage::StatRequest::new(
+                (StoragePath::parse("file")?).to_rooted_expr(),
+                ah_vfs_storage::SymlinkAction::Preserve,
+            ),
+            Default::default(),
+        )
         .await?;
     match entry.entry_type() {
         EntryType::File {
@@ -955,8 +965,13 @@ async fn idle_storage_needs_no_renewal_and_keeps_its_concurrency_slot() -> Resul
         .call(
             Op::Storage(p::StorageCall {
                 handle: 1,
-                operation: Some(p::StorageOp::Stat(p::Path {
-                    path: "file".into(),
+                operation: Some(p::StorageOp::Stat(p::Stat {
+                    lookup: Some(p::Lookup {
+                        operand: "/file".into(),
+                        working_directory: String::new(),
+                        intermediate_links: p::IntermediateLink::FollowIntermediate.into(),
+                    }),
+                    final_link: p::FinalLink::PreserveFinal.into(),
                 })),
             }),
             vec![],

@@ -8,12 +8,12 @@ use std::{pin::Pin, sync::Arc};
 use tokio::sync::mpsc;
 use tokio_stream::{Stream, wrappers::ReceiverStream};
 use tonic::{Request, Response, Status};
-use vfs_driver_memory::{ContractReader, ContractStorage, ContractWriter};
+use vfs_driver_memory::{ContractReader, ContractWriter, MemoryStorage};
 pub use vfs_plugin_grpc_wire::storage_contract as wire;
 use wire::{command::Action, reply::Result as Reply};
 
 pub fn service(
-    storage: Arc<ContractStorage>,
+    storage: Arc<MemoryStorage>,
     token: &str,
     limits: ServerLimits,
 ) -> Result<wire::storage_contract_server::StorageContractServer<ContractService>, DriverError> {
@@ -29,7 +29,7 @@ pub fn service(
 }
 
 pub struct ContractService {
-    storage: Arc<ContractStorage>,
+    storage: Arc<MemoryStorage>,
     token: AuthToken,
     admission: Arc<limits::Admission>,
 }
@@ -134,7 +134,7 @@ struct Listing {
 }
 
 struct Session {
-    storage: Arc<ContractStorage>,
+    storage: Arc<MemoryStorage>,
     listing: Option<Listing>,
     reader: Option<ContractReader>,
     writer: Option<ContractWriter>,
@@ -180,21 +180,6 @@ impl Session {
         };
         let unit = || Reply::Unit(wire::Unit {});
         match frame.action.ok_or_else(invalid_request)? {
-            Action::Stat(request) => {
-                let final_link = match wire::FinalLink::try_from(request.final_link) {
-                    Ok(wire::FinalLink::Follow) => d::SymlinkAction::FollowWithinInstance,
-                    Ok(wire::FinalLink::Preserve) => d::SymlinkAction::Preserve,
-                    _ => return Err(invalid_request().into()),
-                };
-                let request = d::StatRequest::new(path(&request.path)?, final_link);
-                entry(d::Operation::Stat, self.storage.stat(&request, links)?)
-            }
-            Action::ReadLink(request) => {
-                let request = d::ReadLinkRequest::new(path(&request.path)?);
-                Ok(Reply::LinkTarget(
-                    self.storage.read_link(&request, links)?.into_bytes(),
-                ))
-            }
             Action::BeginRead(request) => {
                 let range = d::ReadRange::new(request.offset, request.length)
                     .map_err(|_| invalid_request())?;
@@ -329,9 +314,6 @@ impl Session {
                     d::AttributeAction::GetPermissions,
                 );
                 let op = request.operation();
-                if self.storage.capabilities().supports(op) {
-                    return Err(Status::internal("unsupported permission declaration").into());
-                }
                 Err(reject(op, d::Rejection::Unsupported).into())
             }
         }

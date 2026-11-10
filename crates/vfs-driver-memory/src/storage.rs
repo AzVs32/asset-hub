@@ -1,15 +1,15 @@
 use crate::Capacity;
+use ah_vfs::application::port::LookupContext;
 use ah_vfs::application::port::{Storage, StorageFileReader, StorageFileWriter, StorageFuture};
 use ah_vfs::domain::storage::{
     StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageMoveEntryRequest,
-    StorageReadFileRequest, StorageRemoveEntryRequest, StorageStatEntryRequest,
-    StorageWriteFileRequest,
+    StorageReadFileRequest, StorageRemoveEntryRequest, StorageWriteFileRequest,
 };
 use ah_vfs_storage::WriteMode;
 use ah_vfs_storage::{
     BackendFailure, ContractViolation, Failure, Operation, Rejection, StorageError,
 };
-use ah_vfs_storage::{Entry, EntryType, StoragePath};
+use ah_vfs_storage::{Entry, EntryType, LinkTarget, ReadLinkRequest, StatRequest, StoragePath};
 use std::{
     collections::BTreeMap,
     num::NonZeroUsize,
@@ -288,17 +288,16 @@ impl Storage for MemoryStorage {
         NonZeroUsize::new(CHUNK_SIZE).unwrap_or(NonZeroUsize::MIN)
     }
 
-    fn stat_entry(&self, request: StorageStatEntryRequest) -> StorageFuture<'_, Entry> {
-        Box::pin(async move {
-            let operation = Operation::Stat;
-            let entries = self.shared.lock(operation)?;
-            require_parents(operation, &entries, &request.path)?;
-            entries
-                .get(request.path.as_str())
-                .ok_or_else(|| error(operation, Failure::Rejected(Rejection::NotFound)))?
-                .metadata(request.path)
-                .map_err(|cause| metadata_error(operation, cause))
-        })
+    fn stat_entry(&self, request: StatRequest, context: LookupContext) -> StorageFuture<'_, Entry> {
+        Box::pin(async move { self.stat_selected(&request, context) })
+    }
+
+    fn read_link(
+        &self,
+        request: ReadLinkRequest,
+        context: LookupContext,
+    ) -> StorageFuture<'_, LinkTarget> {
+        Box::pin(async move { self.read_link_selected(&request, context) })
     }
 
     fn list_entries(&self, query: StorageDirQuery) -> StorageFuture<'_, StorageDirPage> {

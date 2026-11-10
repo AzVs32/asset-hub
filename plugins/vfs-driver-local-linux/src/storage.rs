@@ -1,15 +1,15 @@
 //! Directory-handle based local storage, with staged complete-file writes.
 
+use ah_vfs::application::port::LookupContext;
 use ah_vfs::application::port::{
     Storage, StorageFileReader, StorageFileWriter, StorageFuture, StoragePermissions, StorageXattrs,
 };
 use ah_vfs::domain::storage::{
     StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageMoveEntryRequest,
-    StorageReadFileRequest, StorageRemoveEntryRequest, StorageStatEntryRequest,
-    StorageWriteFileRequest,
+    StorageReadFileRequest, StorageRemoveEntryRequest, StorageWriteFileRequest,
 };
-use ah_vfs_storage::Entry;
 use ah_vfs_storage::{BackendFailure, Failure, Operation, StorageError};
+use ah_vfs_storage::{Entry, LinkTarget, ReadLinkRequest, StatRequest};
 
 use cap_std::fs::Dir;
 use std::num::NonZeroUsize;
@@ -20,6 +20,7 @@ mod attributes;
 mod file_reader;
 mod file_writer;
 mod fs;
+mod lookup;
 
 const CHUNK_SIZE: usize = 64 * 1024;
 // This namespace is inaccessible through Storage and omitted from listings.
@@ -46,7 +47,7 @@ async fn blocking<T: Send + 'static>(
         })?
 }
 
-/// An opened directory capability. Requests never follow symbolic links.
+/// An opened directory capability. Metadata operations apply their explicit lookup policy.
 ///
 /// Directory handles pin the accessed directories even if paths are renamed.
 /// Reads and writes retain their own resources independently of this object.
@@ -89,10 +90,21 @@ impl Storage for LinuxLocalStorage {
         NonZeroUsize::new(CHUNK_SIZE).unwrap_or(NonZeroUsize::MIN)
     }
 
-    fn stat_entry(&self, request: StorageStatEntryRequest) -> StorageFuture<'_, Entry> {
+    fn stat_entry(&self, request: StatRequest, context: LookupContext) -> StorageFuture<'_, Entry> {
         let dir = self.dir.clone();
         Box::pin(blocking(Operation::Stat, false, move || {
-            fs::stat_entry(&dir, request.path)
+            lookup::stat(&dir, request.lookup(), context)
+        }))
+    }
+
+    fn read_link(
+        &self,
+        request: ReadLinkRequest,
+        context: LookupContext,
+    ) -> StorageFuture<'_, LinkTarget> {
+        let dir = self.dir.clone();
+        Box::pin(blocking(Operation::ReadLink, false, move || {
+            lookup::read_link(&dir, request.lookup(), context)
         }))
     }
 

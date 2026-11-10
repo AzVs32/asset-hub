@@ -4,6 +4,7 @@ use super::{
     file_reader::MemoryFileReader,
 };
 use crate::Capacity;
+use ah_vfs::application::port::LookupContext;
 use ah_vfs_storage::*;
 use std::{
     collections::{BTreeMap, btree_map::Entry as MapEntry},
@@ -13,21 +14,14 @@ use std::{
 
 type Nodes = BTreeMap<String, MemoryEntry>;
 
-/// One isolated instance. The working directory for this entry point is its root.
-pub struct ContractStorage {
-    shared: Arc<Shared>,
-}
-
-impl ContractStorage {
+impl MemoryStorage {
     /// Provision an empty instance with optional native links at its root.
     /// Links are bootstrap metadata and each target is bounded to one chunk.
-    pub fn new(
+    pub fn with_root_links(
         capacity: Capacity,
         links: impl IntoIterator<Item = (EntryName, LinkTarget)>,
     ) -> Result<Self, StorageError> {
-        let storage = Self {
-            shared: MemoryStorage::new(capacity).shared,
-        };
+        let storage = Self::new(capacity);
         let mut nodes = storage.lock(Operation::ReadLink)?;
         for (name, target) in links {
             if target.as_bytes().len() > CHUNK_SIZE {
@@ -45,47 +39,41 @@ impl ContractStorage {
         Ok(storage)
     }
 
-    pub fn capabilities(&self) -> Capabilities {
+    pub(crate) fn supported_capabilities() -> Capabilities {
         Capabilities::default()
             .with_stat(true)
             .with_list(true)
             .with_read_link(true)
             .with_read(ReadSupport::Range)
             .with_remove(true)
+            .with_rename(RenameSupport::Both)
             .with_directories(DirectorySupport::hierarchical(true, true))
             .with_write(WriteSupport::staged(WriteModes::Both, true))
-    }
-
-    pub fn used_bytes(&self) -> u64 {
-        self.shared
-            .quota
-            .used
-            .load(std::sync::atomic::Ordering::Acquire)
     }
 
     fn lock(&self, operation: Operation) -> Result<MutexGuard<'_, Nodes>, StorageError> {
         lock(&self.shared, operation)
     }
 
-    pub fn stat(
+    pub(super) fn stat_selected(
         &self,
         request: &StatRequest,
-        links: IntermediateSymlinks,
+        context: LookupContext,
     ) -> Result<Entry, StorageError> {
         let op = Operation::Stat;
         let mut nodes = self.lock(op)?;
-        let path = select(&mut nodes, request.lookup(), links, op)?;
+        let path = select_with_context(&mut nodes, request.lookup(), &context, op)?;
         metadata(path.clone(), existing(&nodes, &path, op)?, op)
     }
 
-    pub fn read_link(
+    pub(super) fn read_link_selected(
         &self,
         request: &ReadLinkRequest,
-        links: IntermediateSymlinks,
+        context: LookupContext,
     ) -> Result<LinkTarget, StorageError> {
         let op = Operation::ReadLink;
         let mut nodes = self.lock(op)?;
-        let path = select(&mut nodes, request.lookup(), links, op)?;
+        let path = select_with_context(&mut nodes, request.lookup(), &context, op)?;
         match &existing(&nodes, &path, op)?.data {
             EntryData::Link(target) => Ok(target.clone()),
             _ => Err(rejected(op, Rejection::NotSymlink)),
@@ -98,7 +86,7 @@ impl ContractStorage {
         links: IntermediateSymlinks,
     ) -> Result<ContractReader, StorageError> {
         let op = Operation::Read;
-        self.capabilities()
+        Self::supported_capabilities()
             .require_read(request)
             .map_err(|cause| rejected(op, cause))?;
         let mut nodes = self.lock(op)?;
@@ -210,7 +198,7 @@ impl ContractStorage {
         links: IntermediateSymlinks,
     ) -> Result<ContractWriter, StorageError> {
         let op = Operation::Write;
-        self.capabilities()
+        Self::supported_capabilities()
             .require_write(request)
             .map_err(|cause| rejected(op, cause))?;
         let mut nodes = self.lock(op)?;
@@ -391,6 +379,24 @@ fn select(
         .map_err(|failure| StorageError::without_effects(op, failure, None))
 }
 
+fn select_with_context(
+    nodes: &mut Nodes,
+    lookup: PathLookup<'_>,
+    context: &LookupContext,
+    op: Operation,
+) -> Result<StoragePath, StorageError> {
+    if lookup.path().start() == LookupStart::BaseDirectory
+        && directory(nodes, &context.working_directory).is_none()
+    {
+        return Err(stale(op));
+    }
+    // The namespace lock binds the base and selected entry until the caller
+    // has obtained metadata or copied the link bytes.
+    Walk::new(nodes, lookup, context.intermediate_symlinks)
+        .start_at(&context.working_directory)
+        .map_err(|failure| StorageError::without_effects(op, failure, None))
+}
+
 struct Walk<'a, 'r> {
     nodes: &'a mut Nodes,
     lookup: PathLookup<'r>,
@@ -411,7 +417,11 @@ impl<'a, 'r> Walk<'a, 'r> {
     }
 
     fn start(&mut self) -> Result<StoragePath, Failure> {
-        let path = self.segment(self.lookup.path(), &StoragePath::root(), &[], false)?;
+        self.start_at(&StoragePath::root())
+    }
+
+    fn start_at(&mut self, base: &StoragePath) -> Result<StoragePath, Failure> {
+        let path = self.segment(self.lookup.path(), base, &[], false)?;
         if let Some(entry) = self.nodes.get(path.as_str()) {
             self.lookup
                 .check_existing_target(&path, entry.entry_type())

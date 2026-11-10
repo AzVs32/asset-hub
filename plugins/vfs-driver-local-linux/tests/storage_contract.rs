@@ -6,11 +6,12 @@ mod common;
 #[cfg(unix)]
 use ah_vfs::application::driver_catalog::DriverCatalog;
 use ah_vfs::application::driver_error::DriverError;
+use ah_vfs::application::dto::MountRequest;
 use ah_vfs::application::error::EntryError;
 use ah_vfs::application::port::{Driver, Storage};
 use ah_vfs::application::service::{EntryService, MountService};
 use ah_vfs::domain::namespace::VirtualPath;
-use ah_vfs::domain::storage::{StorageStatEntryRequest, StorageWriteFileRequest};
+use ah_vfs::domain::storage::StorageWriteFileRequest;
 use ah_vfs::domain::{DriverInstance, DriverKey, InstanceId};
 use ah_vfs::infrastructure::mount_repository::SqliteMountRepository;
 use ah_vfs_storage::{Permissions, StoragePath, XattrName, XattrWriteMode};
@@ -60,19 +61,20 @@ fn path(name: &str) -> Result<StoragePath, Box<dyn Error>> {
     Ok(StoragePath::parse(name)?)
 }
 #[cfg(unix)]
-async fn service(f: &Fixture) -> Result<EntryService, Box<dyn Error>> {
+async fn services(f: &Fixture) -> Result<(EntryService, MountService), Box<dyn Error>> {
     let repository = Arc::new(SqliteMountRepository::in_memory().await?);
     let mut catalog = DriverCatalog::new();
     ah_vfs::testing::register_driver(&mut catalog, f.driver.clone())?;
     let catalog = Arc::new(catalog);
     let runtime = Arc::new(MountRuntime::new(repository, catalog, Arc::new(ah_vfs::infrastructure::instance_record_repository::SqliteInstanceRecordRepository::from_pool(f.pool.clone()).await?), None));
-    MountService::new(runtime.clone())
+    let mounts = MountService::new(runtime.clone());
+    mounts
         .initialize_root(DriverInstance::new(
             DriverKey::parse("local")?,
             f.id.clone(),
         ))
         .await?;
-    Ok(EntryService::new(runtime))
+    Ok((EntryService::new(runtime), mounts))
 }
 
 #[tokio::test]
@@ -104,9 +106,13 @@ async fn io_and_opening_errors_keep_categories_and_original_sources() -> TestRes
     let f = fixture().await?;
     let error = f
         .storage
-        .stat_entry(StorageStatEntryRequest {
-            path: path("missing")?,
-        })
+        .stat_entry(
+            ah_vfs_storage::StatRequest::new(
+                (path("missing")?).to_rooted_expr(),
+                ah_vfs_storage::SymlinkAction::Preserve,
+            ),
+            Default::default(),
+        )
         .await
         .err()
         .ok_or("expected missing entry")?;
@@ -130,9 +136,13 @@ async fn io_and_opening_errors_keep_categories_and_original_sources() -> TestRes
     assert!(error.source().is_some());
     assert_eq!(
         f.storage
-            .stat_entry(StorageStatEntryRequest {
-                path: path("file")?
-            })
+            .stat_entry(
+                ah_vfs_storage::StatRequest::new(
+                    (path("file")?).to_rooted_expr(),
+                    ah_vfs_storage::SymlinkAction::Preserve
+                ),
+                Default::default()
+            )
             .await?
             .entry_type(),
         ah_vfs_storage::EntryType::file(Some(8))
@@ -162,7 +172,7 @@ async fn unavailable_root_is_normalized_before_returning_from_driver_open() -> T
 async fn permissions_round_trip_through_vfs_and_protect_mount_boundaries() -> TestResult {
     use std::os::unix::fs::PermissionsExt;
     let f = fixture().await?;
-    let entries = service(&f).await?;
+    let (entries, _) = services(&f).await?;
     for target in ["/file", "/dir"] {
         let target = VirtualPath::parse(target)?;
         entries
@@ -188,7 +198,7 @@ async fn permissions_round_trip_through_vfs_and_protect_mount_boundaries() -> Te
 async fn xattrs_support_binary_empty_and_bounded_values_with_atomic_existence_policies()
 -> TestResult {
     let f = fixture().await?;
-    let entries = service(&f).await?;
+    let (entries, _) = services(&f).await?;
     let target = VirtualPath::parse("/file")?;
     let name = XattrName::parse("user.asset-hub-test")?;
     let limit = NonZeroUsize::new(4096).ok_or("zero limit")?;
@@ -300,5 +310,43 @@ async fn attribute_access_never_follows_file_or_parent_symlinks() -> TestResult 
         }
     }
     assert_eq!(std::fs::metadata(outside_file)?.permissions().mode(), mode);
+    Ok(())
+}
+
+#[tokio::test]
+async fn stat_and_read_link_do_not_route_again_through_child_mounts() -> TestResult {
+    let f = fixture().await?;
+    let (entries, mounts) = services(&f).await?;
+    let other_root = f._dir.path().join("other");
+    std::fs::create_dir(&other_root)?;
+    std::fs::write(other_root.join("file"), b"mounted")?;
+    let other = f
+        .registry
+        .create(common::local_config(&other_root)?)
+        .await?;
+    mounts
+        .mount(MountRequest {
+            virtual_path: VirtualPath::parse("/mounted")?,
+            driver_instance: DriverInstance::new(DriverKey::parse("local")?, other.id.clone()),
+        })
+        .await?;
+
+    std::fs::create_dir(f.root.join("mounted"))?;
+    std::fs::write(f.root.join("mounted/file"), b"original in root instance")?;
+    std::os::unix::fs::symlink("/mounted", f.root.join("alias"))?;
+    let via_alias = entries
+        .stat_entry(&VirtualPath::parse("/alias/file")?)
+        .await?;
+    let via_mount = entries
+        .stat_entry(&VirtualPath::parse("/mounted/file")?)
+        .await?;
+    assert_eq!(via_alias.kind, ah_vfs_storage::EntryType::file(Some(25)));
+    assert_eq!(via_mount.kind, ah_vfs_storage::EntryType::file(Some(7)));
+    let target = entries.read_link(&VirtualPath::parse("/alias")?).await?;
+    assert_eq!(target.as_bytes(), b"/mounted");
+    assert!(matches!(
+        entries.read_link(&VirtualPath::parse("/mounted")?).await,
+        Err(EntryError::Storage(error)) if error.failure() == Failure::Rejected(Rejection::NotSymlink)
+    ));
     Ok(())
 }

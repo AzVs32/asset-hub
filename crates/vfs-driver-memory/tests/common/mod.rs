@@ -3,8 +3,7 @@ use ah_vfs_storage::{Failure, Rejection};
 
 use ah_vfs::application::port::{Storage, StorageFileReader};
 use ah_vfs::domain::storage::{
-    StorageCreateDirRequest, StorageReadFileRequest, StorageStatEntryRequest,
-    StorageWriteFileRequest,
+    StorageCreateDirRequest, StorageReadFileRequest, StorageWriteFileRequest,
 };
 use ah_vfs_storage::StoragePath;
 
@@ -72,7 +71,13 @@ pub async fn mkdir(storage: &dyn Storage, name: &str) -> TestResult {
 
 pub async fn exists(storage: &dyn Storage, name: &str) -> TestResult<bool> {
     match storage
-        .stat_entry(StorageStatEntryRequest { path: path(name)? })
+        .stat_entry(
+            ah_vfs_storage::StatRequest::new(
+                (path(name)?).to_rooted_expr(),
+                ah_vfs_storage::SymlinkAction::Preserve,
+            ),
+            Default::default(),
+        )
         .await
     {
         Ok(_) => Ok(true),

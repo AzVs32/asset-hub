@@ -21,7 +21,7 @@ pub(super) fn error(operation: Operation, error: io::Error) -> StorageError {
     )
 }
 
-fn validate(operation: Operation, path: &StoragePath) -> Result<(), StorageError> {
+pub(super) fn validate(operation: Operation, path: &StoragePath) -> Result<(), StorageError> {
     if path
         .entry_names()
         .any(|name| name.as_str().starts_with(TEMP_PREFIX))
@@ -135,20 +135,6 @@ pub(super) fn entry(
             Some(Box::new(cause)),
         )
     })
-}
-
-pub(super) fn stat_entry(root: &Dir, path: StoragePath) -> Result<Entry, StorageError> {
-    let operation = Operation::Stat;
-    let metadata = if path.is_root() {
-        root.dir_metadata()
-            .map_err(|cause| error(operation, cause))?
-    } else {
-        let (parent, name) = parent(operation, root, &path)?;
-        parent
-            .symlink_metadata(name)
-            .map_err(|cause| error(operation, cause))?
-    };
-    entry(operation, path, metadata)
 }
 
 pub(super) fn regular_file(operation: Operation, metadata: &Metadata) -> Result<(), StorageError> {

@@ -4,7 +4,7 @@ mod common;
 use ah_vfs::application::port::{Driver, Storage, validate_storage_extensions};
 use ah_vfs::domain::storage::{
     StorageCreateDirRequest, StorageDirQuery, StorageMoveEntryRequest, StorageReadFileRequest,
-    StorageRemoveEntryRequest, StorageStatEntryRequest, StorageWriteFileRequest,
+    StorageRemoveEntryRequest, StorageWriteFileRequest,
 };
 use ah_vfs_storage::EntryType;
 use ah_vfs_storage::{AttributeSupport, WriteMode};
@@ -27,7 +27,13 @@ async fn declarations_cover_all_ports_and_optional_attributes_are_absent() -> Te
     assert!(storage.xattrs().is_none());
     assert_eq!(storage.chunk_size().get(), 64 * 1024);
     let root = storage
-        .stat_entry(StorageStatEntryRequest { path: path("")? })
+        .stat_entry(
+            ah_vfs_storage::StatRequest::new(
+                (path("")?).to_rooted_expr(),
+                ah_vfs_storage::SymlinkAction::Preserve,
+            ),
+            Default::default(),
+        )
         .await?;
     assert_eq!(root.entry_type(), EntryType::Directory);
     Ok(())
@@ -327,9 +333,13 @@ async fn invalid_parents_types_and_root_mutations_have_domain_errors() -> TestRe
     );
     assert_eq!(
         storage
-            .stat_entry(StorageStatEntryRequest {
-                path: path("file/child")?
-            })
+            .stat_entry(
+                ah_vfs_storage::StatRequest::new(
+                    (path("file/child")?).to_rooted_expr(),
+                    ah_vfs_storage::SymlinkAction::Preserve
+                ),
+                Default::default()
+            )
             .await
             .err()
             .ok_or("parent")?

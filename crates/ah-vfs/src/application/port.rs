@@ -101,7 +101,7 @@ mod storage;
 pub use driver::{Driver, DriverFuture};
 pub use mount_repository::{MountRepository, MountRepositoryFuture};
 pub use storage::validate_storage_extensions;
-pub use storage::{Storage, StorageFileReader, StorageFileWriter, StorageFuture};
+pub use storage::{LookupContext, Storage, StorageFileReader, StorageFileWriter, StorageFuture};
 
 mod storage_attributes;
 pub use storage_attributes::{StoragePermissions, StorageXattrs};

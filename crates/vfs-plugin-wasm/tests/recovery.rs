@@ -2,9 +2,7 @@ use ah_vfs::application::driver_error::DriverError;
 use ah_vfs::application::driver_error::LifecycleFailure;
 use ah_vfs::application::port::*;
 use ah_vfs::domain::InstanceId;
-use ah_vfs::domain::storage::{
-    StorageReadFileRequest, StorageStatEntryRequest, StorageWriteFileRequest,
-};
+use ah_vfs::domain::storage::{StorageReadFileRequest, StorageWriteFileRequest};
 use ah_vfs_storage::{BackendFailure, Failure, Operation, Rejection, StorageError};
 use ah_vfs_storage::{Entry, StoragePath};
 use std::{future::poll_fn, sync::Arc, task::Poll, time::Duration};
@@ -14,7 +12,7 @@ use vfs_plugin_wasm::WasmTransport;
 type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 const INITIALIZE: &str =
     "global.get $initialized if unreachable end i32.const 1 global.set $initialized i32.const 16";
-const STAT: &str = "local.get $pos i32.const 6 i32.add i32.load8_u i32.const 104 i32.eq if (loop br 0) unreachable end local.get $pos i32.const 6 i32.add i32.load8_u i32.const 116 i32.eq if unreachable end i32.const 48";
+const STAT: &str = "local.get $pos i32.load8_u offset=1 i32.const 104 i32.eq if (loop br 0) unreachable end local.get $pos i32.load8_u offset=1 i32.const 116 i32.eq if unreachable end i32.const 48";
 fn fixture(prepare: &str, initialize: &str, stat: &str, commit: &str) -> Result<Vec<u8>> {
     let capabilities = vec![
         p::Capability::Stat as i32,
@@ -159,16 +157,21 @@ async fn open(driver: &PluginDriver, id: &str) -> Result<Arc<dyn Storage>> {
         .await?)
 }
 async fn stat(storage: &dyn Storage, path: &str) -> std::result::Result<Entry, StorageError> {
+    let path = StoragePath::parse(path).map_err(|cause| {
+        StorageError::without_effects(
+            Operation::Stat,
+            Failure::Rejected(Rejection::UnsupportedName),
+            Some(Box::new(cause)),
+        )
+    })?;
     storage
-        .stat_entry(StorageStatEntryRequest {
-            path: StoragePath::parse(path).map_err(|cause| {
-                StorageError::without_effects(
-                    Operation::Stat,
-                    Failure::Rejected(Rejection::UnsupportedName),
-                    Some(Box::new(cause)),
-                )
-            })?,
-        })
+        .stat_entry(
+            ah_vfs_storage::StatRequest::new(
+                path.to_rooted_expr(),
+                ah_vfs_storage::SymlinkAction::Preserve,
+            ),
+            Default::default(),
+        )
         .await
 }
 fn kind(error: DriverError) -> Result<LifecycleFailure> {

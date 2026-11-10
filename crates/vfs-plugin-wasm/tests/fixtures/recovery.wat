@@ -64,7 +64,15 @@
       global.get $initialized i32.const 1 i32.ne if unreachable end
       local.get $pos i32.const 2 i32.add i32.load8_u i32.const 98 i32.eq if unreachable end
       i32.const 32 return end
-    local.get $op i32.const 9 i32.eq if @@STAT@@ return end
+    local.get $op i32.const 9 i32.eq if
+      ;; The fixture always uses handle 1. Skip its tag/value and the
+      ;; tag/length pairs for Stat, Lookup, and the rooted operand.
+      local.get $pos i32.const 2 i32.add local.set $pos
+      i32.const 6 local.set $size
+      (loop $stat_field
+        local.get $pos call $varint local.set $pos drop
+        local.get $size i32.const 1 i32.sub local.tee $size br_if $stat_field)
+      @@STAT@@ return end
     local.get $op i32.const 10 i32.eq if
       global.get $next i32.const 1 i32.add global.set $next
       i32.const @@READER_HANDLE@@ global.get $next i32.store8

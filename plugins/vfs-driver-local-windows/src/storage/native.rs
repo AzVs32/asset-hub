@@ -51,6 +51,10 @@ pub(super) fn open_public(
 /// Check the normalized long name as well as the requested name, preventing DOS
 /// 8.3 aliases from exposing the reserved staging namespace.
 pub(super) fn public_handle(operation: Operation, file: &File) -> Result<(), StorageError> {
+    actual_name(operation, file).map(drop)
+}
+
+pub(super) fn actual_name(operation: Operation, file: &File) -> Result<String, StorageError> {
     let mut buffer = vec![0u16; 512];
     loop {
         // SAFETY: the live file owns the handle; buffer contains the advertised
@@ -92,7 +96,7 @@ pub(super) fn public_handle(operation: Operation, file: &File) -> Result<(), Sto
                 None,
             ));
         }
-        return Ok(());
+        return Ok(name.to_owned());
     }
 }
 

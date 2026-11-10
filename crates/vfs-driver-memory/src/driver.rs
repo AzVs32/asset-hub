@@ -11,10 +11,6 @@ use ah_vfs::application::port::{
 };
 use ah_vfs::domain::DriverKey;
 use ah_vfs::domain::namespace::ChildMountPolicy;
-
-use ah_vfs_storage::{
-    Capabilities, DirectorySupport, ReadSupport, RenameSupport, WriteModes, WriteSupport,
-};
 use std::{collections::BTreeMap, sync::Arc};
 use tokio::sync::Mutex;
 
@@ -25,17 +21,6 @@ pub struct MemoryDriver {
     opened: Mutex<BTreeMap<String, Arc<MemoryStorage>>>,
 }
 impl MemoryDriver {
-    fn supported_capabilities() -> Capabilities {
-        Capabilities::default()
-            .with_stat(true)
-            .with_list(true)
-            .with_read(ReadSupport::Range)
-            .with_write(WriteSupport::staged(WriteModes::Both, true))
-            .with_directories(DirectorySupport::hierarchical(true, true))
-            .with_remove(true)
-            .with_rename(RenameSupport::Both)
-    }
-
     pub const KEY: &'static str = "memory";
     pub fn new() -> Result<Self, MemoryDriverError> {
         Ok(Self {
@@ -45,7 +30,7 @@ impl MemoryDriver {
                 .version(semver::Version::new(0, 1, 0))
                 .child_mount_policy(ChildMountPolicy::Allow)
                 .maybe_instance_config_schema(instance_config_schema())
-                .capabilities(Self::supported_capabilities())
+                .capabilities(MemoryStorage::supported_capabilities())
                 .build(),
             opened: Mutex::default(),
         })

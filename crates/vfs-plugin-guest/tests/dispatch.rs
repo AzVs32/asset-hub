@@ -336,8 +336,13 @@ fn readers_binary_data_and_generation_checks_do_not_rebind_resources() -> TestRe
         &mut dispatcher,
         Op::Storage(p::StorageCall {
             handle: storage,
-            operation: Some(p::StorageOp::Stat(p::Path {
-                path: "file".into(),
+            operation: Some(p::StorageOp::Stat(p::Stat {
+                lookup: Some(p::Lookup {
+                    operand: "/file".into(),
+                    working_directory: String::new(),
+                    intermediate_links: p::IntermediateLink::FollowIntermediate.into(),
+                }),
+                final_link: p::FinalLink::PreserveFinal.into(),
             })),
         }),
         vec![],

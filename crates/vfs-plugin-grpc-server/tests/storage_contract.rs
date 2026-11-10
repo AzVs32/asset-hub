@@ -1,3 +1,4 @@
+use ah_vfs::application::{driver_info::DriverInfo, port::*};
 use ah_vfs_storage as d;
 use hyper_util::rt::TokioIo;
 use std::{error::Error, future::ready, io, sync::Arc, time::Duration};
@@ -7,19 +8,40 @@ use tonic::{
     Request, Streaming,
     transport::{Channel, Endpoint, Server},
 };
-use vfs_driver_memory::{Capacity, CapacityUnit, ContractStorage};
+use vfs_driver_memory::{Capacity, CapacityUnit, MemoryDriver, MemoryStorage};
 use vfs_plugin_grpc_server::{
     ServerLimits,
+    dispatch::Dispatcher,
     storage_contract::{service, wire},
 };
+use vfs_plugin_protocol as p;
 use wire::{command::Action, reply::Result as Reply};
 
 type TestResult<T = ()> = Result<T, Box<dyn Error>>;
 const TIMEOUT: Duration = Duration::from_secs(5);
 
+struct BoundMemory {
+    driver: MemoryDriver,
+    storage: Arc<MemoryStorage>,
+}
+impl Driver for BoundMemory {
+    fn info(&self) -> &DriverInfo {
+        self.driver.info()
+    }
+
+    fn provisioner(&self) -> Arc<dyn InstanceProvisioner> {
+        self.driver.provisioner()
+    }
+
+    fn open(&self, _: OpenContext) -> DriverFuture<'_, Arc<dyn Storage>> {
+        Box::pin(async { Ok(self.storage.clone() as Arc<dyn Storage>) })
+    }
+}
+
 struct Fixture {
-    storage: Arc<ContractStorage>,
+    storage: Arc<MemoryStorage>,
     channel: Channel,
+    generation: String,
     task: tokio::task::JoinHandle<Result<(), tonic::transport::Error>>,
 }
 impl Fixture {
@@ -39,11 +61,26 @@ impl Fixture {
         })
         .into_iter()
         .collect::<Result<Vec<_>, d::NameError>>()?;
-        let storage = Arc::new(ContractStorage::new(
+        let storage = Arc::new(MemoryStorage::with_root_links(
             Capacity::new(quota, CapacityUnit::B)?,
             links,
         )?);
         let service = service(storage.clone(), "storage-test", ServerLimits::default())?;
+        let dispatcher = Arc::new(Dispatcher::new(Arc::new(BoundMemory {
+            driver: MemoryDriver::new()?,
+            storage: storage.clone(),
+        }))?);
+        let generation = dispatcher.generation();
+        dispatcher
+            .call(
+                &generation,
+                p::Operation::Initialize(p::Initialize {
+                    settings: Some(Default::default()),
+                }),
+                vec![],
+            )
+            .await?;
+        let formal = vfs_plugin_grpc_server::service(dispatcher, "storage-test")?;
         // Run the actual HTTP/2 and Protobuf stack without listening on a port.
         let (client, server) = tokio::io::duplex(64 * 1024);
         let incoming =
@@ -51,6 +88,7 @@ impl Fixture {
         let task = tokio::spawn(async move {
             Server::builder()
                 .add_service(service)
+                .add_service(formal)
                 .serve_with_incoming(incoming)
                 .await
         });
@@ -69,6 +107,7 @@ impl Fixture {
         Ok(Self {
             storage,
             channel,
+            generation,
             task,
         })
     }
@@ -87,6 +126,39 @@ impl Fixture {
             .await??
             .into_inner();
         Ok(Session { tx, replies })
+    }
+
+    async fn formal_session(&self) -> TestResult<FormalSession> {
+        use vfs_plugin_grpc_server::wire::plugin_client::PluginClient;
+        let mut client = PluginClient::new(self.channel.clone());
+        let (tx, rx) = mpsc::channel(1);
+        tx.send(p::to_request(
+            &self.generation,
+            &p::Operation::Open(p::Open {
+                id: "fixture".into(),
+                config: Some(Default::default()),
+            }),
+            vec![],
+        )?)
+        .await?;
+        let mut request = Request::new(ReceiverStream::new(rx));
+        request
+            .metadata_mut()
+            .insert("authorization", "Bearer storage-test".parse()?);
+        let mut replies = tokio::time::timeout(TIMEOUT, client.session(request))
+            .await??
+            .into_inner();
+        let opened = tokio::time::timeout(TIMEOUT, replies.message())
+            .await??
+            .ok_or("missing Open response")?;
+        let Some(p::Value::Storage(opened)) = opened.result else {
+            return Err("formal session did not open".into());
+        };
+        Ok(FormalSession {
+            tx,
+            replies,
+            handle: opened.handle,
+        })
     }
 
     async fn wait_for_used(&self, expected: u64) -> TestResult {
@@ -110,15 +182,11 @@ struct Session {
     replies: Streaming<wire::Reply>,
 }
 impl Session {
-    async fn exchange(
-        &mut self,
-        action: Action,
-        reject_intermediate_links: bool,
-    ) -> TestResult<Reply> {
+    async fn call(&mut self, action: Action) -> TestResult<Reply> {
         self.tx
             .send(wire::Command {
                 action: Some(action),
-                reject_intermediate_links,
+                reject_intermediate_links: false,
             })
             .await?;
         Ok(tokio::time::timeout(TIMEOUT, self.replies.message())
@@ -126,9 +194,6 @@ impl Session {
             .ok_or("session closed")?
             .result
             .ok_or("missing reply")?)
-    }
-    async fn call(&mut self, action: Action) -> TestResult<Reply> {
-        self.exchange(action, false).await
     }
     async fn entry(&mut self, action: Action) -> TestResult<d::Entry> {
         let Reply::Entry(entry) = self.call(action).await? else {
@@ -153,17 +218,66 @@ impl Session {
     }
 }
 
-fn stat(path: &str, follow: bool) -> Action {
-    let policy = if follow {
-        wire::FinalLink::Follow
-    } else {
-        wire::FinalLink::Preserve
-    };
-    Action::Stat(wire::Stat {
-        path: path.into(),
-        final_link: policy.into(),
+struct FormalSession {
+    tx: mpsc::Sender<p::Request>,
+    replies: Streaming<p::Reply>,
+    handle: u64,
+}
+impl FormalSession {
+    async fn call(&mut self, operation: p::StorageOp) -> TestResult<p::Reply> {
+        // Deliberately let the server validate even malformed test requests.
+        self.tx
+            .send(p::Request {
+                operation: Some(p::Operation::Storage(p::StorageCall {
+                    handle: self.handle,
+                    operation: Some(operation),
+                })),
+                ..Default::default()
+            })
+            .await?;
+        Ok(tokio::time::timeout(TIMEOUT, self.replies.message())
+            .await??
+            .ok_or("missing response")?)
+    }
+
+    async fn stat_entry(&mut self, op: p::StorageOp) -> TestResult<d::Entry> {
+        let Some(p::Value::Entry(entry)) = self.call(op).await?.result else {
+            return Err("expected formal Stat metadata".into());
+        };
+        Ok(p::decode_entry(entry)?)
+    }
+}
+
+fn lookup(path: &str, base: &str, links: p::IntermediateLink) -> p::Lookup {
+    p::Lookup {
+        operand: path.into(),
+        working_directory: base.into(),
+        intermediate_links: links.into(),
+    }
+}
+fn stat(path: &str, follow: bool) -> p::StorageOp {
+    p::StorageOp::Stat(p::Stat {
+        lookup: Some(lookup(path, "", p::IntermediateLink::FollowIntermediate)),
+        final_link: if follow {
+            p::FinalLink::FollowFinal
+        } else {
+            p::FinalLink::PreserveFinal
+        }
+        .into(),
     })
 }
+
+fn stat_failure(reply: p::Reply, cause: d::Failure) -> TestResult {
+    let Some(p::Value::Failure(failure)) = reply.result else {
+        return Err("expected formal Stat failure".into());
+    };
+    let failure = p::decode_storage_error(failure.storage.ok_or("missing Stat failure")?)?;
+    assert_eq!(failure.operation(), d::Operation::Stat);
+    assert_eq!(failure.failure(), cause);
+    assert_eq!(failure.outcome(), d::MutationOutcome::Unchanged);
+    Ok(())
+}
+
 fn mkdir(path: &str, recursive: bool) -> Action {
     Action::CreateDirectory(wire::CreateDirectory {
         path: path.into(),
@@ -243,76 +357,105 @@ async fn wire_page(session: &mut Session) -> TestResult<wire::Page> {
 }
 
 #[tokio::test]
-async fn paths_links_admission_and_wire_metadata() -> TestResult {
+async fn formal_lookup_preserves_policy_instance_and_link_bytes() -> TestResult {
     let fixture = Fixture::new(64).await?;
-    let mut session = fixture.session().await?;
-    session.entry(mkdir("/docs/sub", true)).await?;
-    let root = session.entry(stat("/../../", true)).await?;
+    let mut operations = fixture.session().await?;
+    operations.entry(mkdir("/docs/sub", true)).await?;
+    let mut formal = fixture.formal_session().await?;
+
+    let root = formal.stat_entry(stat("/../../", true)).await?;
     assert!(root.path().is_root());
     assert_eq!(root.entry_type(), d::EntryType::Directory);
     assert!(root.modified().is_some());
 
-    let link = session.entry(stat("alias", false)).await?;
+    let link = formal.stat_entry(stat("alias", false)).await?;
     assert_eq!(link.entry_type(), d::EntryType::Symlink);
     assert_eq!(
-        session
-            .entry(stat("alias//./sub/..", true))
+        formal
+            .stat_entry(stat("alias//./sub/..", true))
             .await?
             .path()
             .as_str(),
         "docs"
     );
-    rejected(
-        session.call(stat("alias/", false)).await?,
-        d::Operation::Stat,
-        d::Rejection::NotDirectory,
-    )?;
-    rejected(
-        session.exchange(stat("alias/sub", true), true).await?,
-        d::Operation::Stat,
-        d::Rejection::SymlinkNotAllowed,
-    )?;
     assert_eq!(
-        session.entry(stat("alias", true)).await?.path().as_str(),
+        formal
+            .stat_entry(stat("alias", true))
+            .await?
+            .path()
+            .as_str(),
         "docs"
     );
+    assert_eq!(
+        formal
+            .stat_entry(p::StorageOp::Stat(p::Stat {
+                lookup: Some(lookup(
+                    "../",
+                    "docs/sub",
+                    p::IntermediateLink::FollowIntermediate
+                )),
+                final_link: p::FinalLink::FollowFinal.into(),
+            }))
+            .await?
+            .path()
+            .as_str(),
+        "docs"
+    );
+    assert!(
+        formal
+            .stat_entry(stat("root-link/..", true))
+            .await?
+            .path()
+            .is_root()
+    );
 
-    let Reply::LinkTarget(bytes) = session
-        .call(Action::ReadLink(wire::Operand {
-            path: "opaque".into(),
-        }))
-        .await?
-    else {
-        return Err("expected raw link target".into());
-    };
-    assert_eq!(bytes, b"\xff");
-    error(
-        session.call(stat("opaque", true)).await?,
-        d::Operation::Stat,
-        d::Failure::Backend(d::BackendFailure::UnrepresentableLinkTarget),
-        d::MutationOutcome::Unchanged,
-    )?;
-    for (path, cause) in [
-        ("dangling", d::Rejection::NotFound),
-        ("loop", d::Rejection::TooManySymlinks),
-        ("missing/../docs", d::Rejection::NotFound),
+    for (path, follow, cause) in [
+        ("alias/", false, d::Rejection::NotDirectory),
+        ("dangling", true, d::Rejection::NotFound),
+        ("loop", true, d::Rejection::TooManySymlinks),
+        ("missing/../docs", true, d::Rejection::NotFound),
     ] {
-        rejected(
-            session.call(stat(path, true)).await?,
-            d::Operation::Stat,
-            cause,
+        stat_failure(
+            formal.call(stat(path, follow)).await?,
+            d::Failure::Rejected(cause),
         )?;
     }
+    stat_failure(
+        formal
+            .call(p::StorageOp::Stat(p::Stat {
+                lookup: Some(lookup(
+                    "alias/sub",
+                    "",
+                    p::IntermediateLink::RejectIntermediate,
+                )),
+                final_link: p::FinalLink::FollowFinal.into(),
+            }))
+            .await?,
+        d::Failure::Rejected(d::Rejection::SymlinkNotAllowed),
+    )?;
+    for (path, bytes) in [("opaque", b"\xff".as_slice()), ("dangling", b"missing")] {
+        let reply = formal
+            .call(p::StorageOp::ReadLink(p::ReadLink {
+                lookup: Some(lookup(path, "", p::IntermediateLink::FollowIntermediate)),
+            }))
+            .await?;
+        assert!(matches!(reply.result, Some(p::Value::Bytes(_))));
+        assert_eq!(reply.data, bytes);
+    }
+    stat_failure(
+        formal.call(stat("opaque", true)).await?,
+        d::Failure::Backend(d::BackendFailure::UnrepresentableLinkTarget),
+    )?;
 
     rejected(
-        session
+        operations
             .call(write("root-link/..", wire::WriteMode::Replace))
             .await?,
         d::Operation::Write,
         d::Rejection::RootProtected,
     )?;
     rejected(
-        session
+        operations
             .call(Action::GetPermissions(wire::Operand {
                 path: "missing".into(),
             }))
@@ -323,12 +466,27 @@ async fn paths_links_admission_and_wire_metadata() -> TestResult {
     assert_eq!(fixture.storage.used_bytes(), 0);
 
     let mut invalid = wire::encode_entry(root)?;
-    invalid.kind = vfs_plugin_protocol::EntryKind::File.into();
+    invalid.kind = p::EntryKind::File.into();
     assert_eq!(
         wire::decode_entry(invalid),
         Err(d::ContractViolation::InvalidEntry)
     );
-    let invalid_request = session
+
+    stat_failure(
+        formal
+            .call(p::StorageOp::Stat(p::Stat {
+                lookup: Some(lookup(
+                    ".",
+                    "missing",
+                    p::IntermediateLink::FollowIntermediate,
+                )),
+                final_link: p::FinalLink::PreserveFinal.into(),
+            }))
+            .await?,
+        d::Failure::Backend(d::BackendFailure::Stale),
+    )?;
+    let mut formal = fixture.formal_session().await?;
+    let invalid_request = formal
         .call(stat("", true))
         .await
         .err()
@@ -406,21 +564,20 @@ async fn staging_releases_resources_and_commit_revalidates_slot_and_parent() -> 
     let fixture = Fixture::new(24).await?;
     let mut first = fixture.session().await?;
     let mut second = fixture.session().await?;
+    let mut formal = fixture.formal_session().await?;
     first.begin("/file", wire::WriteMode::CreateNew).await?;
     first.stage(b"old").await?;
-    rejected(
-        second.call(stat("file", true)).await?,
-        d::Operation::Stat,
-        d::Rejection::NotFound,
+    stat_failure(
+        formal.call(stat("file", true)).await?,
+        d::Failure::Rejected(d::Rejection::NotFound),
     )?;
     assert_eq!(
         first.commit().await?.entry_type(),
         d::EntryType::file(Some(3))
     );
-    rejected(
-        second.call(stat("file/../", true)).await?,
-        d::Operation::Stat,
-        d::Rejection::NotDirectory,
+    stat_failure(
+        formal.call(stat("file/../", true)).await?,
+        d::Failure::Rejected(d::Rejection::NotDirectory),
     )?;
 
     first.begin("file", wire::WriteMode::Replace).await?;
@@ -439,7 +596,7 @@ async fn staging_releases_resources_and_commit_revalidates_slot_and_parent() -> 
         d::Rejection::Conflict,
     )?;
     assert_eq!(
-        first.entry(stat("file", true)).await?.entry_type(),
+        formal.stat_entry(stat("file", true)).await?.entry_type(),
         d::EntryType::file(Some(7))
     );
     assert!(matches!(
@@ -473,10 +630,9 @@ async fn staging_releases_resources_and_commit_revalidates_slot_and_parent() -> 
         d::Operation::Write,
         d::Rejection::Conflict,
     )?;
-    rejected(
-        second.call(stat("parent/child", true)).await?,
-        d::Operation::Stat,
-        d::Rejection::NotFound,
+    stat_failure(
+        formal.call(stat("parent/child", true)).await?,
+        d::Failure::Rejected(d::Rejection::NotFound),
     )?;
 
     first.begin("abort", wire::WriteMode::CreateNew).await?;
@@ -505,10 +661,9 @@ async fn staging_releases_resources_and_commit_revalidates_slot_and_parent() -> 
     assert_eq!(fixture.storage.used_bytes(), 14);
     drop(first);
     fixture.wait_for_used(7).await?;
-    rejected(
-        second.call(stat("dropped", true)).await?,
-        d::Operation::Stat,
-        d::Rejection::NotFound,
+    stat_failure(
+        formal.call(stat("dropped", true)).await?,
+        d::Failure::Rejected(d::Rejection::NotFound),
     )?;
 
     error(
@@ -518,7 +673,7 @@ async fn staging_releases_resources_and_commit_revalidates_slot_and_parent() -> 
         d::MutationOutcome::Unknown,
     )?;
     assert_eq!(
-        second.entry(stat("created", true)).await?.entry_type(),
+        formal.stat_entry(stat("created", true)).await?.entry_type(),
         d::EntryType::Directory
     );
     Ok(())

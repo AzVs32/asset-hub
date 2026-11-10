@@ -189,18 +189,26 @@ pub fn validate_request(request: &Request) -> Result<()> {
         O::Open(v) => {
             check_object(field(&v.config)?, 0)?;
         }
-        O::Storage(v) => {
-            if let StorageOp::SetXattr(v) = field(&v.operation)?
-                && !matches!(
+        O::Storage(v) => match field(&v.operation)? {
+            StorageOp::Stat(request) => {
+                super::decode_stat(request.clone()).map_err(|_| CodecError::InvalidData)?;
+            }
+            StorageOp::ReadLink(request) => {
+                super::decode_lookup(request.lookup.clone())
+                    .map_err(|_| CodecError::InvalidData)?;
+            }
+            StorageOp::SetXattr(v)
+                if !matches!(
                     XattrWriteMode::try_from(v.mode),
                     Ok(XattrWriteMode::Upsert
                         | XattrWriteMode::CreateNew
                         | XattrWriteMode::Replace)
-                )
+                ) =>
             {
                 return Err(CodecError::InvalidData);
             }
-        }
+            _ => {}
+        },
         O::Release(v) => check_resource(v)?,
         _ => {}
     }

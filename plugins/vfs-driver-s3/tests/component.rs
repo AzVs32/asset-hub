@@ -9,8 +9,7 @@ use ah_vfs::application::port::*;
 use ah_vfs::application::service::{EntryService, InstanceService, MountService};
 use ah_vfs::domain::namespace::VirtualPath;
 use ah_vfs::domain::storage::{
-    StorageDirQuery, StorageMoveEntryRequest, StorageReadFileRequest, StorageStatEntryRequest,
-    StorageWriteFileRequest,
+    StorageDirQuery, StorageMoveEntryRequest, StorageReadFileRequest, StorageWriteFileRequest,
 };
 use ah_vfs::domain::{DriverInstance, InstanceId};
 use ah_vfs::infrastructure::instance_record_repository::SqliteInstanceRecordRepository;
@@ -287,9 +286,13 @@ async fn s3_component_runs_through_host_records_mounts_and_streams() -> Result {
         pending.write_chunk(b"not yet visible").await?;
         assert_eq!(
             storage
-                .stat_entry(StorageStatEntryRequest {
-                    path: StoragePath::parse("staged")?
-                })
+                .stat_entry(
+                    ah_vfs_storage::StatRequest::new(
+                        (StoragePath::parse("staged")?).to_rooted_expr(),
+                        ah_vfs_storage::SymlinkAction::Preserve
+                    ),
+                    Default::default()
+                )
                 .await
                 .err()
                 .ok_or("unpublished")?

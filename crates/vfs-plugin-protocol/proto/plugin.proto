@@ -1,5 +1,5 @@
 syntax = "proto3";
-package assethub.vfs.v4;
+package assethub.vfs.v5;
 
 // The sole plugin message schema, shared by gRPC and the WASM call export.
 // Request/Reply control fields are limited to 1 MiB, data to 8 MiB. Missing
@@ -92,7 +92,7 @@ message Failure {
   StorageFailure storage = 4;
 }
 message Description {
-  uint32 major = 1; uint32 minor = 2; // This schema uses major 4, minor 0.
+  uint32 major = 1; uint32 minor = 2; // This schema uses major 5, minor 0.
   // Feature identifiers: streams.chunked.v1.
   // Unknown required identifiers reject loading; optional ones grant no support.
   repeated string required_features = 3;
@@ -130,6 +130,15 @@ message Open { string id = 1; Object config = 2; } // config is required; absenc
 // Paths are instance-relative UTF-8, at most 4096 bytes; empty denotes the root.
 // Absolute paths, empty components, dot/dot-dot, backslash, colon and NUL fail.
 message Path { string path = 1; }
+enum IntermediateLink { INTERMEDIATE_LINK_UNSPECIFIED = 0; FOLLOW_INTERMEDIATE = 1; REJECT_INTERMEDIATE = 2; }
+enum FinalLink { FINAL_LINK_UNSPECIFIED = 0; FOLLOW_FINAL = 1; PRESERVE_FINAL = 2; }
+message Lookup {
+  string operand = 1; // PathExpr grammar.
+  string working_directory = 2; // Instance-relative StoragePath.
+  IntermediateLink intermediate_links = 3;
+}
+message Stat { Lookup lookup = 1; FinalLink final_link = 2; }
+message ReadLink { Lookup lookup = 1; }
 // Immediate children sorted by name; after is a basename cursor, limit is 1..1000.
 message List { string path = 1; optional string after = 2; uint32 limit = 3; }
 message CreateDir { string path = 1; bool recursive = 2; }
@@ -142,13 +151,14 @@ message RemoveXattr { string path = 1; string name = 2; }
 message StorageCall {
   uint64 handle = 1;
   oneof operation {
-    Path stat = 10; // Metadata without following the final symbolic link.
+    Stat stat = 10;
     List list = 11; CreateDir create_dir = 12;
     Path remove = 13; // File, link itself or empty dir only; preserve the root.
     Move move = 14; // Atomic rename within the instance, never copy/delete.
     Path get_permissions = 15;
     SetPermissions set_permissions = 16; ListXattrs list_xattrs = 17;
     GetXattr get_xattr = 18; SetXattr set_xattr = 19; RemoveXattr remove_xattr = 20;
+    ReadLink read_link = 21;
   }
 }
 // File-byte range. Absent length reads through EOF; present zero is an empty

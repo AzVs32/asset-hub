@@ -46,9 +46,13 @@ async fn local_instances_reopen_and_deleted_dirs_fail_to_open() -> TestResult {
         .open(restored_registry.open_context(instance.id.clone()).await?)
         .await?;
     let root = storage
-        .stat_entry(ah_vfs::domain::storage::StorageStatEntryRequest {
-            path: ah_vfs_storage::StoragePath::root(),
-        })
+        .stat_entry(
+            ah_vfs_storage::StatRequest::new(
+                (ah_vfs_storage::StoragePath::root()).to_rooted_expr(),
+                ah_vfs_storage::SymlinkAction::Preserve,
+            ),
+            Default::default(),
+        )
         .await?;
     assert_eq!(root.entry_type(), ah_vfs_storage::EntryType::Directory);
     std::fs::remove_dir(&source)?;

@@ -207,17 +207,6 @@ pub(super) fn entry(
         )
     })
 }
-pub(super) fn stat_entry(root: &Dir, path: StoragePath) -> Result<Entry, StorageError> {
-    let operation = Operation::Stat;
-    let metadata = if path.is_root() {
-        root.dir_metadata()
-            .map_err(|cause| error(operation, cause))?
-    } else {
-        let (parent, name) = parent(operation, root, &path)?;
-        checked_metadata(operation, &parent, &name)?
-    };
-    entry(operation, path, metadata)
-}
 pub(super) fn regular_file(operation: Operation, metadata: &Metadata) -> Result<(), StorageError> {
     if reparse(metadata) {
         return Err(StorageError::without_effects(

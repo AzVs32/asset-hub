@@ -6,15 +6,18 @@ use crate::application::dto::{
 };
 use crate::application::error::EntryError;
 use crate::application::mount_runtime::MountRuntime;
-use crate::application::port::Storage;
+use crate::application::port::{LookupContext, Storage};
 use crate::application::session::{FileReadHandle, FileWriteHandle};
 use crate::domain::namespace::{Mount, MountTable, VirtualPath};
 use crate::domain::storage::{
     MAX_DIR_PAGE_LIMIT, StorageCreateDirRequest, StorageDirQuery, StorageMoveEntryRequest,
-    StorageReadFileRequest, StorageRemoveEntryRequest, StorageStatEntryRequest,
-    StorageWriteFileRequest, validate_dir_page_limit,
+    StorageReadFileRequest, StorageRemoveEntryRequest, StorageWriteFileRequest,
+    validate_dir_page_limit,
 };
-use ah_vfs_storage::{Capabilities, Publication, ReadRange, RenameMode};
+use ah_vfs_storage::{
+    Capabilities, LinkTarget, Publication, ReadLinkRequest, ReadRange,
+    RenameMode, StatRequest, SymlinkAction,
+};
 use ah_vfs_storage::{EntryType, Permissions, StoragePath, XattrName, XattrWriteMode};
 use ah_vfs_storage::{Failure, Operation, Rejection, StorageError};
 
@@ -105,6 +108,8 @@ impl EntryService {
     }
 
     /// Retrieve backend metadata, or a synthetic directory leading to submounts.
+    /// Resolve the virtual path once. Any intermediate link traversal stays
+    /// inside the selected instance, and the final link is preserved.
     pub async fn stat_entry(&self, path: &VirtualPath) -> Result<EntryView, EntryError> {
         let table = self.runtime.table().await?;
         table.resolve(path)?;
@@ -115,7 +120,10 @@ impl EntryService {
         let (relative, storage, capabilities) = self.open(&table, path).await?;
         Self::require(Operation::Stat, capabilities.stat())?;
         let entry = storage
-            .stat_entry(StorageStatEntryRequest { path: relative })
+            .stat_entry(
+                StatRequest::new(relative.to_rooted_expr(), SymlinkAction::Preserve),
+                LookupContext::default(),
+            )
             .await?;
         let mut view = EntryView::from_storage(path.clone(), entry);
         if let NamespaceEntry::MountPoint(mount) = namespace {
@@ -124,6 +132,29 @@ impl EntryService {
             };
         }
         Ok(view)
+    }
+
+    /// Read a symbolic link in the resolved instance. The stored bytes are returned
+    /// as-is, including for dangling links.
+    pub async fn read_link(&self, path: &VirtualPath) -> Result<LinkTarget, EntryError> {
+        let table = self.runtime.table().await?;
+        table.resolve(path)?;
+        if !matches!(Self::classify(&table, path), NamespaceEntry::Backend) {
+            return Err(StorageError::without_effects(
+                Operation::ReadLink,
+                Failure::Rejected(Rejection::NotSymlink),
+                None,
+            )
+            .into());
+        }
+        let (relative, storage, capabilities) = self.open(&table, path).await?;
+        Self::require(Operation::ReadLink, capabilities.read_link())?;
+        Ok(storage
+            .read_link(
+                ReadLinkRequest::new(relative.to_rooted_expr()),
+                LookupContext::default(),
+            )
+            .await?)
     }
 
     /// Merge backend children with direct mounts and synthetic ancestors.
@@ -150,9 +181,10 @@ impl EntryService {
         // A namespace directory shadows a same-name backend file or symlink.
         let scan_backend = if synthetic {
             match storage
-                .stat_entry(StorageStatEntryRequest {
-                    path: relative.clone(),
-                })
+                .stat_entry(
+                    StatRequest::new(relative.to_rooted_expr(), SymlinkAction::Preserve),
+                    LookupContext::default(),
+                )
                 .await
             {
                 Ok(entry) => entry.entry_type() == EntryType::Directory,

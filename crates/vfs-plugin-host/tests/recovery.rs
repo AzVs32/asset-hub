@@ -1,8 +1,6 @@
 use ah_vfs::application::port::*;
 use ah_vfs::domain::InstanceId;
-use ah_vfs::domain::storage::{
-    StorageReadFileRequest, StorageStatEntryRequest, StorageWriteFileRequest,
-};
+use ah_vfs::domain::storage::{StorageReadFileRequest, StorageWriteFileRequest};
 use ah_vfs_storage::{BackendFailure, Failure, Operation, Rejection, StorageError};
 use ah_vfs_storage::{Entry, StoragePath};
 use std::sync::{
@@ -65,6 +63,7 @@ impl Peer {
             } else {
                 vec![
                     p::Capability::Stat as i32,
+                    p::Capability::ReadLink as i32,
                     p::Capability::RangeRead as i32,
                     p::Capability::WriteNew as i32,
                 ]
@@ -123,14 +122,33 @@ impl Transport for Peer {
                     info: Some(p::StorageInfo { chunk_size: 65536 }),
                 }),
                 Op::Storage(p::StorageCall {
-                    operation: Some(p::StorageOp::Stat(p::Path { path })),
+                    operation: Some(p::StorageOp::Stat(stat)),
                     ..
-                }) => Value::Entry(p::Entry {
-                    path,
-                    kind: p::EntryKind::File as i32,
-                    size: Some(current as u64),
-                    modified: None,
-                }),
+                }) => {
+                    let operand = stat
+                        .lookup
+                        .ok_or_else(vfs_plugin_host::convert::protocol_violation)?
+                        .operand;
+                    Value::Entry(p::Entry {
+                        path: operand.trim_start_matches('/').into(),
+                        kind: p::EntryKind::File as i32,
+                        size: Some(current as u64),
+                        modified: None,
+                    })
+                }
+                Op::Storage(p::StorageCall {
+                    operation: Some(p::StorageOp::ReadLink(link)),
+                    ..
+                }) => {
+                    let (operand, base, links) = p::decode_lookup(link.lookup).map_err(|_| vfs_plugin_host::convert::protocol_violation())?;
+                    assert_eq!(operand.to_string(), "../link");
+                    assert_eq!(base.as_str(), "docs/sub");
+                    assert_eq!(links, ah_vfs_storage::IntermediateSymlinks::Reject);
+                    return Ok(p::Reply {
+                        result: Some(Value::Bytes(p::Empty {})),
+                        data: vec![0xff, b'/'],
+                    });
+                }
                 Op::Read(_) => Value::Reader(p::Handle {
                     handle: self.next.fetch_add(1, Ordering::SeqCst),
                 }),
@@ -169,16 +187,21 @@ async fn open(driver: &PluginDriver) -> Result<Arc<dyn Storage>> {
         .await?)
 }
 async fn stat(storage: &dyn Storage) -> std::result::Result<Entry, StorageError> {
+    let path = StoragePath::parse("file").map_err(|cause| {
+        StorageError::without_effects(
+            Operation::Stat,
+            Failure::Rejected(Rejection::UnsupportedName),
+            Some(Box::new(cause)),
+        )
+    })?;
     storage
-        .stat_entry(StorageStatEntryRequest {
-            path: StoragePath::parse("file").map_err(|cause| {
-                StorageError::without_effects(
-                    Operation::Stat,
-                    Failure::Rejected(Rejection::UnsupportedName),
-                    Some(Box::new(cause)),
-                )
-            })?,
-        })
+        .stat_entry(
+            ah_vfs_storage::StatRequest::new(
+                path.to_rooted_expr(),
+                ah_vfs_storage::SymlinkAction::Preserve,
+            ),
+            Default::default(),
+        )
         .await
 }
 
@@ -419,5 +442,20 @@ async fn stale_open_recreates_transport_describes_initializes_and_opens_once_mor
     assert_eq!(initialized.len(), 2);
     assert_eq!(initialized[0].1, initialized[1].1);
     assert_eq!(peer.commits.load(Ordering::SeqCst), 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn host_forwards_bound_lookup_context_and_preserves_link_bytes() -> Result {
+    let driver = connect(&Peer::new()).await?;
+    let storage = open(&driver).await?;
+    let target = storage.read_link(
+        ah_vfs_storage::ReadLinkRequest::new(ah_vfs_storage::PathExpr::parse("../link")?),
+        LookupContext {
+            working_directory: StoragePath::parse("docs/sub")?,
+            intermediate_symlinks: ah_vfs_storage::IntermediateSymlinks::Reject,
+        },
+    ).await?;
+    assert_eq!(target.as_bytes(), b"\xff/");
     Ok(())
 }

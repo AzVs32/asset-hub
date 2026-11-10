@@ -13,8 +13,7 @@ use ah_vfs::application::service::{EntryService, MountService};
 use ah_vfs::domain::namespace::{ChildMountPolicy, VirtualPath};
 use ah_vfs::domain::storage::{
     StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageMoveEntryRequest,
-    StorageReadFileRequest, StorageRemoveEntryRequest, StorageStatEntryRequest,
-    StorageWriteFileRequest,
+    StorageReadFileRequest, StorageRemoveEntryRequest, StorageWriteFileRequest,
 };
 use ah_vfs::domain::{DriverInstance, DriverKey, InstanceId};
 use ah_vfs::infrastructure::mount_repository::SqliteMountRepository;
@@ -83,9 +82,21 @@ impl Storage for TestStorage {
     fn chunk_size(&self) -> NonZeroUsize {
         NonZeroUsize::MIN
     }
-    fn stat_entry(&self, request: StorageStatEntryRequest) -> StorageFuture<'_, Entry> {
+    fn stat_entry(
+        &self,
+        request: ah_vfs_storage::StatRequest,
+        _: ah_vfs::application::port::LookupContext,
+    ) -> StorageFuture<'_, Entry> {
         Box::pin(async move {
-            let kind = if request.path.is_root() {
+            let operand = request.path().to_string();
+            let path = StoragePath::parse(operand.trim_start_matches('/')).map_err(|cause| {
+                StorageError::without_effects(
+                    Operation::Stat,
+                    Failure::Contract(ContractViolation::InvalidEntry),
+                    Some(Box::new(cause)),
+                )
+            })?;
+            let kind = if path.is_root() {
                 EntryType::Directory
             } else {
                 EntryType::file(Some(if self.instance.as_str() == "leaf" {
@@ -94,8 +105,7 @@ impl Storage for TestStorage {
                     7
                 }))
             };
-            Entry::new(request.path, kind, None)
-                .map_err(|cause| invalid_metadata(Operation::Stat, cause))
+            Entry::new(path, kind, None).map_err(|cause| invalid_metadata(Operation::Stat, cause))
         })
     }
     fn list_entries(&self, query: StorageDirQuery) -> StorageFuture<'_, StorageDirPage> {

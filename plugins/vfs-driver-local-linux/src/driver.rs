@@ -29,6 +29,7 @@ impl LinuxLocalDriver {
     fn supported_capabilities() -> Capabilities {
         Capabilities::default()
             .with_stat(true)
+            .with_read_link(true)
             .with_list(true)
             .with_read(ReadSupport::Range)
             .with_write(WriteSupport::staged(WriteModes::Both, true))
