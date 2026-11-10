@@ -1,51 +1,6 @@
-//! Instance-local operation requests and directory query results.
+//! Instance-local operation requests.
 
-use super::{DEFAULT_DIR_PAGE_LIMIT, validate_dir_page_limit};
-use ah_vfs_storage::{Entry, EntryName, StoragePath};
-use ah_vfs_storage::{Failure, Operation, Rejection, StorageError};
-use std::num::NonZeroUsize;
-
-/// Immediate children in ascending UTF-8 name order.
-///
-/// `after` is the previous page's last name, exclusively. This is a live listing,
-/// not a snapshot; concurrent changes can affect later pages.
-pub struct StorageDirQuery {
-    pub path: StoragePath,
-    pub after: Option<EntryName>,
-    /// Maximum entries per page, bounded by [`super::MAX_DIR_PAGE_LIMIT`].
-    pub limit: NonZeroUsize,
-}
-impl StorageDirQuery {
-    pub fn new(path: StoragePath) -> Self {
-        Self {
-            path,
-            after: None,
-            limit: DEFAULT_DIR_PAGE_LIMIT,
-        }
-    }
-
-    /// Validate the page limit and exclusive child-name cursor before backend I/O.
-    /// Oversized pages return LimitExceeded; a joined address exceeding its bound
-    /// returns PathTooLong with its original validation error as the source.
-    pub fn validate(&self) -> Result<(), StorageError> {
-        validate_dir_page_limit(self.limit)?;
-        if let Some(after) = &self.after {
-            self.path.join(after).map_err(|cause| {
-                StorageError::without_effects(
-                    Operation::List,
-                    Failure::Rejected(Rejection::PathTooLong),
-                    Some(Box::new(cause)),
-                )
-            })?;
-        }
-        Ok(())
-    }
-}
-pub struct StorageDirPage {
-    pub entries: Vec<Entry>,
-    /// Pass as `after`; `None` means there are no more entries now.
-    pub next_after: Option<EntryName>,
-}
+use ah_vfs_storage::StoragePath;
 
 /// Create a backend directory without overwriting file contents.
 /// Recursive requests accept existing directories, including the instance root;

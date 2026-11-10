@@ -7,7 +7,7 @@ mod mount;
 
 pub use entry::{
     CreateDirRequest, DirPage, DirQuery, EntryOrigin, EntryView, MoveEntryRequest, ReadFileRequest,
-    RemoveEntryRequest, WriteFileRequest,
+    RemoveEntryRequest, VfsDirectoryCursor, WriteFileRequest,
 };
 pub use instance::{InstanceInfo, InstancePage, InstanceQuery, RemoveInstanceOutcome};
 pub use instance_config::{

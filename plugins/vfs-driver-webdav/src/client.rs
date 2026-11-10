@@ -1,13 +1,13 @@
 //! WebDAV/HTTP behavior kept inside the plugin, with no host-specific branches.
 //! See RFC 4918 sections 9.1, 9.3, 9.6 and 9.9, and RFC 9110 conditional requests.
 use super::*;
-use ah_vfs_storage::{Entry, EntryName, EntryType, PageSize, StoragePath};
+use ah_vfs_storage::{Entry, EntryType, StoragePath};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use percent_encoding::percent_decode_str;
 use time::{OffsetDateTime, format_description::well_known::Rfc2822};
 use url::Url;
 
-const PROPERTIES: &[u8] = br#"<?xml version="1.0" encoding="utf-8"?><d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/><d:getcontentlength/><d:getlastmodified/><d:getetag/></d:prop></d:propfind>"#;
+const PROPERTIES: &[u8] = br#"<?xml version="1.0" encoding="utf-8"?><d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/><d:getcontentlength/><d:getlastmodified/><d:getetag/><d:resource-id/></d:prop></d:propfind>"#;
 
 #[derive(Clone)]
 pub(super) struct Client {
@@ -20,6 +20,7 @@ pub(super) struct Client {
 pub(super) struct Metadata {
     pub entry: Entry,
     etag: Option<String>,
+    resource_id: Option<String>,
 }
 impl Metadata {
     pub fn strong_etag(&self) -> Option<String> {
@@ -353,6 +354,7 @@ impl Client {
                     modified(context, properties.modified.as_deref())?,
                 )?,
                 etag: properties.etag.map(|value| value.trim().to_owned()),
+                resource_id: properties.resource_id.map(|value| value.trim().to_owned()),
             });
         }
         Ok(metadata)
@@ -375,104 +377,113 @@ impl Client {
         }
         Ok(())
     }
-    pub fn list(
+    pub fn select_directory(
         &self,
-        relative: &str,
-        after: Option<&str>,
-        limit: u32,
-    ) -> Result<(Vec<p::Entry>, Option<String>)> {
+        request: &ah_vfs_storage::ListRequest,
+        base: &StoragePath,
+        links: ah_vfs_storage::IntermediateSymlinks,
+        generation: &[u8; 16],
+    ) -> Result<ah_vfs_storage::DirectorySelection> {
         let context = &self.context;
-        path(context, relative)?;
-        if usize::try_from(limit)
-            .ok()
-            .and_then(|limit| PageSize::new(limit).ok())
-            .is_none()
-        {
-            return Err(context.failure(Failure::Rejected(Rejection::Conflict)));
-        }
-        if let Some(after) = after {
-            let directory = StoragePath::parse(relative)
-                .map_err(|_| context.failure(Failure::Rejected(Rejection::UnsupportedName)))?;
-            let name = EntryName::parse(after)
-                .map_err(|_| context.failure(Failure::Rejected(Rejection::UnsupportedName)))?;
-            directory
-                .join(&name)
-                .map_err(|_| context.failure(Failure::Rejected(Rejection::UnsupportedName)))?;
-        }
-        if self.stat(relative)?.entry.entry_type() != EntryType::Directory {
-            return Err(context.failure(Failure::Rejected(Rejection::NotDirectory)));
-        }
-        let mut parent = false;
-        let mut children = BTreeMap::new();
-        let prefix = if relative.is_empty() {
-            String::new()
-        } else {
-            format!("{relative}/")
-        };
-        for metadata in self.propfind(relative, 1)? {
-            if metadata.entry.path().as_str() == relative {
-                if parent {
-                    return Err(context.failure(Failure::Backend(BackendFailure::CorruptData)));
-                }
+        let (entry, resource_id) = match request.target() {
+            ah_vfs_storage::ListTarget::Path(_) => {
+                let lookup = request
+                    .lookup()
+                    .ok_or_else(|| context.failure(Failure::Rejected(Rejection::Unsupported)))?;
+                api::direct_lookup(lookup, base, links, Operation::List, |address| {
+                    let metadata = self.stat(address.as_str())?;
+                    Ok((metadata.entry, metadata.resource_id))
+                })?
+            }
+            ah_vfs_storage::ListTarget::Continue(cursor) => {
+                let metadata = self
+                    .stat(cursor.selection().address().as_str())
+                    .map_err(|error| self.list_stale(error))?;
                 if metadata.entry.entry_type() != EntryType::Directory {
-                    return Err(context.failure(Failure::Rejected(Rejection::NotDirectory)));
+                    return Err(context.failure(Failure::Backend(BackendFailure::Stale)));
+                }
+                (metadata.entry, metadata.resource_id)
+            }
+        };
+        let identity = directory_identity(generation, resource_id.as_deref()).ok_or_else(|| {
+            if request.lookup().is_none() {
+                context.failure(Failure::Backend(BackendFailure::Stale))
+            } else {
+                context.failure(Failure::Rejected(Rejection::Unsupported))
+            }
+        })?;
+        let selection =
+            ah_vfs_storage::DirectorySelection::from_lookup(entry.path().clone(), identity);
+        request
+            .bind_selection(selection.clone())
+            .map_err(|reason| context.failure(Failure::Backend(reason)))?;
+        Ok(selection)
+    }
+
+    fn list_stale(&self, error: api::Failure) -> api::Failure {
+        if error.storage_error().is_some_and(|error| {
+            matches!(
+                error.failure(),
+                Failure::Rejected(Rejection::NotFound | Rejection::NotDirectory)
+            )
+        }) {
+            self.context
+                .failure(Failure::Backend(BackendFailure::Stale))
+        } else {
+            error
+        }
+    }
+
+    pub fn list_page(
+        &self,
+        bound: &ah_vfs_storage::BoundListRequest<'_>,
+        generation: &[u8; 16],
+    ) -> Result<ah_vfs_storage::DirectoryPage> {
+        let context = &self.context;
+        let invalid = || context.failure(Failure::Contract(ContractViolation::InvalidPage));
+        let stale = || context.failure(Failure::Backend(BackendFailure::Stale));
+        let selection = bound.selection();
+        let mut parent = false;
+        let mut seen = std::collections::BTreeSet::new();
+        let mut children = BTreeMap::new();
+        for metadata in self
+            .propfind(selection.address().as_str(), 1)
+            .map_err(|error| self.list_stale(error))?
+        {
+            if metadata.entry.path() == selection.address() {
+                if parent {
+                    return Err(invalid());
+                }
+                if metadata.entry.entry_type() != EntryType::Directory
+                    || directory_identity(generation, metadata.resource_id.as_deref())
+                        != Some(selection.identity())
+                {
+                    return Err(stale());
                 }
                 parent = true;
                 continue;
             }
-            let name = metadata
-                .entry
-                .path()
-                .as_str()
-                .strip_prefix(&prefix)
-                .ok_or_else(|| context.failure(Failure::Backend(BackendFailure::CorruptData)))?
-                .to_owned();
-            if name.is_empty()
-                || name.contains('/')
-                || children.insert(name, metadata.entry).is_some()
+            let name = metadata.entry.path().name().ok_or_else(invalid)?;
+            if metadata.entry.path().parent().as_ref() != Some(selection.address())
+                || !seen.insert(name.clone())
             {
-                return Err(context.failure(Failure::Backend(BackendFailure::CorruptData)));
+                return Err(invalid());
+            }
+            if bound.after().is_none_or(|after| &name > after) {
+                children.insert(name, metadata.entry);
+                if children.len() > bound.size().get() + 1 {
+                    children.pop_last();
+                }
             }
         }
         if !parent {
-            return Err(context.failure(Failure::Backend(BackendFailure::CorruptData)));
+            return Err(invalid());
         }
-        let mut candidates = children
-            .into_iter()
-            .filter(|(name, _)| after.is_none_or(|after| name.as_str() > after))
-            .map(|(name, entry)| Ok((name, crate::encode_entry(context, &entry)?)))
-            .collect::<Result<Vec<_>>>()?
-            .into_iter()
-            .peekable();
-        let mut entries = vec![];
-        let mut bytes = 0usize;
-        let mut last_name = None;
-        while let Some((name, entry)) = candidates.peek() {
-            // The requested count is an upper bound. Keep full-path metadata
-            // within the common control-frame limit even for deep directories.
-            let size = p::entry_encoded_len(entry);
-            if entries.len() == limit as usize
-                || bytes.saturating_add(size) > p::MAX_CONTROL_BYTES / 2
-            {
-                break;
-            }
-            last_name = Some(name.clone());
-            bytes += size + 1;
-            let (_, entry) = candidates
-                .next()
-                .ok_or_else(|| context.failure(Failure::Backend(BackendFailure::CorruptData)))?;
-            entries.push(entry);
-        }
-        if entries.is_empty() && candidates.peek().is_some() {
-            return Err(context.failure(Failure::Rejected(Rejection::LimitExceeded)));
-        }
-        let next = if candidates.peek().is_some() {
-            last_name
-        } else {
-            None
-        };
-        Ok((entries, next))
+        let more = children.len() > bound.size().get();
+        let entries = children.into_values().take(bound.size().get()).collect();
+        ah_vfs_storage::DirectoryPage::new(bound, entries, more).map_err(|_| invalid())
     }
+
     fn parent(&self, relative: &str) -> Result<()> {
         let context = &self.context;
         let parent = relative.rsplit_once('/').map_or("", |(parent, _)| parent);
@@ -735,4 +746,22 @@ fn entry(
         .map_err(|_| context.failure(Failure::Backend(BackendFailure::UnrepresentableName)))?;
     Entry::new(path, kind, modified)
         .map_err(|_| context.failure(Failure::Backend(BackendFailure::CorruptData)))
+}
+
+fn directory_identity(
+    generation: &[u8; 16],
+    resource_id: Option<&str>,
+) -> Option<ah_vfs_storage::DirectoryIdentity> {
+    use sha2::{Digest, Sha256};
+    let resource_id = resource_id?;
+    if resource_id.len() > 4096 || Url::parse(resource_id).is_err() {
+        return None;
+    }
+    let mut hash = Sha256::new();
+    hash.update(generation);
+    hash.update(resource_id.as_bytes());
+    let hash = hash.finalize();
+    Some(ah_vfs_storage::DirectoryIdentity::from_bytes(
+        hash[..16].try_into().ok()?,
+    ))
 }

@@ -97,10 +97,10 @@ impl MemoryStorage {
         Ok(MemoryFileReader::new(blob.clone(), request.range()))
     }
 
-    pub fn select_directory(
+    pub(super) fn select_list_directory(
         &self,
         request: &ListRequest,
-        links: IntermediateSymlinks,
+        context: LookupContext,
     ) -> Result<DirectorySelection, StorageError> {
         let op = Operation::List;
         let mut nodes = self.lock(op)?;
@@ -109,15 +109,22 @@ impl MemoryStorage {
                 let lookup = request
                     .lookup()
                     .ok_or_else(|| rejected(op, Rejection::Unsupported))?;
-                select(&mut nodes, lookup, links, op)?
+                select_with_context(&mut nodes, lookup, &context, op)?
             }
             ListTarget::Continue(cursor) => cursor.selection().address().clone(),
         };
         let identity = directory(&nodes, &path).ok_or_else(|| stale(op))?;
-        Ok(DirectorySelection::from_lookup(path, **identity))
+        let selection = DirectorySelection::from_lookup(path, **identity);
+        request
+            .bind_selection(selection.clone())
+            .map_err(|_| stale(op))?;
+        Ok(selection)
     }
 
-    pub fn list_page(&self, bound: &BoundListRequest<'_>) -> Result<DirectoryPage, StorageError> {
+    pub(super) fn enumerate_directory(
+        &self,
+        bound: &BoundListRequest<'_>,
+    ) -> Result<DirectoryPage, StorageError> {
         let op = Operation::List;
         let nodes = self.lock(op)?;
         let address = bound.selection().address();

@@ -387,12 +387,6 @@ fn write(handle: u64, path: &str, mode: d::WriteMode) -> TestResult<p::Operation
         d::IntermediateSymlinks::FollowWithinInstance,
     )))
 }
-fn select(path: &str, page_size: u32) -> Action {
-    Action::SelectDirectory(wire::List {
-        path: path.into(),
-        page_size,
-    })
-}
 fn error(
     reply: Reply,
     operation: d::Operation,
@@ -418,25 +412,34 @@ fn rejected(reply: Reply, operation: d::Operation, cause: d::Rejection) -> TestR
         d::MutationOutcome::Unchanged,
     )
 }
-async fn start_listing(
-    session: &mut Session,
-    path: &str,
-    size: u32,
-) -> TestResult<(d::ListRequest, d::DirectorySelection)> {
-    let Reply::SelectedDirectory(selection) = session.call(select(path, size)).await? else {
+async fn select_listing(
+    session: &mut FormalSession,
+    request: &d::ListRequest,
+) -> TestResult<d::DirectorySelection> {
+    let reply = session
+        .call(p::StorageOp::SelectDirectory(p::encode_select_directory(
+            request,
+            &d::StoragePath::root(),
+            d::IntermediateSymlinks::FollowWithinInstance,
+        )))
+        .await?;
+    let Some(p::Value::SelectedDirectory(selection)) = reply.result else {
         return Err("expected independent selection".into());
     };
-    let request = d::ListRequest::new(
-        d::ListTarget::Path(d::PathExpr::parse(path)?),
-        d::PageSize::new(usize::try_from(size)?)?,
-    );
-    Ok((request, wire::decode_selection(selection)?))
+    Ok(p::decode_selection(selection)?)
 }
-async fn wire_page(session: &mut Session) -> TestResult<wire::Page> {
-    let Reply::Page(page) = session.call(Action::NextPage(wire::Unit {})).await? else {
+
+async fn wire_page(
+    session: &mut FormalSession,
+    bound: &d::BoundListRequest<'_>,
+) -> TestResult<(p::Page, Vec<u8>)> {
+    let reply = session
+        .call(p::StorageOp::List(p::encode_list(bound)))
+        .await?;
+    let Some(p::Value::Page(page)) = reply.result else {
         return Err("expected page".into());
     };
-    Ok(page)
+    Ok((page, reply.data))
 }
 
 #[tokio::test]
@@ -616,59 +619,92 @@ async fn formal_lookup_preserves_policy_instance_and_link_bytes() -> TestResult 
 #[tokio::test]
 async fn listing_checks_separate_binding_and_rejects_replaced_directory() -> TestResult {
     let fixture = Fixture::new(64).await?;
-    let mut listing = fixture.session().await?;
+    let mut listing = fixture.formal_session().await?;
     let mut other = fixture.session().await?;
     for path in ["docs/é", "docs/Report", "docs/report"] {
         other.entry(mkdir(path, true)).await?;
     }
-    let (request, selection) = start_listing(&mut listing, "alias/", 1).await?;
+    let request = d::ListRequest::new(
+        d::ListTarget::Path(d::PathExpr::parse("alias/")?),
+        d::PageSize::new(1)?,
+    );
+    let selection = select_listing(&mut listing, &request).await?;
     assert_eq!(selection.address().as_str(), "docs");
     let bound = request.bind_selection(selection.clone())?;
-    let first_wire = wire_page(&mut listing).await?;
-    let first = wire::decode_page(&bound, first_wire.clone())?;
+    let (wire, data) = wire_page(&mut listing, &bound).await?;
+    let first = p::decode_page(&bound, wire.clone(), &data)?;
     assert_eq!(first.entries()[0].path().as_str(), "docs/Report");
-
-    let mut forged = first_wire.clone();
-    forged.reported = Some(wire::Selection {
-        address: "alias".into(),
-        identity: selection.identity().as_bytes().to_vec(),
-    });
-    assert_eq!(
-        wire::decode_page(&bound, forged),
-        Err(d::ContractViolation::InvalidPage)
-    );
-    let mut missing_end = first_wire.clone();
+    for reported in [
+        p::DirectorySelection {
+            address: "alias".into(),
+            identity: selection.identity().as_bytes().to_vec(),
+        },
+        p::DirectorySelection {
+            address: "docs".into(),
+            identity: vec![9; 16],
+        },
+    ] {
+        let mut forged = wire.clone();
+        forged.reported = Some(reported);
+        assert_eq!(
+            p::decode_page(&bound, forged, &data),
+            Err(d::ContractViolation::InvalidPage)
+        );
+    }
+    let mut missing_end = wire.clone();
     missing_end.completion = None;
     assert_eq!(
-        wire::decode_page(&bound, missing_end),
+        p::decode_page(&bound, missing_end, &data),
         Err(d::ContractViolation::InvalidPage)
     );
-    let mut too_many = first_wire;
-    let duplicate = too_many.entries.clone();
-    too_many.entries.extend(duplicate);
+    let mut duplicate = data.clone();
+    duplicate.extend_from_slice(&data);
     assert_eq!(
-        wire::decode_page(&bound, too_many),
+        p::decode_page(&bound, wire.clone(), &duplicate),
+        Err(d::ContractViolation::InvalidPage)
+    );
+    let larger = d::ListRequest::new(request.target().clone(), d::PageSize::new(2)?);
+    assert_eq!(
+        p::decode_page(&larger.bind_selection(selection.clone())?, wire, &duplicate),
         Err(d::ContractViolation::InvalidPage)
     );
 
+    other
+        .unit(Action::Remove(wire::Remove {
+            path: "alias".into(),
+            kind: wire::RemoveKind::NonDirectory.into(),
+        }))
+        .await?;
+    other.entry(mkdir("docs/middle", false)).await?;
     let continuation = d::ListRequest::new(
         d::ListTarget::Continue(first.continuation().ok_or("first cursor")?),
         request.size(),
     );
-    let bound = continuation.bind_selection(selection)?;
-    let second = wire::decode_page(&bound, wire_page(&mut listing).await?)?;
-    assert_eq!(second.entries()[0].path().as_str(), "docs/report");
+    let resumed = select_listing(&mut listing, &continuation).await?;
+    assert_eq!(resumed, selection);
+    let bound = continuation.bind_selection(resumed)?;
+    let (wire, data) = wire_page(&mut listing, &bound).await?;
+    let second = p::decode_page(&bound, wire, &data)?;
+    assert_eq!(second.entries()[0].path().as_str(), "docs/middle");
 
-    for path in ["docs/Report", "docs/report", "docs/é", "docs"] {
+    for path in [
+        "docs/Report",
+        "docs/middle",
+        "docs/report",
+        "docs/é",
+        "docs",
+    ] {
         other.unit(rmdir(path)).await?;
     }
     other.entry(mkdir("/docs", false)).await?;
-    error(
-        listing.call(Action::NextPage(wire::Unit {})).await?,
+    formal_failure(
+        listing
+            .call(p::StorageOp::List(p::encode_list(&bound)))
+            .await?,
         d::Operation::List,
         d::Failure::Backend(d::BackendFailure::Stale),
-        d::MutationOutcome::Unchanged,
     )?;
+    assert!(listing.stat_entry(stat("/", true)).await?.path().is_root());
     Ok(())
 }
 

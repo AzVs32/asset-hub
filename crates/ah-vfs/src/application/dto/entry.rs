@@ -1,11 +1,10 @@
 //! Requests and namespace views using absolute virtual paths.
 
-use crate::domain::namespace::VirtualPath;
-use crate::domain::storage::DEFAULT_DIR_PAGE_LIMIT;
+use crate::domain::namespace::{MountTable, VirtualPath};
 use ah_vfs_storage::WriteMode;
-use ah_vfs_storage::{Entry, EntryType};
+use ah_vfs_storage::{DirectoryCursor, DirectorySelection, Entry, EntryType, PageSize};
 
-use std::{num::NonZeroUsize, time::SystemTime};
+use std::{sync::Arc, time::SystemTime};
 
 /// Namespace entries can shadow backend entries at mount boundaries.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -44,24 +43,27 @@ impl EntryView {
 }
 
 /// Name-ordered live pagination after merging backend and namespace children.
+#[derive(Default)]
 pub struct DirQuery {
-    pub after: Option<String>,
-    pub limit: NonZeroUsize,
+    pub cursor: Option<VfsDirectoryCursor>,
+    pub size: PageSize,
 }
 
-impl Default for DirQuery {
-    fn default() -> Self {
-        Self {
-            after: None,
-            limit: DEFAULT_DIR_PAGE_LIMIT,
-        }
-    }
+/// A virtual directory checkpoint. Its backend checkpoint, if present, belongs
+/// to the bound instance and is never used as a virtual namespace address.
+#[derive(Clone)]
+pub struct VfsDirectoryCursor {
+    pub(crate) path: VirtualPath,
+    pub(crate) mounts: Arc<MountTable>,
+    pub(crate) storage: Arc<dyn crate::application::port::Storage>,
+    pub(crate) after: String,
+    pub(crate) directory: Option<DirectorySelection>,
+    pub(crate) backend: Option<DirectoryCursor>,
 }
 
 pub struct DirPage {
     pub entries: Vec<EntryView>,
-    /// Exclusive name cursor for the next page, not an absolute path.
-    pub next_after: Option<String>,
+    pub continuation: Option<VfsDirectoryCursor>,
 }
 
 pub struct ReadFileRequest {

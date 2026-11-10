@@ -102,6 +102,32 @@ async fn native_process_passes_shared_storage_contracts_over_grpc() -> Result {
     .await?;
     let root = tempfile::tempdir()?;
     let storage = storage(driver.as_ref(), root.path(), records.clone()).await?;
+    use ah_vfs_storage::{ListRequest, ListTarget, PageSize};
+    std::fs::create_dir_all(root.path().join("docs/a"))?;
+    std::fs::create_dir(root.path().join("docs/b"))?;
+    let list = ListRequest::new(
+        ListTarget::Path(StoragePath::parse("docs")?.to_rooted_expr()),
+        PageSize::new(1)?,
+    );
+    let page = storage.list_entries(&list, Default::default()).await?;
+    let resume = ListRequest::new(
+        ListTarget::Continue(page.continuation().ok_or("expected continuation")?),
+        PageSize::DEFAULT,
+    );
+    std::fs::remove_dir_all(root.path().join("docs"))?;
+    std::fs::create_dir(root.path().join("docs"))?;
+    assert!(
+        matches!(storage.list_entries(&resume, Default::default()).await,
+        Err(error) if error.failure() == Failure::Backend(BackendFailure::Stale))
+    );
+    assert!(!storage.is_stale());
+    assert!(
+        storage
+            .list_entries(&list, Default::default())
+            .await?
+            .entries()
+            .is_empty()
+    );
     let mut writer = storage
         .write_file(
             ah_vfs_storage::WriteRequest::new(

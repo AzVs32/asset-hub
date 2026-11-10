@@ -24,6 +24,28 @@ pub mod api {
     pub trait GuestStorage {
         fn info(&self) -> p::StorageInfo;
         fn call(&self, request: p::StorageOp, data: Vec<u8>) -> Result<p::Reply>;
+        fn select_directory(
+            &self,
+            _request: &ah_vfs_storage::ListRequest,
+            _base: &ah_vfs_storage::StoragePath,
+            _links: ah_vfs_storage::IntermediateSymlinks,
+        ) -> Result<ah_vfs_storage::DirectorySelection> {
+            Err(
+                ErrorContext::storage(ah_vfs_storage::Operation::List).failure(
+                    ah_vfs_storage::Failure::Rejected(ah_vfs_storage::Rejection::Unsupported),
+                ),
+            )
+        }
+        fn list_page(
+            &self,
+            _bound: &ah_vfs_storage::BoundListRequest<'_>,
+        ) -> Result<ah_vfs_storage::DirectoryPage> {
+            Err(
+                ErrorContext::storage(ah_vfs_storage::Operation::List).failure(
+                    ah_vfs_storage::Failure::Rejected(ah_vfs_storage::Rejection::Unsupported),
+                ),
+            )
+        }
         fn read(
             &self,
             request: ah_vfs_storage::ReadRequest,
@@ -249,6 +271,40 @@ impl<D: api::Guest> Dispatcher<D> {
                     handle,
                     info: Some(info),
                 })
+            }
+            Op::Storage(p::StorageCall {
+                handle,
+                operation: Some(p::StorageOp::SelectDirectory(wire)),
+            }) => {
+                let (request, base, links) = p::decode_select_directory(wire)
+                    .map_err(|_| p::Failure::new(p::FailureCode::InvalidRequest))?;
+                let selection = self
+                    .storage(&context, handle)?
+                    .select_directory(&request, &base, links)?;
+                request
+                    .bind_selection(selection.clone())
+                    .map_err(|reason| context.failure(ah_vfs_storage::Failure::Backend(reason)))?;
+                Value::SelectedDirectory(p::encode_selection(&selection))
+            }
+            Op::Storage(p::StorageCall {
+                handle,
+                operation: Some(p::StorageOp::List(wire)),
+            }) => {
+                let (request, selection) = p::decode_list(wire)
+                    .map_err(|_| p::Failure::new(p::FailureCode::InvalidRequest))?;
+                let bound = request
+                    .bind_selection(selection)
+                    .map_err(|reason| context.failure(ah_vfs_storage::Failure::Backend(reason)))?;
+                let page = self.storage(&context, handle)?.list_page(&bound)?;
+                if page.selection() != bound.selection()
+                    || page.entries().len() > bound.size().get()
+                {
+                    return Err(context.failure(ah_vfs_storage::Failure::Contract(
+                        ah_vfs_storage::ContractViolation::InvalidPage,
+                    )));
+                }
+                return p::encode_page(page)
+                    .map_err(|reason| context.failure(ah_vfs_storage::Failure::Contract(reason)));
             }
             Op::Storage(p::StorageCall {
                 handle,

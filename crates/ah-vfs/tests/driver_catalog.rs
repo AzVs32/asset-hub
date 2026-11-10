@@ -13,8 +13,7 @@ use ah_vfs::domain::namespace::{
     ChildMountPolicy, Mount, MountId, MountTable, MountTableError, VirtualPath,
 };
 use ah_vfs::domain::storage::{
-    StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageMoveEntryRequest,
-    StorageRemoveEntryRequest,
+    StorageCreateDirRequest, StorageMoveEntryRequest, StorageRemoveEntryRequest,
 };
 use ah_vfs::domain::{DriverInstance, DriverKey, DriverKeyError, InstanceId};
 use ah_vfs_storage::Entry;
@@ -52,9 +51,6 @@ impl Storage for TestStorage {
         _: ah_vfs::application::port::LookupContext,
     ) -> StorageFuture<'_, Entry> {
         unsupported(Operation::Stat)
-    }
-    fn list_entries(&self, _: StorageDirQuery) -> StorageFuture<'_, StorageDirPage> {
-        unsupported(Operation::List)
     }
     fn read_file(
         &self,

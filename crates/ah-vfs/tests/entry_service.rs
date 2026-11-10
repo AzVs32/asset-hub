@@ -12,22 +12,31 @@ use ah_vfs::application::port::{
 use ah_vfs::application::service::{EntryService, MountService};
 use ah_vfs::domain::namespace::{ChildMountPolicy, VirtualPath};
 use ah_vfs::domain::storage::{
-    StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageMoveEntryRequest,
-    StorageRemoveEntryRequest,
+    StorageCreateDirRequest, StorageMoveEntryRequest, StorageRemoveEntryRequest,
 };
 use ah_vfs::domain::{DriverInstance, DriverKey, InstanceId};
 use ah_vfs::infrastructure::mount_repository::SqliteMountRepository;
-use ah_vfs_storage::{Entry, EntryType, StoragePath};
+use ah_vfs_storage::{
+    BackendFailure, BoundListRequest, DirectoryIdentity, DirectoryPage, DirectorySelection, Entry,
+    EntryType, ListRequest, PageSize, StoragePath,
+};
 
-use std::{error::Error, num::NonZeroUsize, sync::Arc};
+use std::{
+    error::Error,
+    num::NonZeroUsize,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
 type TestResult<T = ()> = Result<T, Box<dyn Error>>;
 
 #[derive(Clone, Copy)]
 enum Response {
     Normal,
-    WrongChild,
-    StuckCursor,
+    WrongBinding,
+    RetiredAfterScan,
 }
 
 struct TestDriver {
@@ -37,6 +46,7 @@ struct TestDriver {
 struct TestStorage {
     instance: InstanceId,
     response: Response,
+    retired: AtomicBool,
 }
 
 fn unsupported<T: Send + 'static>(operation: Operation) -> StorageFuture<'static, T> {
@@ -62,6 +72,7 @@ impl common::Backend for TestDriver {
             Ok(Arc::new(TestStorage {
                 instance,
                 response: self.response,
+                retired: AtomicBool::new(false),
             }) as Arc<dyn Storage>)
         })
     }
@@ -79,6 +90,9 @@ fn invalid_metadata(
 }
 
 impl Storage for TestStorage {
+    fn is_stale(&self) -> bool {
+        self.retired.load(Ordering::Relaxed)
+    }
     fn chunk_size(&self) -> NonZeroUsize {
         NonZeroUsize::MIN
     }
@@ -108,29 +122,59 @@ impl Storage for TestStorage {
             Entry::new(path, kind, None).map_err(|cause| invalid_metadata(Operation::Stat, cause))
         })
     }
-    fn list_entries(&self, query: StorageDirQuery) -> StorageFuture<'_, StorageDirPage> {
+    fn select_directory<'a>(
+        &'a self,
+        _: &'a ListRequest,
+        _: ah_vfs::application::port::LookupContext,
+    ) -> StorageFuture<'a, DirectorySelection> {
+        Box::pin(async {
+            Ok(DirectorySelection::from_lookup(
+                StoragePath::root(),
+                DirectoryIdentity::from_bytes([1; 16]),
+            ))
+        })
+    }
+
+    fn list_page<'a>(
+        &'a self,
+        bound: &'a BoundListRequest<'_>,
+    ) -> StorageFuture<'a, DirectoryPage> {
         Box::pin(async move {
-            let (names, next) = match self.response {
-                Response::WrongChild => (vec!["nested/file"], None),
-                Response::StuckCursor => (vec![], Some("same")),
-                Response::Normal if query.after.is_none() => (vec!["a", "docs"], Some("docs")),
-                Response::Normal => (vec!["z"], None),
-            };
-            Ok(StorageDirPage {
-                entries: names
-                    .into_iter()
-                    .map(|name| {
-                        let path = StoragePath::parse(name)
-                            .map_err(|cause| invalid_metadata(Operation::List, cause))?;
-                        Entry::new(path, EntryType::file(Some(1)), None)
-                            .map_err(|cause| invalid_metadata(Operation::List, cause))
-                    })
-                    .collect::<Result<_, StorageError>>()?,
-                next_after: next
-                    .map(ah_vfs_storage::EntryName::parse)
-                    .transpose()
-                    .map_err(|cause| invalid_metadata(Operation::List, cause))?,
-            })
+            if matches!(self.response, Response::RetiredAfterScan) && bound.after().is_some() {
+                self.retired.store(true, Ordering::Relaxed);
+            }
+            if matches!(self.response, Response::WrongBinding) {
+                let request = ListRequest::new(
+                    ah_vfs_storage::ListTarget::Path(StoragePath::root().to_rooted_expr()),
+                    bound.size(),
+                );
+                let wrong = DirectorySelection::from_lookup(
+                    StoragePath::root(),
+                    DirectoryIdentity::from_bytes([2; 16]),
+                );
+                let wrong = request.bind_selection(wrong).map_err(|reason| {
+                    StorageError::without_effects(Operation::List, Failure::Backend(reason), None)
+                })?;
+                return DirectoryPage::new(&wrong, vec![], false)
+                    .map_err(|cause| invalid_metadata(Operation::List, cause));
+            }
+            let mut names = ["a", "docs", "z"]
+                .into_iter()
+                .filter(|name| bound.after().is_none_or(|after| *name > after.as_str()));
+            // A backend can deliberately return short pages.
+            let entries = names
+                .next()
+                .map(|name| {
+                    let path = StoragePath::parse(name)
+                        .map_err(|cause| invalid_metadata(Operation::List, cause))?;
+                    Entry::new(path, EntryType::file(Some(1)), None)
+                        .map_err(|cause| invalid_metadata(Operation::List, cause))
+                })
+                .transpose()?
+                .into_iter()
+                .collect();
+            DirectoryPage::new(bound, entries, names.next().is_some())
+                .map_err(|cause| invalid_metadata(Operation::List, cause))
         })
     }
     fn read_file(
@@ -221,9 +265,10 @@ async fn resolves_the_deepest_driver_instance_and_maps_metadata_to_virtual_paths
 }
 
 #[tokio::test]
-async fn namespace_pagination_merges_every_backend_page_before_slicing() -> TestResult {
+async fn namespace_pagination_keeps_overlay_order_and_validates_virtual_checkpoints() -> TestResult
+{
     let (files, mounts) = services(Response::Normal).await?;
-    mounts
+    let mounted = mounts
         .mount(MountRequest {
             virtual_path: VirtualPath::parse("/docs")?,
             driver_instance: DriverInstance::new(
@@ -232,41 +277,75 @@ async fn namespace_pagination_merges_every_backend_page_before_slicing() -> Test
             ),
         })
         .await?;
-    let page = files
+    let root = VirtualPath::root();
+    let size = PageSize::new(1)?;
+    let first = files
+        .list_entries(&root, DirQuery { cursor: None, size })
+        .await?;
+    assert_eq!(first.entries[0].path.as_str(), "/a");
+    let cursor = first.continuation.ok_or("expected virtual checkpoint")?;
+    assert!(
+        matches!(files.list_entries(&VirtualPath::parse("/docs")?, DirQuery { cursor: Some(cursor.clone()), size }).await,
+        Err(EntryError::Storage(error)) if error.failure() == Failure::Backend(BackendFailure::Stale))
+    );
+    let second = files
         .list_entries(
-            &VirtualPath::root(),
+            &root,
             DirQuery {
-                after: Some("a".into()),
-                limit: NonZeroUsize::new(2).ok_or("zero limit")?,
+                cursor: Some(cursor.clone()),
+                size,
             },
         )
         .await?;
+    assert_eq!(second.entries[0].path.as_str(), "/docs");
     assert_eq!(
-        page.entries
-            .iter()
-            .map(|entry| entry.path.as_str())
-            .collect::<Vec<_>>(),
-        ["/docs", "/z"]
-    );
-    assert_eq!(
-        page.entries[0].origin,
+        second.entries[0].origin,
         EntryOrigin::MountPoint { enabled: true }
     );
-    assert!(page.next_after.is_none());
+    let third = files
+        .list_entries(
+            &root,
+            DirQuery {
+                cursor: second.continuation,
+                size,
+            },
+        )
+        .await?;
+    assert_eq!(third.entries[0].path.as_str(), "/z");
+    assert!(third.continuation.is_none());
+    mounts.disable(mounted.id).await?;
+    assert!(
+        matches!(files.list_entries(&root, DirQuery { cursor: Some(cursor), size }).await,
+        Err(EntryError::Storage(error)) if error.failure() == Failure::Backend(BackendFailure::Stale))
+    );
     Ok(())
 }
 
 #[tokio::test]
-async fn malformed_backend_children_and_nonadvancing_cursors_are_rejected() -> TestResult {
-    for response in [Response::WrongChild, Response::StuckCursor] {
-        let (files, _) = services(response).await?;
-        assert!(matches!(
-            files
-                .list_entries(&VirtualPath::root(), Default::default())
-                .await,
-            Err(EntryError::InvalidStorageResponse(_))
-        ));
-    }
+async fn virtual_cursor_rejects_a_retired_instance() -> TestResult {
+    let (files, _) = services(Response::RetiredAfterScan).await?;
+    let root = VirtualPath::root();
+    let size = PageSize::new(1)?;
+    let first = files
+        .list_entries(&root, DirQuery { cursor: None, size })
+        .await?;
+    let cursor = first.continuation.ok_or("expected continuation")?;
+    assert!(
+        matches!(files.list_entries(&root, DirQuery { cursor: Some(cursor), size }).await,
+        Err(EntryError::Storage(error)) if error.failure() == Failure::Backend(BackendFailure::Stale))
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn page_from_another_binding_is_rejected() -> TestResult {
+    let (files, _) = services(Response::WrongBinding).await?;
+    assert!(matches!(
+        files
+            .list_entries(&VirtualPath::root(), Default::default())
+            .await,
+        Err(EntryError::InvalidStorageResponse(_))
+    ));
     Ok(())
 }
 

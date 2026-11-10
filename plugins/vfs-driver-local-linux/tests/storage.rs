@@ -4,13 +4,13 @@ mod common;
 
 use ah_vfs::application::port::{Driver, Storage, StorageFileReader};
 use ah_vfs::domain::storage::{
-    StorageCreateDirRequest, StorageDirQuery, StorageMoveEntryRequest, StorageRemoveEntryRequest,
+    StorageCreateDirRequest, StorageMoveEntryRequest, StorageRemoveEntryRequest,
 };
 use ah_vfs_storage::WriteMode;
 use ah_vfs_storage::{EntryType, StoragePath};
 
 use sqlx::sqlite::SqlitePoolOptions;
-use std::{error::Error, num::NonZeroUsize, path::PathBuf, sync::Arc};
+use std::{error::Error, path::PathBuf, sync::Arc};
 use vfs_driver_local_linux::LinuxLocalDriver;
 
 type TestResult<T = ()> = Result<T, Box<dyn Error>>;
@@ -96,47 +96,50 @@ async fn metadata_and_sorted_pagination_use_instance_relative_paths() -> TestRes
         Err(error) if error.failure() == Failure::Rejected(Rejection::NotFound)
     ));
 
-    let mut query = StorageDirQuery::new(path("")?);
-    query.limit = NonZeroUsize::new(2).ok_or("zero limit")?;
-    let first = f.storage.list_entries(query).await?;
+    use ah_vfs_storage::{ListRequest, ListTarget, PageSize};
+    let query = ListRequest::new(
+        ListTarget::Path(path("")?.to_rooted_expr()),
+        PageSize::new(2)?,
+    );
+    let first = f.storage.list_entries(&query, Default::default()).await?;
     assert_eq!(
         first
-            .entries
+            .entries()
             .iter()
             .map(|n| n.path().as_str())
             .collect::<Vec<_>>(),
         ["a.txt", "b"]
     );
-    assert_eq!(first.entries[1].entry_type(), EntryType::Directory);
-    assert_eq!(
-        first
-            .next_after
-            .as_ref()
-            .map(ah_vfs_storage::EntryName::as_str),
-        Some("b")
-    );
+    assert_eq!(first.entries()[1].entry_type(), EntryType::Directory);
+    let cursor = first.continuation().ok_or("expected continuation")?;
+    assert_eq!(cursor.after().as_str(), "b");
     let second = f
         .storage
-        .list_entries(StorageDirQuery {
-            path: path("")?,
-            after: first.next_after,
-            limit: NonZeroUsize::new(2).ok_or("zero limit")?,
-        })
+        .list_entries(
+            &ListRequest::new(ListTarget::Continue(cursor), PageSize::new(2)?),
+            Default::default(),
+        )
         .await?;
     assert_eq!(
         second
-            .entries
+            .entries()
             .iter()
             .map(|n| n.path().as_str())
             .collect::<Vec<_>>(),
         ["c.txt", "文件"]
     );
-    assert!(second.next_after.is_none());
+    assert!(second.continuation().is_none());
     assert!(
         f.storage
-            .list_entries(StorageDirQuery::new(path("b")?))
+            .list_entries(
+                &ah_vfs_storage::ListRequest::new(
+                    ah_vfs_storage::ListTarget::Path(path("b")?.to_rooted_expr()),
+                    Default::default()
+                ),
+                Default::default()
+            )
             .await?
-            .entries
+            .entries()
             .is_empty()
     );
     Ok(())
@@ -145,17 +148,12 @@ async fn metadata_and_sorted_pagination_use_instance_relative_paths() -> TestRes
 #[tokio::test]
 async fn invalid_dir_queries_fail_explicitly() -> TestResult {
     let f = fixture().await?;
-    let mut query = StorageDirQuery::new(path("")?);
-    query.limit = NonZeroUsize::new(1001).ok_or("zero limit")?;
-    assert!(matches!(
-        f.storage.list_entries(query).await,
-        Err(error) if error.failure() == Failure::Rejected(Rejection::LimitExceeded)
-    ));
+    assert!(ah_vfs_storage::PageSize::new(1001).is_err());
     assert!(ah_vfs_storage::EntryName::parse("../outside").is_err());
     std::fs::write(f.root.join("file"), b"x")?;
     assert!(matches!(
         f.storage
-            .list_entries(StorageDirQuery::new(path("file")?))
+            .list_entries(&ah_vfs_storage::ListRequest::new(ah_vfs_storage::ListTarget::Path(path("file")?.to_rooted_expr()), Default::default()), Default::default())
             .await,
         Err(error) if error.failure() == Failure::Rejected(Rejection::NotDirectory)
     ));
@@ -267,9 +265,15 @@ async fn chunked_writes_publish_only_at_commit_and_reads_honor_ranges() -> TestR
     assert!(!f.root.join("data").exists());
     assert!(
         f.storage
-            .list_entries(StorageDirQuery::new(path("")?))
+            .list_entries(
+                &ah_vfs_storage::ListRequest::new(
+                    ah_vfs_storage::ListTarget::Path(path("")?.to_rooted_expr()),
+                    Default::default()
+                ),
+                Default::default()
+            )
             .await?
-            .entries
+            .entries()
             .is_empty()
     );
     let metadata = writer.commit().await?;
@@ -685,9 +689,15 @@ async fn staging_names_are_hidden_and_cannot_be_accessed() -> TestResult {
     let name = ".asset-hub-write-reserved";
     assert!(
         f.storage
-            .list_entries(StorageDirQuery::new(path("")?))
+            .list_entries(
+                &ah_vfs_storage::ListRequest::new(
+                    ah_vfs_storage::ListTarget::Path(path("")?.to_rooted_expr()),
+                    Default::default()
+                ),
+                Default::default()
+            )
             .await?
-            .entries
+            .entries()
             .is_empty()
     );
     assert!(matches!(
@@ -760,10 +770,16 @@ async fn lookup_policy_controls_links_without_escaping_the_instance() -> TestRes
     ));
     let page = f
         .storage
-        .list_entries(StorageDirQuery::new(path("")?))
+        .list_entries(
+            &ah_vfs_storage::ListRequest::new(
+                ah_vfs_storage::ListTarget::Path(path("")?.to_rooted_expr()),
+                Default::default(),
+            ),
+            Default::default(),
+        )
         .await?;
     assert!(
-        page.entries
+        page.entries()
             .iter()
             .all(|n| n.entry_type() == EntryType::Symlink)
     );
@@ -796,7 +812,13 @@ async fn lookup_policy_controls_links_without_escaping_the_instance() -> TestRes
     ));
     assert!(
         f.storage
-            .list_entries(StorageDirQuery::new(path("linked")?))
+            .list_entries(
+                &ah_vfs_storage::ListRequest::new(
+                    ah_vfs_storage::ListTarget::Path(path("linked")?.to_rooted_expr()),
+                    Default::default()
+                ),
+                Default::default()
+            )
             .await
             .is_err()
     );
@@ -911,7 +933,7 @@ async fn non_utf8_dir_entries_fail_without_lossy_conversion() -> TestResult {
     std::fs::write(f.root.join(OsString::from_vec(b"file-\xff".to_vec())), b"x")?;
     assert!(matches!(
         f.storage
-            .list_entries(StorageDirQuery::new(path("")?))
+            .list_entries(&ah_vfs_storage::ListRequest::new(ah_vfs_storage::ListTarget::Path(path("")?.to_rooted_expr()), Default::default()), Default::default())
             .await,
         Err(error) if error.failure() == Failure::Backend(BackendFailure::UnrepresentableName)
     ));
@@ -970,5 +992,54 @@ async fn recursive_creation_failure_preserves_cause_operation_and_parent_effects
     assert_eq!(error.operation(), Operation::Remove);
     assert_eq!(error.failure(), Failure::Rejected(Rejection::RootProtected));
     assert_eq!(error.outcome(), MutationOutcome::Unchanged);
+    Ok(())
+}
+
+#[tokio::test]
+async fn directory_cursor_survives_alias_changes_but_rejects_replacement_and_other_instances()
+-> TestResult {
+    use ah_vfs_storage::{ListRequest, ListTarget, PageSize, PathExpr};
+    use std::os::unix::fs::symlink;
+    let first = fixture().await?;
+    let other = fixture().await?;
+    for root in [&first.root, &other.root] {
+        std::fs::create_dir(root.join("a"))?;
+        std::fs::write(root.join("a/one"), b"one")?;
+        std::fs::write(root.join("a/two"), b"two")?;
+    }
+    std::fs::create_dir(first.root.join("b"))?;
+    symlink("/a", first.root.join("alias"))?;
+    let initial = ListRequest::new(
+        ListTarget::Path(PathExpr::parse("/alias")?),
+        PageSize::new(1)?,
+    );
+    let page = first
+        .storage
+        .list_entries(&initial, Default::default())
+        .await?;
+    assert_eq!(page.selection().address(), &path("a")?);
+    assert_eq!(page.entries()[0].path(), &path("a/one")?);
+    let resume = ListRequest::new(
+        ListTarget::Continue(page.continuation().ok_or("continuation")?),
+        PageSize::DEFAULT,
+    );
+    std::fs::remove_file(first.root.join("alias"))?;
+    symlink("/b", first.root.join("alias"))?;
+    let page = first
+        .storage
+        .list_entries(&resume, Default::default())
+        .await?;
+    assert_eq!(page.entries()[0].path(), &path("a/two")?);
+    assert!(page.continuation().is_none());
+    assert!(
+        matches!(other.storage.list_entries(&resume, Default::default()).await,
+        Err(error) if error.failure() == Failure::Backend(BackendFailure::Stale))
+    );
+    std::fs::remove_dir_all(first.root.join("a"))?;
+    std::fs::create_dir(first.root.join("a"))?;
+    assert!(
+        matches!(first.storage.list_entries(&resume, Default::default()).await,
+        Err(error) if error.failure() == Failure::Backend(BackendFailure::Stale))
+    );
     Ok(())
 }

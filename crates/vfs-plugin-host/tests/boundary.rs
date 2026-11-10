@@ -21,6 +21,7 @@ enum Fault {
     Capabilities,
     Commit,
     Reader,
+    DirectoryPage { wrong_address: bool },
     Attributes(String),
 }
 struct Peer {
@@ -39,6 +40,9 @@ impl Peer {
                 p::Capability::PermissionsRead as i32,
                 p::Capability::XattrsRead as i32,
             ]);
+        }
+        if matches!(self.fault, Fault::DirectoryPage { .. }) {
+            capabilities.push(p::Capability::List as i32);
         }
         capabilities
     }
@@ -86,6 +90,31 @@ impl Transport for Peer {
                     info: Some(p::StorageInfo { chunk_size: 65536 }),
                 }),
                 Op::Storage(call) => match call.operation {
+                    Some(p::StorageOp::SelectDirectory(_)) => {
+                        Value::SelectedDirectory(p::DirectorySelection {
+                            address: String::new(),
+                            identity: vec![1; 16],
+                        })
+                    }
+                    Some(p::StorageOp::List(_)) => {
+                        let wrong_address = matches!(
+                            self.fault,
+                            Fault::DirectoryPage {
+                                wrong_address: true
+                            }
+                        );
+                        Value::Page(p::Page {
+                            reported: Some(p::DirectorySelection {
+                                address: if wrong_address {
+                                    "forged".into()
+                                } else {
+                                    String::new()
+                                },
+                                identity: vec![if wrong_address { 1 } else { 2 }; 16],
+                            }),
+                            completion: Some(p::page::Completion::End(p::Empty {})),
+                        })
+                    }
                     Some(p::StorageOp::GetPermissions(_)) => {
                         Value::Permissions(p::Permissions { mode: 0o100644 })
                     }
@@ -320,6 +349,34 @@ async fn malformed_xattr_responses_keep_each_value_validation_cause() -> Result 
                 .source()
                 .and_then(|e| e.downcast_ref::<XattrNameError>()),
             Some(&expected)
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_empty_remote_page_cannot_attest_its_own_directory() -> Result {
+    use ah_vfs_storage::{ContractViolation, ListRequest, ListTarget};
+    for wrong_address in [false, true] {
+        let (driver, _) = peer(Fault::DirectoryPage { wrong_address }).await?;
+        let storage = driver
+            .open(OpenContext::new(
+                InstanceId::parse("fixture")?,
+                Default::default(),
+            ))
+            .await?;
+        let request = ListRequest::new(
+            ListTarget::Path(StoragePath::root().to_rooted_expr()),
+            Default::default(),
+        );
+        let error = storage
+            .list_entries(&request, Default::default())
+            .await
+            .err()
+            .ok_or("forged page accepted")?;
+        assert_eq!(
+            error.failure(),
+            Failure::Contract(ContractViolation::InvalidPage)
         );
     }
     Ok(())

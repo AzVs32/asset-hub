@@ -88,6 +88,16 @@ pub struct DirectoryCursor {
 }
 
 impl DirectoryCursor {
+    /// Restore a serialized checkpoint. Execution must independently verify the
+    /// directory binding before using the name as a continuation.
+    pub fn from_checkpoint(
+        selection: DirectorySelection,
+        after: EntryName,
+    ) -> Result<Self, super::PathError> {
+        selection.address().join(&after)?;
+        Ok(Self { selection, after })
+    }
+
     pub fn selection(&self) -> &DirectorySelection {
         &self.selection
     }
@@ -165,6 +175,10 @@ pub struct BoundListRequest<'a> {
 }
 
 impl BoundListRequest<'_> {
+    pub fn request(&self) -> &ListRequest {
+        self.request
+    }
+
     pub fn selection(&self) -> &DirectorySelection {
         &self.selection
     }
@@ -293,6 +307,15 @@ impl DirectoryPage {
         Some(DirectoryCursor {
             selection: self.selection.clone(),
             after,
+        })
+    }
+
+    /// Take a checkpoint at an already validated entry, for example when a
+    /// namespace overlay consumes only a prefix of this page.
+    pub fn checkpoint(&self, index: usize) -> Option<DirectoryCursor> {
+        Some(DirectoryCursor {
+            selection: self.selection.clone(),
+            after: self.entries.get(index)?.path().name()?,
         })
     }
 

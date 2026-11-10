@@ -370,3 +370,67 @@ pub(super) fn write_destination(
     }
     Ok((dir, path))
 }
+
+pub(super) fn listing_directory(
+    root: &Dir,
+    lookup: PathLookup<'_>,
+    context: LookupContext,
+) -> Result<(StoragePath, Dir), StorageError> {
+    let op = Operation::List;
+    let selected = Walk::select(root, lookup, context, op)?;
+    if selected.entry.entry_type() != EntryType::Directory {
+        return Err(rejected(op, Rejection::NotDirectory));
+    }
+    let dir = selected
+        .file
+        .try_clone()
+        .map_err(|cause| fs::error(op, cause))?;
+    Ok((
+        selected.entry.path().clone(),
+        Dir::from_std_file(dir.into_std()),
+    ))
+}
+
+pub(super) fn same_directory(left: &Dir, right: &Dir) -> Result<bool, StorageError> {
+    let stat = |dir: &Dir| fstat(dir).map_err(|cause| fs::error(Operation::List, cause.into()));
+    let (left, right) = (stat(left)?, stat(right)?);
+    Ok(left.st_nlink != 0
+        && right.st_nlink != 0
+        && (left.st_dev, left.st_ino) == (right.st_dev, right.st_ino))
+}
+
+pub(super) fn list_stale() -> StorageError {
+    stale(Operation::List)
+}
+
+pub(super) fn reopen_listing_directory(
+    root: &Dir,
+    selection: &ah_vfs_storage::DirectorySelection,
+) -> Result<Dir, StorageError> {
+    use ah_vfs_storage::{IntermediateSymlinks, StatRequest};
+    let context = LookupContext {
+        working_directory: StoragePath::root(),
+        intermediate_symlinks: IntermediateSymlinks::Reject,
+    };
+    let stat = StatRequest::new(
+        selection.address().to_rooted_expr(),
+        SymlinkAction::Preserve,
+    );
+    listing_directory(root, stat.lookup(), context)
+        .map(|(_, dir)| dir)
+        .map_err(|error| {
+            if matches!(
+                error.failure(),
+                Failure::Rejected(
+                    Rejection::NotFound
+                        | Rejection::NotDirectory
+                        | Rejection::SymlinkNotAllowed
+                        | Rejection::Unsupported
+                )
+            ) {
+                list_stale()
+            } else {
+                error
+            }
+        })
+}

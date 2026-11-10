@@ -34,7 +34,6 @@ fn caps() -> Vec<i32> {
     p::encode_capabilities(
         Capabilities::default()
             .with_stat(true)
-            .with_list(true)
             .with_read(ReadSupport::Range)
             .with_write(WriteSupport::staged(WriteModes::Both, true))
             .with_directories(DirectorySupport::prefix(false, false))
@@ -144,16 +143,6 @@ impl GuestStorage for S3Storage {
             p::StorageOp::Stat(request) => {
                 let entry = api::direct_stat(request, |path| client.stat(path.as_str()))?;
                 Value::Entry(encode_entry(&context, &entry)?)
-            }
-            p::StorageOp::List(p::List { path, after, limit }) => {
-                let (entries, next_after) = client.list(&path, after.as_deref(), limit)?;
-                Value::Page(p::Page {
-                    entries: entries
-                        .iter()
-                        .map(|entry| encode_entry(&context, entry))
-                        .collect::<Result<_>>()?,
-                    next_after,
-                })
             }
             p::StorageOp::Remove(p::Path { path }) => {
                 let entry = client.stat(&path)?;

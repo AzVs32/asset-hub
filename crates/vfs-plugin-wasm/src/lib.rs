@@ -511,14 +511,15 @@ impl Instance {
                 state.poisoned = state.faulted
                     || result.as_ref().err().is_some_and(|error| {
                         error.storage_error().is_some_and(|error| {
-                            matches!(
-                                error.failure(),
-                                Failure::Backend(
-                                    BackendFailure::TimedOut
-                                        | BackendFailure::Unavailable
-                                        | BackendFailure::Stale
+                            !c::is_stale_directory(error)
+                                && matches!(
+                                    error.failure(),
+                                    Failure::Backend(
+                                        BackendFailure::TimedOut
+                                            | BackendFailure::Unavailable
+                                            | BackendFailure::Stale
+                                    )
                                 )
-                            )
                         }) || error.lifecycle_error().is_some_and(|error| {
                             matches!(
                                 error.failure(),

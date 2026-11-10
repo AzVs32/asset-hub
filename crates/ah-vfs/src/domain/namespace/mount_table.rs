@@ -193,7 +193,7 @@ impl MountTable {
         })
     }
 
-    fn iter(&self) -> impl Iterator<Item = &Mount> {
+    pub(crate) fn iter(&self) -> impl Iterator<Item = &Mount> {
         std::iter::once(&self.root).chain(self.mounts.iter())
     }
 

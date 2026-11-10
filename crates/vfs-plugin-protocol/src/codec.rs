@@ -193,6 +193,13 @@ pub fn validate_request(request: &Request) -> Result<()> {
             StorageOp::Stat(request) => {
                 super::decode_stat(request.clone()).map_err(|_| CodecError::InvalidData)?;
             }
+            StorageOp::SelectDirectory(request) => {
+                super::decode_select_directory(request.clone())
+                    .map_err(|_| CodecError::InvalidData)?;
+            }
+            StorageOp::List(request) => {
+                super::decode_list(request.clone()).map_err(|_| CodecError::InvalidData)?;
+            }
             StorageOp::ReadLink(request) => {
                 super::decode_lookup(request.lookup.clone())
                     .map_err(|_| CodecError::InvalidData)?;
@@ -233,7 +240,9 @@ fn check_entry(value: &Entry) -> Result<()> {
 
 pub fn validate_reply(reply: &Reply) -> Result<()> {
     let value = field(&reply.result)?;
-    if !reply.data.is_empty() && !matches!(value, Value::Bytes(_) | Value::Chunk(_)) {
+    if !reply.data.is_empty()
+        && !matches!(value, Value::Bytes(_) | Value::Chunk(_) | Value::Page(_))
+    {
         return Err(CodecError::InvalidData);
     }
     match value {
@@ -255,9 +264,8 @@ pub fn validate_reply(reply: &Reply) -> Result<()> {
         }
         Value::Entry(v) => check_entry(v)?,
         Value::Page(v) => {
-            for value in &v.entries {
-                check_entry(value)?;
-            }
+            field(&v.reported)?;
+            field(&v.completion)?;
         }
         Value::Chunk(v) if v.eof != reply.data.is_empty() => return Err(CodecError::InvalidData),
         _ => {}
@@ -318,7 +326,4 @@ pub fn decode_reply(bytes: &[u8]) -> Result<std::result::Result<Reply, Failure>>
     let reply = Reply::decode(bytes).map_err(CodecError::Decode)?;
     bound(bytes.len(), &reply.data)?;
     from_reply(reply)
-}
-pub fn entry_encoded_len(value: &Entry) -> usize {
-    value.encoded_len()
 }

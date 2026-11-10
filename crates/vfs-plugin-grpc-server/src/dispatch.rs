@@ -3,7 +3,7 @@ use ah_vfs::application::driver_error::{DriverError, LifecycleError, LifecycleFa
 use ah_vfs::application::port::*;
 use ah_vfs::domain::InstanceId;
 use ah_vfs::domain::storage::{
-    StorageCreateDirRequest, StorageDirQuery, StorageMoveEntryRequest, StorageRemoveEntryRequest,
+    StorageCreateDirRequest, StorageMoveEntryRequest, StorageRemoveEntryRequest,
 };
 use ah_vfs_storage::{BackendFailure, Failure, Operation, Rejection, StorageError};
 use ah_vfs_storage::{Permissions, ReadLinkRequest, StoragePath, XattrName, XattrWriteMode};
@@ -723,32 +723,45 @@ impl Session {
                     data,
                 });
             }
-            p::StorageOp::List(p::List {
-                path: raw,
-                after,
-                limit,
-            }) => {
-                let q = StorageDirQuery {
-                    path: path(&raw)?,
-                    after: after
-                        .as_deref()
-                        .map(ah_vfs_storage::EntryName::parse)
-                        .transpose()
-                        .map_err(|cause| {
-                            LifecycleError::with_source(LifecycleFailure::InvalidRequest, cause)
-                        })?,
-                    limit: c::limit(limit)?,
-                };
-                q.validate()?;
-                let page = s.list_entries(q).await?;
-                Value::Page(p::Page {
-                    entries: page
-                        .entries
-                        .into_iter()
-                        .map(|entry| c::entry(operation, entry))
-                        .collect::<Result<_, _>>()?,
-                    next_after: page.next_after.map(|name| name.as_str().into()),
-                })
+            p::StorageOp::SelectDirectory(wire) => {
+                let (request, working_directory, intermediate_symlinks) =
+                    p::decode_select_directory(wire)
+                        .map_err(|_| LifecycleError::new(LifecycleFailure::InvalidRequest))?;
+                let selection = s
+                    .select_directory(
+                        &request,
+                        LookupContext {
+                            working_directory,
+                            intermediate_symlinks,
+                        },
+                    )
+                    .await?;
+                request
+                    .bind_selection(selection.clone())
+                    .map_err(|failure| {
+                        StorageError::without_effects(
+                            Operation::List,
+                            Failure::Backend(failure),
+                            None,
+                        )
+                    })?;
+                Value::SelectedDirectory(p::encode_selection(&selection))
+            }
+            p::StorageOp::List(wire) => {
+                let (request, selection) = p::decode_list(wire)
+                    .map_err(|_| LifecycleError::new(LifecycleFailure::InvalidRequest))?;
+                let bound = request.bind_selection(selection).map_err(|failure| {
+                    StorageError::without_effects(Operation::List, Failure::Backend(failure), None)
+                })?;
+                let page = s.list_page(&bound).await?;
+                if page.selection() != bound.selection()
+                    || page.entries().len() > bound.size().get()
+                {
+                    return Err(c::storage_protocol_violation(Operation::List).into());
+                }
+                return p::encode_page(page).map_err(|cause| {
+                    c::storage_protocol_violation_with_source(Operation::List, cause).into()
+                });
             }
             p::StorageOp::CreateDir(p::CreateDir {
                 path: raw,

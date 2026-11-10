@@ -116,3 +116,6 @@ pub use super::host_instance_registry::record::{InstanceRecord, InstanceRecordPa
 pub use instance_provisioner::{InstanceProvisioner, PreparedConfig};
 pub use instance_record_repository::InstanceRecordRepository;
 pub use secret_cipher::{SecretCipher, SecretContext};
+
+mod directory_bindings;
+pub use directory_bindings::DirectoryBindings;

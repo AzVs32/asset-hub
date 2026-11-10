@@ -1,6 +1,6 @@
 //! An authenticated, bounded memory-storage session using the new domain contract.
 //! The service is independent of plugin registration and binds one configured
-//! instance. One stream owns its active listing.
+//! instance.
 use crate::{ServerLimits, limits, security::AuthToken};
 use ah_vfs::application::driver_error::DriverError;
 use ah_vfs_storage as d;
@@ -50,7 +50,6 @@ impl wire::storage_contract_server::StorageContract for ContractService {
         let (tx, rx) = mpsc::channel(1);
         let mut session = Session {
             storage: self.storage.clone(),
-            listing: None,
         };
         let admission = self.admission.clone();
         let task_permit = permit.clone();
@@ -126,14 +125,8 @@ async fn send(
     )
 }
 
-struct Listing {
-    selection: d::DirectorySelection,
-    request: d::ListRequest,
-}
-
 struct Session {
     storage: Arc<MemoryStorage>,
-    listing: Option<Listing>,
 }
 
 enum CallError {
@@ -176,47 +169,6 @@ impl Session {
         };
         let unit = || Reply::Unit(wire::Unit {});
         match frame.action.ok_or_else(invalid_request)? {
-            Action::SelectDirectory(request) => {
-                self.listing = None;
-                let size = usize::try_from(request.page_size)
-                    .ok()
-                    .filter(|size| *size <= wire::MAX_PAGE_ENTRIES)
-                    .and_then(|size| d::PageSize::new(size).ok())
-                    .ok_or_else(invalid_request)?;
-                let request = d::ListRequest::new(d::ListTarget::Path(path(&request.path)?), size);
-                let selection = self.storage.select_directory(&request, links)?;
-                let reply = Reply::SelectedDirectory(wire::encode_selection(&selection));
-                self.listing = Some(Listing { selection, request });
-                Ok(reply)
-            }
-            Action::NextPage(_) => {
-                let listing = self
-                    .listing
-                    .take()
-                    .ok_or_else(|| closed(d::Operation::List))?;
-                let bound = listing
-                    .request
-                    .bind_selection(listing.selection.clone())
-                    .map_err(|cause| {
-                        d::StorageError::without_effects(
-                            d::Operation::List,
-                            d::Failure::Backend(cause),
-                            None,
-                        )
-                    })?;
-                let page = self.storage.list_page(&bound)?;
-                let next = page.continuation();
-                let reply = wire::encode_page(page)
-                    .map_err(|cause| response_error(d::Operation::List, cause))?;
-                self.listing = next.map(|cursor| Listing {
-                    selection: listing.selection,
-                    request: d::ListRequest::new(
-                        d::ListTarget::Continue(cursor),
-                        listing.request.size(),
-                    ),
-                });
-                Ok(Reply::Page(reply))
-            }
             Action::CreateDirectory(request) => {
                 let mode = if request.recursive {
                     d::CreateDirectoryMode::Recursive
@@ -263,9 +215,7 @@ fn response_error(op: d::Operation, cause: d::ContractViolation) -> d::StorageEr
 fn reject(op: d::Operation, cause: d::Rejection) -> d::StorageError {
     d::StorageError::without_effects(op, d::Failure::Rejected(cause), None)
 }
-fn closed(op: d::Operation) -> d::StorageError {
-    d::StorageError::without_effects(op, d::Failure::Backend(d::BackendFailure::Closed), None)
-}
+
 fn invalid_request() -> Status {
     Status::invalid_argument("invalid storage command")
 }

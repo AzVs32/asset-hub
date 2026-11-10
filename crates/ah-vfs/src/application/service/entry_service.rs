@@ -2,7 +2,7 @@
 
 use crate::application::dto::{
     CreateDirRequest, DirPage, DirQuery, EntryOrigin, EntryView, MoveEntryRequest, ReadFileRequest,
-    RemoveEntryRequest, WriteFileRequest,
+    RemoveEntryRequest, VfsDirectoryCursor, WriteFileRequest,
 };
 use crate::application::error::EntryError;
 use crate::application::mount_runtime::MountRuntime;
@@ -10,9 +10,9 @@ use crate::application::port::{LookupContext, Storage};
 use crate::application::session::{FileReadHandle, FileWriteHandle};
 use crate::domain::namespace::{Mount, MountTable, VirtualPath};
 use crate::domain::storage::{
-    MAX_DIR_PAGE_LIMIT, StorageCreateDirRequest, StorageDirQuery, StorageMoveEntryRequest,
-    StorageRemoveEntryRequest, validate_dir_page_limit,
+    StorageCreateDirRequest, StorageMoveEntryRequest, StorageRemoveEntryRequest,
 };
+use ah_vfs_storage::{BackendFailure, DirectoryCursor, ListRequest, ListTarget};
 use ah_vfs_storage::{
     Capabilities, LinkTarget, ReadLinkRequest, ReadRequest, RenameMode, StatRequest, SymlinkAction,
     WriteRequest,
@@ -156,139 +156,197 @@ impl EntryService {
             .await?)
     }
 
-    /// Merge backend children with direct mounts and synthetic ancestors.
-    /// Mount entries shadow backend names, including disabled mounts. Pagination
-    /// is live and scans backend pages before slicing the merged result.
+    /// Merge live backend pages with the current virtual namespace.
+    /// A continuation keeps the mount snapshot and the selected directory.
     pub async fn list_entries(
         &self,
         path: &VirtualPath,
         query: DirQuery,
     ) -> Result<DirPage, EntryError> {
-        validate_dir_page_limit(query.limit)?;
-        if let Some(after) = &query.after {
-            path.join(after)?;
-        }
-        let table = self.runtime.table().await?;
-        let synthetic = matches!(Self::classify(&table, path), NamespaceEntry::SyntheticDir);
-        let (relative, storage, capabilities) = self.open(&table, path).await?;
-        Self::require(Operation::List, capabilities.list())?;
-        if synthetic {
-            Self::require(Operation::List, capabilities.stat())?;
-        }
-        let mut entries = BTreeMap::new();
-        let mut after = None;
-        // A namespace directory shadows a same-name backend file or symlink.
-        let scan_backend = if synthetic {
-            match storage
-                .stat_entry(
-                    StatRequest::new(relative.to_rooted_expr(), SymlinkAction::Preserve),
-                    LookupContext::default(),
-                )
-                .await
-            {
-                Ok(entry) => entry.entry_type() == EntryType::Directory,
-                Err(error)
-                    if matches!(
-                        error.failure(),
-                        Failure::Rejected(Rejection::NotFound)
-                            | Failure::Rejected(Rejection::NotDirectory)
-                    ) =>
-                {
-                    false
-                }
-                Err(error) => return Err(error.into()),
-            }
-        } else {
-            true
+        let stale = || {
+            StorageError::without_effects(
+                Operation::List,
+                Failure::Backend(BackendFailure::Stale),
+                None,
+            )
         };
-        if scan_backend {
-            loop {
-                let page = storage
-                    .list_entries(StorageDirQuery {
-                        path: relative.clone(),
-                        after: after.clone(),
-                        limit: MAX_DIR_PAGE_LIMIT,
-                    })
-                    .await;
-                let page = match page {
-                    Ok(page) => page,
-                    Err(error)
-                        if synthetic
-                            && matches!(
-                                error.failure(),
-                                Failure::Rejected(Rejection::NotFound)
-                                    | Failure::Rejected(Rejection::NotDirectory)
-                            ) =>
-                    {
-                        break;
-                    }
-                    Err(error) => return Err(error.into()),
-                };
-                for entry in page.entries {
-                    if entry.path().parent().as_ref() != Some(&relative) {
-                        return Err(EntryError::InvalidStorageResponse(
-                            "entry is not an immediate child",
-                        ));
-                    }
-                    let name = entry
-                        .path()
-                        .name()
-                        .ok_or(EntryError::InvalidStorageResponse("child has no name"))?
-                        .as_str()
-                        .to_owned();
-                    entries.insert(
-                        name.clone(),
-                        EntryView::from_storage(path.join(&name)?, entry),
-                    );
-                }
-                match page.next_after {
-                    Some(next) if after.as_ref().is_none_or(|previous| next > *previous) => {
-                        after = Some(next)
-                    }
-                    Some(_) => {
-                        return Err(EntryError::InvalidStorageResponse(
-                            "directory cursor did not advance",
-                        ));
-                    }
-                    None => break,
-                }
-            }
+        let table = self.runtime.table().await?;
+        let cursor = query.cursor;
+        if cursor
+            .as_ref()
+            .is_some_and(|cursor| &cursor.path != path || !Arc::ptr_eq(&cursor.mounts, &table))
+        {
+            return Err(stale().into());
         }
-        for mount in table.list() {
+        let (storage, directory) = match &cursor {
+            Some(cursor) => {
+                if cursor.storage.is_stale() {
+                    return Err(stale().into());
+                }
+                (cursor.storage.clone(), cursor.directory.clone())
+            }
+            None => {
+                let (relative, storage, capabilities) = self.open(&table, path).await?;
+                Self::require(Operation::List, capabilities.list())?;
+                let context = LookupContext::default();
+                let request =
+                    ListRequest::new(ListTarget::Path(relative.to_rooted_expr()), query.size);
+                let directory =
+                    if matches!(Self::classify(&table, path), NamespaceEntry::SyntheticDir) {
+                        Self::require(Operation::List, capabilities.stat())?;
+                        match storage
+                            .stat_entry(
+                                StatRequest::new(
+                                    relative.to_rooted_expr(),
+                                    SymlinkAction::Preserve,
+                                ),
+                                context.clone(),
+                            )
+                            .await
+                        {
+                            Ok(entry) if entry.entry_type() == EntryType::Directory => {
+                                let selection = storage.select_directory(&request, context).await?;
+                                if selection.address() != &relative {
+                                    return Err(stale().into());
+                                }
+                                Some(selection)
+                            }
+                            Ok(_) => None,
+                            Err(error)
+                                if matches!(
+                                    error.failure(),
+                                    Failure::Rejected(
+                                        Rejection::NotFound | Rejection::NotDirectory
+                                    )
+                                ) =>
+                            {
+                                None
+                            }
+                            Err(error) => return Err(error.into()),
+                        }
+                    } else {
+                        Some(storage.select_directory(&request, context).await?)
+                    };
+                (storage, directory)
+            }
+        };
+
+        let after = cursor.as_ref().map(|cursor| cursor.after.clone());
+        let limit = query.size.get();
+        let mut candidates = BTreeMap::<String, (EntryView, Option<DirectoryCursor>)>::new();
+        for mount in table.iter() {
             let Some(suffix) = mount.virtual_path().strip_prefix(path) else {
                 continue;
             };
             let Some(name) = suffix.split('/').find(|name| !name.is_empty()) else {
                 continue;
             };
+            if after.as_deref().is_some_and(|after| name <= after) {
+                continue;
+            }
             let child = path.join(name)?;
             let origin = table
                 .get_by_path(&child)
-                .map_or(EntryOrigin::SyntheticDir, |direct| {
-                    EntryOrigin::MountPoint {
-                        enabled: direct.enabled(),
-                    }
+                .map_or(EntryOrigin::SyntheticDir, |mount| EntryOrigin::MountPoint {
+                    enabled: mount.enabled(),
                 });
-            entries.insert(name.to_owned(), EntryView::dir(child, origin));
+            candidates.insert(name.to_owned(), (EntryView::dir(child, origin), None));
+            if candidates.len() > limit + 1 {
+                candidates.pop_last();
+            }
         }
-        let mut entries: Vec<_> = entries
-            .into_iter()
-            .filter(|(name, _)| query.after.as_ref().is_none_or(|after| name > after))
-            .take(query.limit.get() + 1)
-            .map(|(_, entry)| entry)
-            .collect();
-        let more = entries.len() > query.limit.get();
-        entries.truncate(query.limit.get());
-        let next_after = more
-            .then(|| {
-                entries
-                    .last()
-                    .and_then(|entry| entry.path.name().map(str::to_owned))
+
+        // Keep only one page of merged candidates plus a lookahead. A shadowed
+        // backend name still advances its instance cursor when emitted.
+        let mut backend = cursor.and_then(|cursor| cursor.backend);
+        if let Some(selection) = &directory {
+            let mut scan = backend.clone();
+            'pages: loop {
+                let target = scan.map_or_else(
+                    || ListTarget::Path(selection.address().to_rooted_expr()),
+                    ListTarget::Continue,
+                );
+                let request = ListRequest::new(target, query.size);
+                let bound = request
+                    .bind_selection(selection.clone())
+                    .map_err(|_| stale())?;
+                let page = storage.list_page(&bound).await?;
+                if page.selection() != selection
+                    || page.entries().len() > limit
+                    || page.entries().first().is_some_and(|entry| {
+                        bound.after().is_some_and(|after| {
+                            entry.path().name().is_none_or(|name| &name <= after)
+                        })
+                    })
+                {
+                    return Err(EntryError::InvalidStorageResponse(
+                        "directory page disagrees with its binding",
+                    ));
+                }
+                for (index, entry) in page.entries().iter().enumerate() {
+                    let checkpoint = page
+                        .checkpoint(index)
+                        .ok_or(EntryError::InvalidStorageResponse("child has no name"))?;
+                    let name = checkpoint.after().as_str();
+                    if after.as_deref().is_some_and(|after| name <= after) {
+                        backend = Some(checkpoint);
+                        continue;
+                    }
+                    if candidates.len() > limit
+                        && candidates
+                            .last_key_value()
+                            .is_some_and(|(last, _)| name > last.as_str())
+                    {
+                        break 'pages;
+                    }
+                    if let Some((_, position)) = candidates.get_mut(name) {
+                        *position = Some(checkpoint);
+                    } else {
+                        let virtual_path = path.join(name)?;
+                        candidates.insert(
+                            name.to_owned(),
+                            (
+                                EntryView::from_storage(virtual_path, entry.clone()),
+                                Some(checkpoint),
+                            ),
+                        );
+                        if candidates.len() > limit + 1 {
+                            candidates.pop_last();
+                        }
+                    }
+                }
+                let Some(next) = page.continuation() else {
+                    break;
+                };
+                scan = Some(next);
+            }
+        }
+
+        let more = candidates.len() > limit;
+        let mut entries = Vec::with_capacity(limit.min(candidates.len()));
+        let mut last = None;
+        for (name, (entry, position)) in candidates.into_iter().take(limit) {
+            if position.is_some() {
+                backend = position;
+            }
+            last = Some(name);
+            entries.push(entry);
+        }
+        let continuation = if more {
+            last.map(|after| VfsDirectoryCursor {
+                path: path.clone(),
+                mounts: table,
+                storage,
+                after,
+                directory,
+                backend,
             })
-            .flatten();
+        } else {
+            None
+        };
         Ok(DirPage {
             entries,
-            next_after,
+            continuation,
         })
     }
 

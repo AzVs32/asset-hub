@@ -2,12 +2,13 @@ use crate::Capacity;
 use ah_vfs::application::port::LookupContext;
 use ah_vfs::application::port::{Storage, StorageFileReader, StorageFileWriter, StorageFuture};
 use ah_vfs::domain::storage::{
-    StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageMoveEntryRequest,
-    StorageRemoveEntryRequest,
+    StorageCreateDirRequest, StorageMoveEntryRequest, StorageRemoveEntryRequest,
 };
-use ah_vfs_storage::WriteRequest;
 use ah_vfs_storage::{
     BackendFailure, ContractViolation, Failure, Operation, Rejection, StorageError,
+};
+use ah_vfs_storage::{
+    BoundListRequest, DirectoryPage, DirectorySelection, ListRequest, WriteRequest,
 };
 use ah_vfs_storage::{
     Entry, EntryType, LinkTarget, ReadLinkRequest, ReadRequest, StatRequest, StoragePath,
@@ -272,46 +273,19 @@ impl Storage for MemoryStorage {
         Box::pin(async move { self.read_link_selected(&request, context) })
     }
 
-    fn list_entries(&self, query: StorageDirQuery) -> StorageFuture<'_, StorageDirPage> {
-        Box::pin(async move {
-            let operation = Operation::List;
-            query.validate()?;
-            let entries = self.shared.lock(operation)?;
-            require_parents(operation, &entries, &query.path)?;
-            require_dir(operation, &entries, query.path.as_str())?;
-            let mut page = Vec::new();
-            let mut has_more = false;
-            for (path, name, entry) in children(&entries, query.path.as_str()) {
-                if query
-                    .after
-                    .as_ref()
-                    .is_some_and(|after| name <= after.as_str())
-                {
-                    continue;
-                }
-                if page.len() == query.limit.get() {
-                    has_more = true;
-                    break;
-                }
-                page.push(
-                    entry
-                        .metadata(
-                            StoragePath::parse(path)
-                                .map_err(|cause| path_error(operation, cause))?,
-                        )
-                        .map_err(|cause| metadata_error(operation, cause))?,
-                );
-            }
-            let next_after = if has_more {
-                page.last().and_then(|entry| entry.path().name())
-            } else {
-                None
-            };
-            Ok(StorageDirPage {
-                entries: page,
-                next_after,
-            })
-        })
+    fn select_directory<'a>(
+        &'a self,
+        request: &'a ListRequest,
+        context: LookupContext,
+    ) -> StorageFuture<'a, DirectorySelection> {
+        Box::pin(async move { self.select_list_directory(request, context) })
+    }
+
+    fn list_page<'a>(
+        &'a self,
+        bound: &'a BoundListRequest<'_>,
+    ) -> StorageFuture<'a, DirectoryPage> {
+        Box::pin(async move { self.enumerate_directory(bound) })
     }
 
     fn read_file(

@@ -8,7 +8,7 @@ use ah_vfs::application::mount_runtime::MountRuntime;
 use ah_vfs::application::port::*;
 use ah_vfs::application::service::{EntryService, InstanceService, MountService};
 use ah_vfs::domain::namespace::VirtualPath;
-use ah_vfs::domain::storage::{StorageDirQuery, StorageMoveEntryRequest};
+use ah_vfs::domain::storage::StorageMoveEntryRequest;
 use ah_vfs::domain::{DriverInstance, InstanceId};
 use ah_vfs::infrastructure::instance_record_repository::SqliteInstanceRecordRepository;
 use ah_vfs::infrastructure::mount_repository::SqliteMountRepository;
@@ -240,6 +240,15 @@ async fn protobuf_reads_and_conditional_commits_bind_a_single_s3_version() -> Re
     let storage = driver
         .open(OpenContext::new(InstanceId::parse("fixture")?, config))
         .await?;
+    assert!(!driver.info().capabilities().list());
+    let request = ah_vfs_storage::ListRequest::new(
+        ah_vfs_storage::ListTarget::Path(StoragePath::root().to_rooted_expr()),
+        Default::default(),
+    );
+    assert!(
+        matches!(storage.list_entries(&request, Default::default()).await,
+        Err(error) if error.failure() == Failure::Rejected(Rejection::Unsupported))
+    );
     let mut reader = storage
         .read_file(
             ah_vfs_storage::ReadRequest::new(
@@ -461,28 +470,14 @@ async fn s3_component_runs_through_host_records_mounts_and_streams() -> Result {
             &large[5 * 1024 * 1024 - 3..5 * 1024 * 1024 - 3 + 70_000]
         );
         assert!(reader.next_chunk().await?.is_none());
-        let mut page_query = StorageDirQuery::new(StoragePath::root());
-        page_query.limit = std::num::NonZeroUsize::MIN;
-        let mut names = Vec::new();
-        loop {
-            let page = storage
-                .list_entries(StorageDirQuery {
-                    path: page_query.path.clone(),
-                    after: page_query.after.clone(),
-                    limit: page_query.limit,
-                })
-                .await?;
-            names.extend(
-                page.entries
-                    .into_iter()
-                    .map(|e| e.path().as_str().to_owned()),
-            );
-            if page.next_after.is_none() {
-                break;
-            }
-            page_query.after = page.next_after;
-        }
-        assert_eq!(names, vec!["empty", "multipart", "目录"]);
+        let listing = ah_vfs_storage::ListRequest::new(
+            ah_vfs_storage::ListTarget::Path(StoragePath::root().to_rooted_expr()),
+            Default::default(),
+        );
+        assert!(
+            matches!(storage.list_entries(&listing, Default::default()).await,
+            Err(error) if error.failure() == Failure::Rejected(Rejection::Unsupported))
+        );
         let mut writer = entries
             .write_file(WriteFileRequest {
                 path: VirtualPath::parse("/through-vfs")?,

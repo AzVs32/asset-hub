@@ -200,7 +200,7 @@ fn bounds_apply_to_control_data_and_nested_configuration() {
 fn exported_descriptor_contains_the_complete_language_independent_contract() -> Result {
     let descriptor = prost_types::FileDescriptorSet::decode(p::FILE_DESCRIPTOR_SET)?;
     let file = descriptor.file.first().ok_or("schema")?;
-    assert_eq!(file.package.as_deref(), Some("assethub.vfs.v7"));
+    assert_eq!(file.package.as_deref(), Some("assethub.vfs.v8"));
     let storage_info = file
         .message_type
         .iter()
@@ -239,11 +239,11 @@ fn exported_descriptor_contains_the_complete_language_independent_contract() -> 
     for method in &file.service.first().ok_or("Plugin")?.method {
         assert_eq!(
             method.input_type.as_deref(),
-            Some(".assethub.vfs.v7.Request")
+            Some(".assethub.vfs.v8.Request")
         );
         assert_eq!(
             method.output_type.as_deref(),
-            Some(".assethub.vfs.v7.Reply")
+            Some(".assethub.vfs.v8.Reply")
         );
     }
     Ok(())
@@ -418,5 +418,56 @@ fn write_round_trips_binding_and_rejects_implicit_modes() -> Result {
             Err(p::CodecError::InvalidData)
         ));
     }
+    Ok(())
+}
+
+#[test]
+fn listing_validates_limits_and_cursor_before_enumeration() -> Result {
+    use ah_vfs_storage as d;
+    let request = d::ListRequest::new(
+        d::ListTarget::Path(d::StoragePath::root().to_rooted_expr()),
+        d::PageSize::new(1)?,
+    );
+    let selection = d::DirectorySelection::from_lookup(
+        d::StoragePath::root(),
+        d::DirectoryIdentity::from_bytes([1; 16]),
+    );
+    let bound = request.bind_selection(selection)?;
+    let list = p::encode_list(&bound);
+    for invalid in [
+        p::List {
+            size: 0,
+            ..list.clone()
+        },
+        p::List {
+            size: d::PageSize::MAX as u32 + 1,
+            ..list.clone()
+        },
+        p::List {
+            after: Some("../bad".into()),
+            ..list.clone()
+        },
+        p::List {
+            selection: None,
+            ..list.clone()
+        },
+    ] {
+        let op = Op::Storage(p::StorageCall {
+            handle: 1,
+            operation: Some(p::StorageOp::List(invalid)),
+        });
+        assert!(matches!(
+            p::encode_request("generation", &op, vec![]),
+            Err(p::CodecError::InvalidData)
+        ));
+    }
+    let page = p::Page {
+        reported: list.selection,
+        completion: Some(p::page::Completion::After("a".into())),
+    };
+    assert_eq!(
+        p::decode_page(&bound, page, &[]),
+        Err(d::ContractViolation::InvalidPage)
+    );
     Ok(())
 }

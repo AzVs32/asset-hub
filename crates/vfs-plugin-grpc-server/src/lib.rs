@@ -231,13 +231,14 @@ impl wire::plugin_server::Plugin for PluginService {
                     .err()
                     .and_then(DriverError::storage_error)
                     .is_some_and(|error| {
-                        matches!(
-                            error.failure(),
-                            Failure::Backend(BackendFailure::Other)
-                                | Failure::Backend(BackendFailure::Stale)
-                                | Failure::Backend(BackendFailure::Unavailable)
-                                | Failure::Backend(BackendFailure::TimedOut)
-                        )
+                        !c::is_stale_directory(error)
+                            && matches!(
+                                error.failure(),
+                                Failure::Backend(BackendFailure::Other)
+                                    | Failure::Backend(BackendFailure::Stale)
+                                    | Failure::Backend(BackendFailure::Unavailable)
+                                    | Failure::Backend(BackendFailure::TimedOut)
+                            )
                     });
                 if !service.send(&tx, encode(result, &request_context)).await || broken {
                     break;

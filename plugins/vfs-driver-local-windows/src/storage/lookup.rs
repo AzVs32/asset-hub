@@ -225,3 +225,99 @@ pub(super) fn write_destination(
         ancestors,
     })
 }
+
+pub(super) fn listing_directory(
+    root: &Dir,
+    lookup: PathLookup<'_>,
+    context: LookupContext,
+) -> Result<(StoragePath, Dir), StorageError> {
+    use std::os::windows::io::{AsRawHandle, FromRawHandle};
+    use windows_sys::Win32::{
+        Foundation::INVALID_HANDLE_VALUE,
+        Storage::FileSystem::{FILE_GENERIC_READ, FILE_SHARE_DELETE, ReOpenFile},
+    };
+    let op = Operation::List;
+    let (entry, file, stack) = select(root, lookup, context, op)?;
+    if entry.entry_type() != ah_vfs_storage::EntryType::Directory {
+        return Err(rejected(op, Rejection::NotDirectory));
+    }
+    let handle = match &file {
+        Some(file) => file.as_raw_handle(),
+        None => stack.last().ok_or_else(list_stale)?.1.as_raw_handle(),
+    };
+    // SAFETY: the original handle stays live and the successful call transfers a new handle.
+    let handle = unsafe {
+        ReOpenFile(
+            handle,
+            FILE_GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+        )
+    };
+    if handle == INVALID_HANDLE_VALUE {
+        return Err(fs::error(op, std::io::Error::last_os_error()));
+    }
+    let dir = Dir::from_std_file(unsafe { std::fs::File::from_raw_handle(handle) });
+    Ok((entry.path().clone(), dir))
+}
+
+pub(super) fn same_directory(left: &Dir, right: &Dir) -> Result<bool, StorageError> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_ID_INFO, FileIdInfo, GetFileInformationByHandleEx,
+    };
+    let identity = |dir: &Dir| {
+        let mut data = std::mem::MaybeUninit::<FILE_ID_INFO>::uninit();
+        // SAFETY: a live directory handle and writable output structure are supplied.
+        if unsafe {
+            GetFileInformationByHandleEx(
+                dir.as_raw_handle(),
+                FileIdInfo,
+                data.as_mut_ptr().cast(),
+                std::mem::size_of::<FILE_ID_INFO>() as u32,
+            )
+        } == 0
+        {
+            return Err(fs::error(Operation::List, std::io::Error::last_os_error()));
+        }
+        let data = unsafe { data.assume_init() };
+        Ok((data.VolumeSerialNumber, data.FileId.Identifier))
+    };
+    Ok(identity(left)? == identity(right)?)
+}
+
+pub(super) fn list_stale() -> StorageError {
+    stale(Operation::List)
+}
+
+pub(super) fn reopen_listing_directory(
+    root: &Dir,
+    selection: &ah_vfs_storage::DirectorySelection,
+) -> Result<Dir, StorageError> {
+    use ah_vfs_storage::{IntermediateSymlinks, StatRequest};
+    let context = LookupContext {
+        working_directory: StoragePath::root(),
+        intermediate_symlinks: IntermediateSymlinks::Reject,
+    };
+    let stat = StatRequest::new(
+        selection.address().to_rooted_expr(),
+        SymlinkAction::Preserve,
+    );
+    listing_directory(root, stat.lookup(), context)
+        .map(|(_, dir)| dir)
+        .map_err(|error| {
+            if matches!(
+                error.failure(),
+                Failure::Rejected(
+                    Rejection::NotFound
+                        | Rejection::NotDirectory
+                        | Rejection::SymlinkNotAllowed
+                        | Rejection::Unsupported
+                )
+            ) {
+                list_stale()
+            } else {
+                error
+            }
+        })
+}

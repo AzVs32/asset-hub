@@ -1,12 +1,14 @@
 //! Directory-handle based local storage, with staged complete-file writes.
 
-use ah_vfs::application::port::LookupContext;
+use ah_vfs::application::port::{DirectoryBindings, LookupContext};
 use ah_vfs::application::port::{Storage, StorageFileReader, StorageFileWriter, StorageFuture};
 use ah_vfs::domain::storage::{
-    StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageMoveEntryRequest,
-    StorageRemoveEntryRequest,
+    StorageCreateDirRequest, StorageMoveEntryRequest, StorageRemoveEntryRequest,
 };
-use ah_vfs_storage::{BackendFailure, Failure, Operation, StorageError};
+use ah_vfs_storage::{
+    BackendFailure, BoundListRequest, DirectoryPage, DirectorySelection, Failure, ListRequest,
+    ListTarget, Operation, StorageError,
+};
 use ah_vfs_storage::{Entry, ReadRequest, StatRequest, WriteRequest};
 
 use cap_std::fs::Dir;
@@ -52,6 +54,7 @@ async fn blocking<T: Send + 'static>(
 pub struct WindowsLocalStorage {
     root: PathBuf,
     dir: Arc<Dir>,
+    directory_bindings: Arc<DirectoryBindings<Dir>>,
 }
 
 impl WindowsLocalStorage {
@@ -69,6 +72,7 @@ impl WindowsLocalStorage {
         Ok(Self {
             root,
             dir: Arc::new(dir),
+            directory_bindings: Arc::new(DirectoryBindings::default()),
         })
     }
     pub fn root(&self) -> &Path {
@@ -88,13 +92,56 @@ impl Storage for WindowsLocalStorage {
         }))
     }
 
-    fn list_entries(&self, query: StorageDirQuery) -> StorageFuture<'_, StorageDirPage> {
-        let dir = self.dir.clone();
+    fn select_directory<'a>(
+        &'a self,
+        request: &'a ListRequest,
+        context: LookupContext,
+    ) -> StorageFuture<'a, DirectorySelection> {
+        let request = request.clone();
+        let root = self.dir.clone();
+        let bindings = self.directory_bindings.clone();
         Box::pin(blocking(Operation::List, false, move || {
-            fs::list_entries(&dir, query)
+            match request.target() {
+                ListTarget::Path(_) => {
+                    let (address, dir) = lookup::listing_directory(
+                        &root,
+                        request.lookup().ok_or_else(lookup::list_stale)?,
+                        context,
+                    )?;
+                    bindings.bind(address, dir, lookup::same_directory)
+                }
+                ListTarget::Continue(cursor) => {
+                    let selection = cursor.selection();
+                    let dir = lookup::reopen_listing_directory(&root, selection)?;
+                    bindings.verify(selection, &dir, lookup::same_directory)?;
+                    Ok(selection.clone())
+                }
+            }
         }))
     }
 
+    fn list_page<'a>(
+        &'a self,
+        bound: &'a BoundListRequest<'_>,
+    ) -> StorageFuture<'a, DirectoryPage> {
+        let request = bound.request().clone();
+        let selection = bound.selection().clone();
+        let root = self.dir.clone();
+        let bindings = self.directory_bindings.clone();
+        Box::pin(blocking(Operation::List, false, move || {
+            let dir = lookup::reopen_listing_directory(&root, &selection)?;
+            bindings.verify(&selection, &dir, lookup::same_directory)?;
+            let bound = request
+                .bind_selection(selection)
+                .map_err(|_| lookup::list_stale())?;
+            let page = fs::list_entries(&dir, &bound)?;
+            let current = lookup::reopen_listing_directory(&root, bound.selection())?;
+            if !lookup::same_directory(&dir, &current)? {
+                return Err(lookup::list_stale());
+            }
+            Ok(page)
+        }))
+    }
     fn read_file(
         &self,
         request: ReadRequest,

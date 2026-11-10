@@ -1,7 +1,7 @@
 //! Small SigV4 S3 client using only the component's HTTP import. Multipart writes
 //! bound memory to one part; conditional completion implements create-new.
 use super::*;
-use ah_vfs_storage::{Entry, EntryName, EntryType, PageSize, StoragePath};
+use ah_vfs_storage::{Entry, EntryType, StoragePath};
 use hmac::{Hmac, Mac};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -287,28 +287,20 @@ impl Client {
             etag,
         )))
     }
-    fn listing(
-        &self,
-        prefix: &str,
-        after: Option<&str>,
-        limit: u32,
-        token: Option<&str>,
-    ) -> Result<Listing> {
-        let context = &self.context;
-        let mut query = vec![
+    fn prefix_exists(&self, prefix: &str) -> Result<bool> {
+        let query = vec![
             ("list-type".into(), "2".into()),
             ("delimiter".into(), "/".into()),
             ("prefix".into(), prefix.into()),
-            ("max-keys".into(), limit.to_string()),
+            ("max-keys".into(), "1".into()),
         ];
-        if let Some(token) = token {
-            query.push(("continuation-token".into(), token.into()));
-        } else if let Some(after) = after {
-            query.push(("start-after".into(), format!("{prefix}{after}")));
-        }
-        let r = self.request("GET", "", query, vec![], vec![])?;
-        quick_xml::de::from_str(xml(context, r.body())?)
-            .map_err(|_| context.failure(Failure::Backend(BackendFailure::CorruptData)))
+        let reply = self.request("GET", "", query, vec![], vec![])?;
+        let listed: Listing =
+            quick_xml::de::from_str(xml(&self.context, reply.body())?).map_err(|_| {
+                self.context
+                    .failure(Failure::Backend(BackendFailure::CorruptData))
+            })?;
+        Ok(!listed.contents.is_empty() || !listed.common_prefixes.is_empty())
     }
     pub fn stat(&self, name: &str) -> Result<Entry> {
         self.stat_object(name).map(|(entry, _)| entry)
@@ -322,111 +314,13 @@ impl Client {
         }
         let file = self.head(name)?;
         let prefix = format!("{name}/");
-        let list = self.listing(&prefix, None, 1, None)?;
-        let directory = !list.contents.is_empty() || !list.common_prefixes.is_empty();
+        let directory = self.prefix_exists(&prefix)?;
         match (file, directory) {
             (Some(_), true) => Err(context.failure(Failure::Backend(BackendFailure::CorruptData))),
             (Some(file), false) => Ok(file),
             (None, true) => Ok((entry(context, name, EntryType::Directory, None)?, None)),
             (None, false) => Err(context.failure(Failure::Rejected(Rejection::NotFound))),
         }
-    }
-    pub fn list(
-        &self,
-        name: &str,
-        after: Option<&str>,
-        limit: u32,
-    ) -> Result<(Vec<Entry>, Option<String>)> {
-        let context = &self.context;
-        if usize::try_from(limit)
-            .ok()
-            .and_then(|limit| PageSize::new(limit).ok())
-            .is_none()
-        {
-            return Err(context.failure(Failure::Rejected(Rejection::Conflict)));
-        }
-        path(context, name)?;
-        if let Some(after) = after {
-            EntryName::parse(after)
-                .map_err(|_| context.failure(Failure::Rejected(Rejection::UnsupportedName)))?;
-        }
-        if self.stat(name)?.entry_type() != EntryType::Directory {
-            return Err(context.failure(Failure::Rejected(Rejection::NotDirectory)));
-        }
-        let prefix = if name.is_empty() {
-            String::new()
-        } else {
-            format!("{name}/")
-        };
-        let mut entries = BTreeMap::new();
-        let mut token = None;
-        loop {
-            let list = self.listing(&prefix, after, (limit + 2).min(1000), token.as_deref())?;
-            for content in list.contents {
-                if content.key == prefix {
-                    continue;
-                }
-                let child = content.key.strip_prefix(&prefix).ok_or_else(|| {
-                    context.failure(Failure::Backend(BackendFailure::CorruptData))
-                })?;
-                if child.is_empty() || child.contains('/') {
-                    return Err(context.failure(Failure::Backend(BackendFailure::CorruptData)));
-                }
-                path(context, &content.key)?;
-                if after.is_some_and(|a| child <= a) {
-                    continue;
-                }
-                let entry = entry(
-                    context,
-                    &content.key,
-                    EntryType::file(Some(content.size)),
-                    None,
-                )?;
-                if entries.insert(child.to_owned(), entry).is_some() {
-                    return Err(context.failure(Failure::Backend(BackendFailure::CorruptData)));
-                }
-            }
-            for common in list.common_prefixes {
-                let key = common.prefix.strip_suffix('/').ok_or_else(|| {
-                    context.failure(Failure::Backend(BackendFailure::CorruptData))
-                })?;
-                let child = key.strip_prefix(&prefix).ok_or_else(|| {
-                    context.failure(Failure::Backend(BackendFailure::CorruptData))
-                })?;
-                if child.is_empty() || child.contains('/') {
-                    return Err(context.failure(Failure::Backend(BackendFailure::CorruptData)));
-                }
-                path(context, key)?;
-                if after.is_some_and(|a| child <= a) {
-                    continue;
-                }
-                let entry = entry(context, key, EntryType::Directory, None)?;
-                if entries.insert(child.into(), entry).is_some() {
-                    return Err(context.failure(Failure::Backend(BackendFailure::CorruptData)));
-                }
-            }
-            if entries.len() > limit as usize || !list.is_truncated {
-                break;
-            }
-            let next = list
-                .next_continuation_token
-                .ok_or_else(|| context.failure(Failure::Backend(BackendFailure::CorruptData)))?;
-            if token.as_ref() == Some(&next) {
-                return Err(context.failure(Failure::Backend(BackendFailure::CorruptData)));
-            }
-            token = Some(next);
-        }
-        let more = entries.len() > limit as usize;
-        let entries: Vec<_> = entries.into_values().take(limit as usize).collect();
-        let next = if more {
-            entries
-                .last()
-                .and_then(|entry| entry.path().name())
-                .map(|name| name.as_str().to_owned())
-        } else {
-            None
-        };
-        Ok((entries, next))
     }
     pub fn start_upload(&self, name: &str) -> Result<String> {
         let context = &self.context;
@@ -552,23 +446,9 @@ struct Initiated {
 #[serde(rename_all = "PascalCase")]
 struct Listing {
     #[serde(default)]
-    contents: Vec<Content>,
+    contents: Vec<serde::de::IgnoredAny>,
     #[serde(default)]
-    common_prefixes: Vec<CommonPrefix>,
-    #[serde(default)]
-    is_truncated: bool,
-    next_continuation_token: Option<String>,
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "PascalCase")]
-struct Content {
-    key: String,
-    size: u64,
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "PascalCase")]
-struct CommonPrefix {
-    prefix: String,
+    common_prefixes: Vec<serde::de::IgnoredAny>,
 }
 
 fn entry(

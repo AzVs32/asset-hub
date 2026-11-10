@@ -13,6 +13,12 @@ use ah_vfs_storage::{Capabilities, Entry};
 use std::num::{NonZeroU32, NonZeroUsize};
 use vfs_plugin_protocol as p;
 
+/// A directory binding can expire while the storage session remains live.
+pub fn is_stale_directory(error: &StorageError) -> bool {
+    error.operation() == Operation::List
+        && error.failure() == Failure::Backend(BackendFailure::Stale)
+}
+
 pub fn protocol_violation() -> DriverError {
     LifecycleError::new(LifecycleFailure::InvalidDeclaration).into()
 }

@@ -11,6 +11,7 @@ pub(super) struct Properties {
     pub length: Option<String>,
     pub modified: Option<String>,
     pub etag: Option<String>,
+    pub resource_id: Option<String>,
 }
 #[derive(Default)]
 pub(super) struct Response {
@@ -35,8 +36,17 @@ fn at(stack: &[Tag], names: &[&[u8]]) -> bool {
             .zip(names)
             .all(|(tag, name)| tag.dav && tag.name.as_slice() == *name)
 }
+const RESOURCE_ID_HREF: &[&[u8]] = &[
+    b"multistatus",
+    b"response",
+    b"propstat",
+    b"prop",
+    b"resource-id",
+    b"href",
+];
 fn scalar(stack: &[Tag]) -> bool {
-    at(stack, &[b"multistatus", b"response", b"href"])
+    at(stack, RESOURCE_ID_HREF)
+        || at(stack, &[b"multistatus", b"response", b"href"])
         || at(stack, &[b"multistatus", b"response", b"status"])
         || at(
             stack,
@@ -82,7 +92,11 @@ fn append(
     propstat: &mut Option<Propstat>,
     text: &str,
 ) -> Result<()> {
-    let target = if at(stack, &[b"multistatus", b"response", b"href"]) {
+    let target = if at(stack, RESOURCE_ID_HREF) {
+        propstat
+            .as_mut()
+            .and_then(|r| r.properties.resource_id.as_mut())
+    } else if at(stack, &[b"multistatus", b"response", b"href"]) {
         response.as_mut().and_then(|r| r.href.as_mut())
     } else if at(stack, &[b"multistatus", b"response", b"status"]) {
         response.as_mut().and_then(|r| r.status.as_mut())
@@ -229,6 +243,14 @@ pub(super) fn parse(context: &api::ErrorContext, bytes: &[u8]) -> Result<Vec<Res
                             })?
                             .status,
                     )?;
+                } else if at(&stack, RESOURCE_ID_HREF) {
+                    let properties = &mut propstat
+                        .as_mut()
+                        .ok_or_else(|| {
+                            context.failure(Failure::Backend(BackendFailure::CorruptData))
+                        })?
+                        .properties;
+                    empty(context, &mut properties.resource_id)?;
                 } else if stack.len() == 5
                     && at(
                         &stack[..4],
@@ -306,6 +328,11 @@ pub(super) fn parse(context: &api::ErrorContext, bytes: &[u8]) -> Result<Vec<Res
                         merge(context, &mut target.length, fields.properties.length)?;
                         merge(context, &mut target.modified, fields.properties.modified)?;
                         merge(context, &mut target.etag, fields.properties.etag)?;
+                        merge(
+                            context,
+                            &mut target.resource_id,
+                            fields.properties.resource_id,
+                        )?;
                         target.other_type |= fields.properties.other_type;
                     }
                 } else if at(&stack, &[b"multistatus", b"response"]) {

@@ -1,13 +1,10 @@
 //! Storage behavior shared by independent driver test suites.
 
 use crate::application::port::{Storage, StorageFileReader};
-use crate::domain::storage::{
-    MAX_DIR_PAGE_LIMIT, StorageCreateDirRequest, StorageDirQuery, StorageMoveEntryRequest,
-};
+use crate::domain::storage::{StorageCreateDirRequest, StorageMoveEntryRequest};
 use ah_vfs_storage::RenameSupport;
 use ah_vfs_storage::{EntryType, StoragePath};
 use ah_vfs_storage::{Failure, Rejection};
-use std::num::NonZeroUsize;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -276,68 +273,34 @@ pub async fn assert_create_dir_contract(storage: &dyn Storage) -> TestResult {
 /// Assert directory cursor validation and ordered pagination on fresh writable storage.
 /// The fixture must be empty and isolated; the assertion writes files and dirs.
 pub async fn assert_pagination_contract(storage: &dyn Storage) -> TestResult {
-    let oversized = NonZeroUsize::new(MAX_DIR_PAGE_LIMIT.get() + 1).ok_or("zero limit")?;
-    for name in ["", "missing"] {
-        let query = StorageDirQuery {
-            path: path(name)?,
-            after: None,
-            limit: oversized,
-        };
-        let error = storage
-            .list_entries(query)
-            .await
-            .err()
-            .ok_or("expected oversized page")?;
-        assert_eq!(error.failure(), Failure::Rejected(Rejection::LimitExceeded));
-        for after in ["", ".", "..", "a/b", "a\\b", "a:b", "a\0b"] {
-            assert!(ah_vfs_storage::EntryName::parse(after).is_err());
-        }
+    use ah_vfs_storage::{ListRequest, ListTarget, PageSize};
+    assert!(PageSize::new(0).is_err());
+    assert!(PageSize::new(PageSize::MAX + 1).is_err());
+    for after in ["", ".", "..", "a/b", "a\\b", "a:b", "a\0b"] {
+        assert!(ah_vfs_storage::EntryName::parse(after).is_err());
     }
-    let query = StorageDirQuery {
-        path: path(&"x".repeat(ah_vfs_storage::MAX_PATH_BYTES))?,
-        after: Some(ah_vfs_storage::EntryName::parse("child")?),
-        limit: MAX_DIR_PAGE_LIMIT,
-    };
-    let error = storage
-        .list_entries(query)
-        .await
-        .err()
-        .ok_or("expected path overflow")?;
-    assert_eq!(error.failure(), Failure::Rejected(Rejection::PathTooLong));
-
     for name in ["a", "b", "文件"] {
         put(storage, name, b"").await?;
     }
-    let page = storage
-        .list_entries(StorageDirQuery {
-            path: path("")?,
-            after: None,
-            limit: NonZeroUsize::MIN,
-        })
-        .await?;
-    assert_eq!(page.entries.len(), 1);
-    assert_eq!(page.entries[0].path(), &path("a")?);
-    assert_eq!(
-        page.next_after
-            .as_ref()
-            .map(ah_vfs_storage::EntryName::as_str),
-        Some("a")
+    let first = ListRequest::new(
+        ListTarget::Path(StoragePath::root().to_rooted_expr()),
+        PageSize::new(1)?,
     );
-    let page = storage
-        .list_entries(StorageDirQuery {
-            path: path("")?,
-            after: page.next_after,
-            limit: MAX_DIR_PAGE_LIMIT,
-        })
-        .await?;
+    let page = storage.list_entries(&first, Default::default()).await?;
+    assert_eq!(page.entries().len(), 1);
+    assert_eq!(page.entries()[0].path(), &path("a")?);
+    let cursor = page.continuation().ok_or("expected continuation")?;
+    assert_eq!(cursor.after().as_str(), "a");
+    let next = ListRequest::new(ListTarget::Continue(cursor), PageSize::new(PageSize::MAX)?);
+    let page = storage.list_entries(&next, Default::default()).await?;
     assert_eq!(
-        page.entries
+        page.entries()
             .iter()
             .map(|entry| entry.path().as_str())
             .collect::<Vec<_>>(),
         ["b", "文件"]
     );
-    assert!(page.next_after.is_none());
+    assert!(page.continuation().is_none());
     Ok(())
 }
 

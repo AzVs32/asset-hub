@@ -2,10 +2,11 @@
 
 use super::{StoragePermissions, StorageXattrs};
 use crate::domain::storage::{
-    StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageMoveEntryRequest,
-    StorageRemoveEntryRequest,
+    StorageCreateDirRequest, StorageMoveEntryRequest, StorageRemoveEntryRequest,
 };
-use ah_vfs_storage::Capabilities;
+use ah_vfs_storage::{
+    BoundListRequest, Capabilities, DirectoryPage, DirectorySelection, ListRequest,
+};
 use ah_vfs_storage::{
     Entry, IntermediateSymlinks, LinkTarget, ReadLinkRequest, ReadRequest, StatRequest,
     StoragePath, WriteRequest,
@@ -72,9 +73,36 @@ pub trait Storage: Send + Sync {
         unsupported(Operation::ReadLink)
     }
 
-    /// List immediate backend entries without merging VFS mount points.
-    fn list_entries(&self, _query: StorageDirQuery) -> StorageFuture<'_, StorageDirPage> {
+    /// Resolve the initial operand or independently verify the cursor's directory.
+    fn select_directory<'a>(
+        &'a self,
+        _request: &'a ListRequest,
+        _context: LookupContext,
+    ) -> StorageFuture<'a, DirectorySelection> {
         unsupported(Operation::List)
+    }
+
+    /// Enumerate through the binding. Reject an expired or replaced directory.
+    fn list_page<'a>(
+        &'a self,
+        _bound: &'a BoundListRequest<'_>,
+    ) -> StorageFuture<'a, DirectoryPage> {
+        unsupported(Operation::List)
+    }
+
+    /// Select a directory separately before enumerating a page.
+    fn list_entries<'a>(
+        &'a self,
+        request: &'a ListRequest,
+        context: LookupContext,
+    ) -> StorageFuture<'a, DirectoryPage> {
+        Box::pin(async move {
+            let selection = self.select_directory(request, context).await?;
+            let bound = request.bind_selection(selection).map_err(|reason| {
+                StorageError::without_effects(Operation::List, Failure::Backend(reason), None)
+            })?;
+            self.list_page(&bound).await
+        })
     }
 
     /// Resolve the request once and open a range-limited stream bound to the selected file.

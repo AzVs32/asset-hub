@@ -1,5 +1,5 @@
 syntax = "proto3";
-package assethub.vfs.v7;
+package assethub.vfs.v8;
 
 // The sole plugin message schema, shared by gRPC and the WASM call export.
 // Request/Reply control fields are limited to 1 MiB, data to 8 MiB. Missing
@@ -92,7 +92,7 @@ message Failure {
   StorageFailure storage = 4;
 }
 message Description {
-  uint32 major = 1; uint32 minor = 2; // This schema uses major 7, minor 0.
+  uint32 major = 1; uint32 minor = 2; // This schema uses major 8, minor 0.
   // Feature identifiers: streams.chunked.v1.
   // Unknown required identifiers reject loading; optional ones grant no support.
   repeated string required_features = 3;
@@ -139,8 +139,18 @@ message Lookup {
 }
 message Stat { Lookup lookup = 1; FinalLink final_link = 2; }
 message ReadLink { Lookup lookup = 1; }
-// Immediate children sorted by name; after is a basename cursor, limit is 1..1000.
-message List { string path = 1; optional string after = 2; uint32 limit = 3; }
+message DirectorySelection { string address = 1; bytes identity = 2; }
+message DirectoryCheckpoint { DirectorySelection selection = 1; string after = 2; }
+// Selection is a separate exchange from enumeration. A resume uses only its checkpoint.
+message SelectDirectory {
+  oneof target { Lookup lookup = 1; DirectoryCheckpoint resume = 2; }
+  uint32 size = 3;
+}
+message List {
+  DirectorySelection selection = 1;
+  optional string after = 2;
+  uint32 size = 3;
+}
 message CreateDir { string path = 1; bool recursive = 2; }
 message Move { string source = 1; string destination = 2; bool replace = 3; }
 message SetPermissions { string path = 1; uint32 mode = 2; }
@@ -159,6 +169,7 @@ message StorageCall {
     SetPermissions set_permissions = 16; ListXattrs list_xattrs = 17;
     GetXattr get_xattr = 18; SetXattr set_xattr = 19; RemoveXattr remove_xattr = 20;
     ReadLink read_link = 21;
+    SelectDirectory select_directory = 22;
   }
 }
 // File-byte range. Absent length reads through EOF; present zero is an empty
@@ -191,19 +202,25 @@ message Request {
 }
 message Prepared { Object config = 1; Object details = 2; }
 message Storage { uint64 handle = 1; StorageInfo info = 2; }
-message Page { repeated Entry entries = 1; optional string next_after = 2; }
+// Page data contains consecutive length-delimited Entry messages. The receiver
+// applies the requested page count before decoding each entry.
+message Page {
+  DirectorySelection reported = 1;
+  oneof completion { Empty end = 2; string after = 3; }
+}
 message Permissions { uint32 mode = 1; }
 message Names { repeated string names = 1; }
 message Chunk { bool eof = 1; } // eof => empty data; !eof => nonempty data.
 // Every response, including describe, storage information and commit, uses this
 // envelope. No endpoint returns a bare Description, StorageInfo, Entry or JSON.
 message Reply {
-  bytes data = 1; // Bytes/Chunk results only.
+  bytes data = 1; // Bytes/Chunk/Page results only.
   oneof result {
     Description description = 2; Prepared prepared = 3; Config config = 4;
     Storage storage = 5; Handle reader = 6; Handle writer = 7;
     Entry entry = 8; Page page = 9; Permissions permissions = 10; Names names = 11;
     Empty bytes = 12; Chunk chunk = 13; Empty unit = 14; Failure failure = 15;
+    DirectorySelection selected_directory = 16;
   }
 }
 service Plugin {

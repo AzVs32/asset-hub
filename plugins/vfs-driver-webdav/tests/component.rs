@@ -1,9 +1,7 @@
 use ah_vfs::application::dto::*;
 use ah_vfs::application::port::*;
 use ah_vfs::domain::InstanceId;
-use ah_vfs::domain::storage::{
-    StorageCreateDirRequest, StorageDirQuery, StorageRemoveEntryRequest,
-};
+use ah_vfs::domain::storage::{StorageCreateDirRequest, StorageRemoveEntryRequest};
 use ah_vfs_storage::{
     EntryType, MutationOutcome, Publication, StoragePath, WriteMode, WriteRequest,
 };
@@ -98,11 +96,16 @@ fn metadata(path: &str, data: &Option<Vec<u8>>, root_version: usize) -> String {
         None => None,
         Some(data) => etag(path, data),
     };
+    let resource = if path.is_empty() {
+        format!("<d:resource-id><d:href>urn:example:root:{root_version}</d:href></d:resource-id>")
+    } else {
+        String::new()
+    };
     let version = tag
         .map(|tag| format!("<d:getetag>{tag}</d:getetag>"))
         .unwrap_or_default();
     format!(
-        "<d:response><d:href>/dav/{path}{suffix}</d:href><d:propstat><d:prop><d:resourcetype>{kind}</d:resourcetype><d:getcontentlength>{}</d:getcontentlength>{version}</d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>",
+        "<d:response><d:href>/dav/{path}{suffix}</d:href><d:propstat><d:prop><d:resourcetype>{kind}</d:resourcetype><d:getcontentlength>{}</d:getcontentlength>{version}{resource}</d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>",
         data.as_ref().map_or(0, Vec::len)
     )
 }
@@ -343,10 +346,28 @@ async fn protobuf_component_opens_writes_commits_reads_and_lists() -> Result {
         })
         .await?;
     assert_eq!(directory.entry_type(), EntryType::Directory);
+    let request = ah_vfs_storage::ListRequest::new(
+        ah_vfs_storage::ListTarget::Path(StoragePath::root().to_rooted_expr()),
+        ah_vfs_storage::PageSize::new(1)?,
+    );
+    let page = storage.list_entries(&request, Default::default()).await?;
+    assert_eq!(page.entries()[0].path().as_str(), "empty");
+    let continuation = ah_vfs_storage::ListRequest::new(
+        ah_vfs_storage::ListTarget::Continue(page.continuation().ok_or("next page")?),
+        Default::default(),
+    );
+    fixture.replace("entry", b"added during listing".to_vec())?;
     let page = storage
-        .list_entries(StorageDirQuery::new(StoragePath::root()))
+        .list_entries(&continuation, Default::default())
         .await?;
-    assert_eq!(page.entries.len(), 2);
+    assert_eq!(
+        page.entries()
+            .iter()
+            .map(|entry| entry.path().as_str())
+            .collect::<Vec<_>>(),
+        ["entry", "file"]
+    );
+    assert!(page.continuation().is_none());
     for path in ["versioned", "unversioned"] {
         let chunk = storage.chunk_size().get();
         fixture.replace(path, vec![1; chunk + 4])?;
@@ -412,6 +433,11 @@ async fn protobuf_component_opens_writes_commits_reads_and_lists() -> Result {
         .await?;
     moved.write_chunk(b"staged").await?;
     fixture.root_version.fetch_add(1, Ordering::SeqCst);
+    assert!(
+        matches!(storage.list_entries(&continuation, Default::default()).await,
+        Err(error) if error.failure() == Failure::Backend(ah_vfs_storage::BackendFailure::Stale))
+    );
+    assert!(!storage.is_stale());
     let conflict = moved
         .commit()
         .await

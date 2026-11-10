@@ -3,12 +3,12 @@ mod common;
 
 use ah_vfs::application::port::{Driver, Storage, validate_storage_extensions};
 use ah_vfs::domain::storage::{
-    StorageCreateDirRequest, StorageDirQuery, StorageMoveEntryRequest, StorageRemoveEntryRequest,
+    StorageCreateDirRequest, StorageMoveEntryRequest, StorageRemoveEntryRequest,
 };
 use ah_vfs_storage::EntryType;
 use ah_vfs_storage::{AttributeSupport, WriteMode};
 use common::*;
-use std::{num::NonZeroUsize, sync::Arc};
+use std::sync::Arc;
 use vfs_driver_memory::{Capacity, CapacityUnit, MemoryDriver, MemoryStorage};
 
 fn storage(bytes: u64) -> TestResult<MemoryStorage> {
@@ -330,26 +330,21 @@ async fn directories_and_unicode_name_pagination_remain_hierarchical() -> TestRe
     }
     put(&storage, "dir/nested/hidden", b"x").await?;
     let mut names = Vec::new();
-    let mut after = None;
+    let mut target = ah_vfs_storage::ListTarget::Path(path("dir")?.to_rooted_expr());
     loop {
-        let page = storage
-            .list_entries(StorageDirQuery {
-                path: path("dir")?,
-                after,
-                limit: NonZeroUsize::new(2).ok_or("limit")?,
-            })
-            .await?;
-        names.extend(page.entries.iter().map(|entry| {
+        let query = ah_vfs_storage::ListRequest::new(target, ah_vfs_storage::PageSize::new(2)?);
+        let page = storage.list_entries(&query, Default::default()).await?;
+        names.extend(page.entries().iter().map(|entry| {
             entry
                 .path()
                 .name()
                 .map(|name| name.as_str().to_owned())
                 .unwrap_or_default()
         }));
-        after = page.next_after;
-        if after.is_none() {
+        let Some(next) = page.continuation() else {
             break;
-        }
+        };
+        target = ah_vfs_storage::ListTarget::Continue(next);
     }
     assert_eq!(names, ["a", "nested", "z", "é", "文档"]);
     assert_eq!(
@@ -364,19 +359,7 @@ async fn directories_and_unicode_name_pagination_remain_hierarchical() -> TestRe
     for after in ["a/b", "..", "", "a:b"] {
         assert!(ah_vfs_storage::EntryName::parse(after).is_err());
     }
-    assert_eq!(
-        storage
-            .list_entries(StorageDirQuery {
-                path: path("")?,
-                after: None,
-                limit: NonZeroUsize::new(1001).ok_or("limit")?
-            })
-            .await
-            .err()
-            .ok_or("limit")?
-            .failure(),
-        Failure::Rejected(Rejection::LimitExceeded)
-    );
+    assert!(ah_vfs_storage::PageSize::new(1001).is_err());
     Ok(())
 }
 
@@ -448,7 +431,13 @@ async fn invalid_parents_types_and_root_mutations_have_domain_errors() -> TestRe
     );
     assert_eq!(
         storage
-            .list_entries(StorageDirQuery::new(path("file")?))
+            .list_entries(
+                &ah_vfs_storage::ListRequest::new(
+                    ah_vfs_storage::ListTarget::Path(path("file")?.to_rooted_expr()),
+                    Default::default()
+                ),
+                Default::default()
+            )
             .await
             .err()
             .ok_or("file")?

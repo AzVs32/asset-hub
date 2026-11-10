@@ -10,10 +10,12 @@ use ah_vfs::application::driver_info::DriverInfo;
 use ah_vfs::application::dto::*;
 use ah_vfs::application::port::*;
 use ah_vfs::domain::storage::{
-    StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageMoveEntryRequest,
-    StorageRemoveEntryRequest,
+    StorageCreateDirRequest, StorageMoveEntryRequest, StorageRemoveEntryRequest,
 };
-use ah_vfs_storage::{Entry, Permissions, StoragePath, XattrName, XattrWriteMode};
+use ah_vfs_storage::{
+    BoundListRequest, DirectoryPage, DirectorySelection, Entry, ListRequest, Permissions,
+    StoragePath, XattrName, XattrWriteMode,
+};
 use ah_vfs_storage::{LinkTarget, ReadLinkRequest, ReadRequest, StatRequest, WriteRequest};
 use std::{
     collections::HashSet,
@@ -69,12 +71,13 @@ fn connection_failure(error: &DriverError) -> bool {
             LifecycleFailure::Stale | LifecycleFailure::Unavailable | LifecycleFailure::TimedOut
         )
     }) || error.storage_error().is_some_and(|error| {
-        matches!(
-            error.failure(),
-            Failure::Backend(
-                BackendFailure::Stale | BackendFailure::Unavailable | BackendFailure::TimedOut
+        !convert::is_stale_directory(error)
+            && matches!(
+                error.failure(),
+                Failure::Backend(
+                    BackendFailure::Stale | BackendFailure::Unavailable | BackendFailure::TimedOut
+                )
             )
-        )
     })
 }
 
@@ -710,74 +713,71 @@ impl Storage for RemoteStorage {
             .await
         })
     }
-    fn list_entries(&self, r: StorageDirQuery) -> StorageFuture<'_, StorageDirPage> {
+    fn select_directory<'a>(
+        &'a self,
+        request: &'a ListRequest,
+        context: LookupContext,
+    ) -> StorageFuture<'a, DirectorySelection> {
         Box::pin(async move {
-            r.validate()?;
+            if !self.driver_info.capabilities().list() {
+                return Err(StorageError::without_effects(
+                    Operation::List,
+                    Failure::Rejected(Rejection::Unsupported),
+                    None,
+                ));
+            }
             let reply = self
                 .call(
-                    p::StorageOp::List(p::List {
-                        path: r.path.as_str().into(),
-                        after: r.after.as_ref().map(|name| name.as_str().into()),
-                        limit: r.limit.get() as u32,
-                    }),
+                    p::StorageOp::SelectDirectory(p::encode_select_directory(
+                        request,
+                        &context.working_directory,
+                        context.intermediate_symlinks,
+                    )),
                     vec![],
                 )
                 .await?;
-            let Value::Page(p::Page {
-                entries,
-                next_after,
-            }) = reply
-                .result
-                .ok_or_else(|| bad_response(Operation::List, false))?
-            else {
+            let Some(Value::SelectedDirectory(selection)) = reply.result else {
                 return Err(bad_response(Operation::List, false));
             };
-            if !reply.data.is_empty() {
-                return Err(bad_response(Operation::List, false));
-            }
-            let entries = entries
-                .into_iter()
-                .map(|entry| convert::decode_entry(Operation::List, entry))
-                .collect::<Result<Vec<_>, _>>()?;
-            if entries.len() > r.limit.get()
-                || entries
-                    .iter()
-                    .any(|e| e.path().parent().as_ref() != Some(&r.path))
-                || entries
-                    .windows(2)
-                    .any(|v| v[0].path().as_str() >= v[1].path().as_str())
-                || entries.first().is_some_and(|e| {
-                    r.after
-                        .as_ref()
-                        .is_some_and(|a| e.path().name().is_none_or(|n| n <= *a))
-                })
-                || next_after.as_deref().is_some_and(|n| {
-                    entries
-                        .last()
-                        .and_then(|e| e.path().name())
-                        .as_ref()
-                        .map(ah_vfs_storage::EntryName::as_str)
-                        != Some(n)
-                })
+            let selection = p::decode_selection(selection).map_err(|source| {
+                convert::storage_protocol_violation_with_source(Operation::List, source)
+            })?;
+            if request
+                .lookup()
+                .and_then(|lookup| expected_lookup_address(lookup, &context))
+                .is_some_and(|address| &address != selection.address())
             {
                 return Err(bad_response(Operation::List, false));
             }
-            Ok(StorageDirPage {
-                entries,
-                next_after: next_after
-                    .as_deref()
-                    .map(ah_vfs_storage::EntryName::parse)
-                    .transpose()
-                    .map_err(|source| {
-                        convert::response_error(
-                            Operation::List,
-                            false,
-                            convert::storage_protocol_violation_with_source(
-                                Operation::List,
-                                source,
-                            ),
-                        )
-                    })?,
+            request
+                .bind_selection(selection.clone())
+                .map_err(|reason| {
+                    StorageError::without_effects(Operation::List, Failure::Backend(reason), None)
+                })?;
+            Ok(selection)
+        })
+    }
+
+    fn list_page<'a>(
+        &'a self,
+        bound: &'a BoundListRequest<'_>,
+    ) -> StorageFuture<'a, DirectoryPage> {
+        Box::pin(async move {
+            if !self.driver_info.capabilities().list() {
+                return Err(StorageError::without_effects(
+                    Operation::List,
+                    Failure::Rejected(Rejection::Unsupported),
+                    None,
+                ));
+            }
+            let reply = self
+                .call(p::StorageOp::List(p::encode_list(bound)), vec![])
+                .await?;
+            let Some(Value::Page(page)) = reply.result else {
+                return Err(bad_response(Operation::List, false));
+            };
+            p::decode_page(bound, page, &reply.data).map_err(|reason| {
+                StorageError::without_effects(Operation::List, Failure::Contract(reason), None)
             })
         })
     }

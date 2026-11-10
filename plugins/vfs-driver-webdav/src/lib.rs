@@ -131,12 +131,16 @@ impl Guest for WebdavDriver {
         let config = p::json_object(config)?;
         let client = client::Client::parse(&config)?;
         client.check_root()?;
-        Ok(api::Storage::new(WebdavStorage { client }))
+        Ok(api::Storage::new(WebdavStorage {
+            client,
+            directory_generation: *ah_id::UuidV7::new().as_ref().as_bytes(),
+        }))
     }
 }
 
 struct WebdavStorage {
     client: client::Client,
+    directory_generation: [u8; 16],
 }
 impl GuestStorage for WebdavStorage {
     fn info(&self) -> p::StorageInfo {
@@ -157,19 +161,33 @@ impl GuestStorage for WebdavStorage {
                 })?;
                 Value::Entry(encode_entry(&context, &entry)?)
             }
-            p::StorageOp::List(p::List { path, after, limit }) => {
-                let (entries, next_after) = client.list(&path, after.as_deref(), limit)?;
-                Value::Page(p::Page {
-                    entries,
-                    next_after,
-                })
-            }
             p::StorageOp::CreateDir(p::CreateDir { path, recursive }) => Value::Entry(
                 encode_entry(&context, &client.create_dir(&path, recursive)?)?,
             ),
             _ => return Err(context.failure(Failure::Rejected(Rejection::Unsupported))),
         };
         Ok(p::Reply::new(value))
+    }
+    fn select_directory(
+        &self,
+        request: &ah_vfs_storage::ListRequest,
+        base: &ah_vfs_storage::StoragePath,
+        links: ah_vfs_storage::IntermediateSymlinks,
+    ) -> Result<ah_vfs_storage::DirectorySelection> {
+        self.client.for_operation(Operation::List).select_directory(
+            request,
+            base,
+            links,
+            &self.directory_generation,
+        )
+    }
+    fn list_page(
+        &self,
+        bound: &ah_vfs_storage::BoundListRequest<'_>,
+    ) -> Result<ah_vfs_storage::DirectoryPage> {
+        self.client
+            .for_operation(Operation::List)
+            .list_page(bound, &self.directory_generation)
     }
     fn read(
         &self,
@@ -366,6 +384,7 @@ mod tests {
             p::JsonObject::from([("endpoint".into(), "https://webdav.invalid/root/".into())]);
         Ok(WebdavStorage {
             client: client::Client::parse(&config)?,
+            directory_generation: [1; 16],
         })
     }
 

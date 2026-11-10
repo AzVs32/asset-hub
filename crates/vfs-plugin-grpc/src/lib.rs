@@ -467,14 +467,15 @@ async fn run_session(
         let broken = result.as_ref().err().is_some_and(|error| {
             error.lifecycle_error().is_some()
                 || error.storage_error().is_some_and(|error| {
-                    matches!(
-                        error.failure(),
-                        Failure::Backend(
-                            BackendFailure::Stale
-                                | BackendFailure::Unavailable
-                                | BackendFailure::TimedOut
-                        ) | Failure::Contract(_)
-                    )
+                    !c::is_stale_directory(error)
+                        && matches!(
+                            error.failure(),
+                            Failure::Backend(
+                                BackendFailure::Stale
+                                    | BackendFailure::Unavailable
+                                    | BackendFailure::TimedOut
+                            ) | Failure::Contract(_)
+                        )
                 })
         });
         let _ = pending.reply.send(result);

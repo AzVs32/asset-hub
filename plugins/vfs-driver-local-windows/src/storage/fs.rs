@@ -1,8 +1,6 @@
 //! Windows names, reparse-point policy and directory-relative filesystem I/O.
 use super::{TEMP_PREFIX, native};
-use ah_vfs::domain::storage::{
-    StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageMoveEntryRequest,
-};
+use ah_vfs::domain::storage::{StorageCreateDirRequest, StorageMoveEntryRequest};
 use ah_vfs_storage::{
     BackendFailure, ContractViolation, Failure, Operation, Rejection, StorageError,
 };
@@ -239,16 +237,12 @@ fn list_path_error(operation: Operation, cause: ah_vfs_storage::PathError) -> St
 }
 
 pub(super) fn list_entries(
-    root: &Dir,
-    query: StorageDirQuery,
-) -> Result<StorageDirPage, StorageError> {
+    dir: &Dir,
+    bound: &ah_vfs_storage::BoundListRequest<'_>,
+) -> Result<ah_vfs_storage::DirectoryPage, StorageError> {
     let operation = Operation::List;
-    query.validate()?;
-    if let Some(after) = &query.after {
-        validate_name(operation, after.as_str())?;
-    }
-    let dir = dir(operation, root, &query.path, false)?.0;
-    let mut names = vec![];
+    let address = bound.selection().address();
+    let mut names = std::collections::BTreeSet::new();
     for child in dir.entries().map_err(|cause| error(operation, cause))? {
         let name = child
             .map_err(|cause| error(operation, cause))?
@@ -278,34 +272,36 @@ pub(super) fn list_entries(
                 Some(Box::new(cause)),
             )
         })?;
-        query
-            .path
+        address
             .join(&name)
             .map_err(|cause| list_path_error(operation, cause))?;
-        if query.after.as_ref().is_none_or(|after| name > *after) {
-            names.push(name);
+        if bound.after().is_none_or(|after| &name > after) {
+            names.insert(name);
+            if names.len() > bound.size().get() + 1 {
+                names.pop_last();
+            }
         }
     }
-    names.sort();
-    let more = names.len() > query.limit.get();
-    names.truncate(query.limit.get());
-    let next_after = more.then(|| names.last().cloned()).flatten();
+    let more = names.len() > bound.size().get();
     let entries = names
         .into_iter()
+        .take(bound.size().get())
         .map(|name| {
             entry(
                 operation,
-                query
-                    .path
+                address
                     .join(&name)
                     .map_err(|cause| list_path_error(operation, cause))?,
-                checked_metadata(operation, &dir, name.as_str())?,
+                checked_metadata(operation, dir, name.as_str())?,
             )
         })
         .collect::<Result<_, StorageError>>()?;
-    Ok(StorageDirPage {
-        entries,
-        next_after,
+    ah_vfs_storage::DirectoryPage::new(bound, entries, more).map_err(|cause| {
+        StorageError::without_effects(
+            operation,
+            Failure::Contract(ContractViolation::InvalidPage),
+            Some(Box::new(cause)),
+        )
     })
 }
 pub(super) fn create_dir(
