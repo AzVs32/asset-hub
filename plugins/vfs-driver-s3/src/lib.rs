@@ -205,52 +205,40 @@ impl GuestStorage for S3Storage {
             position: Cell::new(Some((offset, remaining))),
         }))
     }
-    fn write(&self, path: String, replace: bool, _atomic: bool) -> Result<api::Writer> {
+    fn write(
+        &self,
+        request: ah_vfs_storage::WriteRequest,
+        base: ah_vfs_storage::StoragePath,
+        links: ah_vfs_storage::IntermediateSymlinks,
+    ) -> Result<api::Writer> {
         let client = self.client.for_operation(Operation::Write);
-        path_check_target(&client, &path, replace)?;
-        let upload = client.start_upload(&path)?;
+        let context = client.context.clone();
+        let (path, _, destination) =
+            api::direct_write_destination(&request, &base, links, |path| {
+                client.stat_object(path.as_str())
+            })?;
+        // A prefix has no directory identity which S3 can conditionally bind.
+        if !path.parent().is_some_and(|parent| parent.is_root()) {
+            return Err(context.failure(Failure::Rejected(Rejection::Unsupported)));
+        }
+        let target = match destination {
+            Some(etag) => Some(
+                etag.ok_or_else(|| context.failure(Failure::Rejected(Rejection::Unsupported)))?,
+            ),
+            None => None,
+        };
         Ok(api::Writer::new(S3Writer {
             session: RefCell::new(Some(Upload {
-                client: client.clone(),
+                client,
                 path,
-                replace,
-                upload,
+                target,
+                upload: None,
                 buffer: vec![],
                 parts: vec![],
                 size: 0,
             })),
         }))
     }
-}
-fn path_check_target(client: &s3::Client, name: &str, replace: bool) -> Result<()> {
-    let context = client.context.clone();
-    path(&context, name)?;
-    if name.is_empty() {
-        return Err(context.failure(Failure::Rejected(Rejection::RootProtected)));
-    }
-    for (index, _) in name.match_indices('/') {
-        if client.head(&name[..index])?.is_some() {
-            return Err(context.failure(Failure::Rejected(Rejection::NotDirectory)));
-        }
-    }
-    match client.stat(name) {
-        Ok(entry) => {
-            if !replace {
-                return Err(context.failure(Failure::Rejected(Rejection::AlreadyExists)));
-            }
-            if !matches!(entry.entry_type(), EntryType::File { .. }) {
-                return Err(context.failure(Failure::Rejected(Rejection::IsDirectory)));
-            }
-        }
-        Err(e)
-            if e.storage_error()
-                .is_some_and(|error| error.failure() == Failure::Rejected(Rejection::NotFound)) =>
-        {
-            ()
-        }
-        Err(e) => return Err(e),
-    }
-    Ok(())
 }
 struct S3Reader {
     client: s3::Client,
@@ -305,27 +293,41 @@ impl GuestReader for S3Reader {
 const PART_SIZE: usize = 5 * 1024 * 1024;
 struct Upload {
     client: s3::Client,
-    path: String,
-    replace: bool,
-    upload: String,
+    path: ah_vfs_storage::StoragePath,
+    target: Option<String>,
+    upload: Option<String>,
     buffer: Vec<u8>,
     parts: Vec<String>,
     size: u64,
 }
 impl Upload {
     fn upload_part(&mut self, bytes: Vec<u8>) -> Result<()> {
-        let context = api::ErrorContext::storage(Operation::Write);
+        let context = &self.client.context;
         if self.parts.len() >= 10_000 {
             return Err(context.failure(Failure::Backend(BackendFailure::CapacityExceeded)));
         }
-        let etag =
-            self.client
-                .upload_part(&self.path, &self.upload, self.parts.len() + 1, bytes)?;
+        let path = self.path.as_str();
+        let upload = match &self.upload {
+            Some(upload) => upload,
+            None => self.upload.insert(self.client.start_upload(path)?),
+        };
+        let etag = self
+            .client
+            .upload_part(path, upload, self.parts.len() + 1, bytes)?;
         self.parts.push(etag);
         Ok(())
     }
-    fn abort(&self) -> Result<()> {
-        self.client.abort_upload(&self.path, &self.upload)
+
+    fn abort(&mut self) -> Result<()> {
+        if let Some(upload) = self.upload.take() {
+            self.client.abort_upload(self.path.as_str(), &upload)?;
+        }
+        Ok(())
+    }
+}
+impl Drop for Upload {
+    fn drop(&mut self) {
+        let _ = self.abort();
     }
 }
 struct S3Writer {
@@ -334,57 +336,70 @@ struct S3Writer {
 impl GuestWriter for S3Writer {
     fn write(&self, data: Vec<u8>) -> Result<()> {
         let context = api::ErrorContext::storage(Operation::Write);
-        if data.len() > p::MAX_DATA_BYTES {
-            return Err(context.failure(Failure::Rejected(Rejection::LimitExceeded)));
-        }
-        let mut pending = self.session.borrow_mut();
-        let s = pending
-            .as_mut()
-            .ok_or_else(|| context.failure(Failure::Backend(BackendFailure::Closed)))?;
-        s.size = s
-            .size
-            .checked_add(data.len() as u64)
-            .ok_or_else(|| context.failure(Failure::Rejected(Rejection::LimitExceeded)))?;
-        s.buffer.extend_from_slice(&data);
-        while s.buffer.len() >= PART_SIZE {
-            let part = s.buffer.drain(..PART_SIZE).collect();
-            s.upload_part(part)?;
-        }
-        Ok(())
-    }
-    fn commit(&self) -> Result<p::Entry> {
-        let context = api::ErrorContext::storage(Operation::Write);
-        let mut s = self
+        let mut session = self
             .session
             .borrow_mut()
             .take()
             .ok_or_else(|| context.failure(Failure::Backend(BackendFailure::Closed)))?;
-        let outcome = (|| {
-            path_check_target(&s.client, &s.path, s.replace)?;
-            if s.size == 0 {
-                s.abort()?;
-                let headers = if s.replace {
-                    vec![]
-                } else {
-                    vec![("if-none-match".into(), "*".into())]
-                };
-                s.client.request("PUT", &s.path, vec![], headers, vec![])?;
-            } else {
-                if !s.buffer.is_empty() {
-                    let bytes = std::mem::take(&mut s.buffer);
-                    s.upload_part(bytes)?;
-                }
-                s.client
-                    .complete_upload(&s.path, &s.upload, &s.parts, s.replace)?;
-            }
-            s.client
-                .stat(&s.path)
-                .and_then(|entry| encode_entry(&s.client.context, &entry))
-        })();
-        if outcome.is_err() {
-            let _ = s.abort();
+        if data.len() > p::MAX_DATA_BYTES {
+            return Err(context.failure(Failure::Rejected(Rejection::LimitExceeded)));
         }
-        outcome
+        session.size = session
+            .size
+            .checked_add(data.len() as u64)
+            .ok_or_else(|| context.failure(Failure::Rejected(Rejection::LimitExceeded)))?;
+        session
+            .buffer
+            .try_reserve(data.len())
+            .map_err(|_| context.failure(Failure::Backend(BackendFailure::CapacityExceeded)))?;
+        session.buffer.extend_from_slice(&data);
+        while session.buffer.len() >= PART_SIZE {
+            let part = session.buffer.drain(..PART_SIZE).collect();
+            session.upload_part(part)?;
+        }
+        *self.session.borrow_mut() = Some(session);
+        Ok(())
+    }
+    fn commit(&self) -> Result<p::Entry> {
+        let context = api::ErrorContext::storage(Operation::Write);
+        let mut session = self
+            .session
+            .borrow_mut()
+            .take()
+            .ok_or_else(|| context.failure(Failure::Backend(BackendFailure::Closed)))?;
+        let entry = ah_vfs_storage::Entry::new(
+            session.path.clone(),
+            EntryType::file(Some(session.size)),
+            None,
+        )
+        .map_err(|_| context.failure(Failure::Contract(ContractViolation::InvalidEntry)))?;
+        let entry = encode_entry(&context, &entry)?;
+        if session.size == 0 {
+            session.client.request(
+                "PUT",
+                session.path.as_str(),
+                vec![],
+                vec![s3::write_condition(session.target.as_deref())],
+                vec![],
+            )?;
+        } else {
+            if !session.buffer.is_empty() {
+                let bytes = std::mem::take(&mut session.buffer);
+                session.upload_part(bytes)?;
+            }
+            let upload = session
+                .upload
+                .as_ref()
+                .ok_or_else(|| context.failure(Failure::Backend(BackendFailure::Closed)))?;
+            session.client.complete_upload(
+                session.path.as_str(),
+                upload,
+                &session.parts,
+                session.target.as_deref(),
+            )?;
+            session.upload = None;
+        }
+        Ok(entry)
     }
     fn abort(&self) -> Result<()> {
         let context = api::ErrorContext::storage(Operation::Write);
@@ -393,13 +408,6 @@ impl GuestWriter for S3Writer {
             .take()
             .ok_or_else(|| context.failure(Failure::Backend(BackendFailure::Closed)))?
             .abort()
-    }
-}
-impl Drop for S3Writer {
-    fn drop(&mut self) {
-        if let Some(s) = self.session.get_mut().take() {
-            let _ = s.abort();
-        }
     }
 }
 

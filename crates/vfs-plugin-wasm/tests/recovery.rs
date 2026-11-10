@@ -2,7 +2,6 @@ use ah_vfs::application::driver_error::DriverError;
 use ah_vfs::application::driver_error::LifecycleFailure;
 use ah_vfs::application::port::*;
 use ah_vfs::domain::InstanceId;
-use ah_vfs::domain::storage::StorageWriteFileRequest;
 use ah_vfs_storage::{BackendFailure, Failure, Operation, Rejection, StorageError};
 use ah_vfs_storage::{Entry, StoragePath};
 use std::{future::poll_fn, sync::Arc, task::Poll, time::Duration};
@@ -333,7 +332,14 @@ async fn uncertain_commit_is_terminal_and_does_not_poison_other_storages() -> Re
     let storage = open(&driver, "writer").await?;
     let healthy = open(&driver, "healthy").await?;
     let mut writer = storage
-        .write_file(StorageWriteFileRequest::new(StoragePath::parse("file")?))
+        .write_file(
+            ah_vfs_storage::WriteRequest::new(
+                StoragePath::parse("file")?.to_rooted_expr(),
+                ah_vfs_storage::WriteMode::CreateNew,
+                ah_vfs_storage::Publication::Staged,
+            ),
+            Default::default(),
+        )
         .await?;
     writer.write_chunk(b"pending").await?;
     let error = writer.commit().await.err().ok_or("commit trap")?;

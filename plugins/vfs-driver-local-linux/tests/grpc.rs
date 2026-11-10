@@ -6,7 +6,6 @@ mod common;
 use ah_vfs::application::driver_catalog::DriverCatalog;
 use ah_vfs::application::dto::*;
 use ah_vfs::application::port::*;
-use ah_vfs::domain::storage::StorageWriteFileRequest;
 use ah_vfs_storage::StoragePath;
 use std::{
     io::{BufRead, BufReader},
@@ -104,9 +103,14 @@ async fn native_process_passes_shared_storage_contracts_over_grpc() -> Result {
     let root = tempfile::tempdir()?;
     let storage = storage(driver.as_ref(), root.path(), records.clone()).await?;
     let mut writer = storage
-        .write_file(StorageWriteFileRequest::new(StoragePath::parse(
-            "retained",
-        )?))
+        .write_file(
+            ah_vfs_storage::WriteRequest::new(
+                (StoragePath::parse("retained")?).to_rooted_expr(),
+                ah_vfs_storage::WriteMode::CreateNew,
+                ah_vfs_storage::Publication::Staged,
+            ),
+            Default::default(),
+        )
         .await?;
     writer.write_chunk(b"independent session").await?;
     let key = driver.info().key().clone();
@@ -157,9 +161,14 @@ async fn process_restart_rejects_old_resources_without_replaying_commit() -> Res
     let root = tempfile::tempdir()?;
     let storage = storage(driver.as_ref(), root.path(), records.clone()).await?;
     let mut pending = storage
-        .write_file(StorageWriteFileRequest::new(StoragePath::parse(
-            "uncertain",
-        )?))
+        .write_file(
+            ah_vfs_storage::WriteRequest::new(
+                (StoragePath::parse("uncertain")?).to_rooted_expr(),
+                ah_vfs_storage::WriteMode::CreateNew,
+                ah_vfs_storage::Publication::Staged,
+            ),
+            Default::default(),
+        )
         .await?;
     pending.write_chunk(b"unpublished").await?;
     process.child.kill()?;

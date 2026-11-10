@@ -2,7 +2,7 @@
 use ah_vfs_storage::{Failure, Rejection};
 
 use ah_vfs::application::port::{Storage, StorageFileReader};
-use ah_vfs::domain::storage::{StorageCreateDirRequest, StorageWriteFileRequest};
+use ah_vfs::domain::storage::StorageCreateDirRequest;
 use ah_vfs_storage::StoragePath;
 
 pub type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -30,7 +30,14 @@ pub async fn pool() -> TestResult<sqlx::SqlitePool> {
 
 pub async fn put(storage: &dyn Storage, name: &str, bytes: &[u8]) -> TestResult {
     let mut writer = storage
-        .write_file(StorageWriteFileRequest::new(path(name)?))
+        .write_file(
+            ah_vfs_storage::WriteRequest::new(
+                (path(name)?).to_rooted_expr(),
+                ah_vfs_storage::WriteMode::CreateNew,
+                ah_vfs_storage::Publication::Staged,
+            ),
+            Default::default(),
+        )
         .await?;
     writer.write_chunk(bytes).await?;
     writer.commit().await?;

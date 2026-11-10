@@ -4,7 +4,6 @@ mod common;
 use ah_vfs::application::port::{Driver, Storage, validate_storage_extensions};
 use ah_vfs::domain::storage::{
     StorageCreateDirRequest, StorageDirQuery, StorageMoveEntryRequest, StorageRemoveEntryRequest,
-    StorageWriteFileRequest,
 };
 use ah_vfs_storage::EntryType;
 use ah_vfs_storage::{AttributeSupport, WriteMode};
@@ -42,9 +41,16 @@ async fn declarations_cover_all_ports_and_optional_attributes_are_absent() -> Te
 #[tokio::test]
 async fn publication_is_staged_and_commit_is_terminal() -> TestResult {
     let storage = storage(64)?;
-    let mut request = StorageWriteFileRequest::new(path("file")?);
-    request.require_atomic_publish = true;
-    let mut writer = storage.write_file(request).await?;
+    let mut writer = storage
+        .write_file(
+            ah_vfs_storage::WriteRequest::new(
+                path("file")?.to_rooted_expr(),
+                ah_vfs_storage::WriteMode::CreateNew,
+                ah_vfs_storage::Publication::Atomic,
+            ),
+            Default::default(),
+        )
+        .await?;
     writer.write_chunk(b"one").await?;
     writer.write_chunk(b"two").await?;
     assert!(!exists(&storage, "file").await?);
@@ -87,7 +93,14 @@ async fn publication_is_staged_and_commit_is_terminal() -> TestResult {
 async fn abort_drop_and_unpolled_operations_never_publish_or_leak_quota() -> TestResult {
     let storage = storage(8)?;
     let mut writer = storage
-        .write_file(StorageWriteFileRequest::new(path("abort")?))
+        .write_file(
+            ah_vfs_storage::WriteRequest::new(
+                path("abort")?.to_rooted_expr(),
+                ah_vfs_storage::WriteMode::CreateNew,
+                ah_vfs_storage::Publication::Staged,
+            ),
+            Default::default(),
+        )
         .await?;
     writer.write_chunk(b"1234").await?;
     writer.abort().await?;
@@ -103,7 +116,14 @@ async fn abort_drop_and_unpolled_operations_never_publish_or_leak_quota() -> Tes
     );
     {
         let mut writer = storage
-            .write_file(StorageWriteFileRequest::new(path("drop")?))
+            .write_file(
+                ah_vfs_storage::WriteRequest::new(
+                    path("drop")?.to_rooted_expr(),
+                    ah_vfs_storage::WriteMode::CreateNew,
+                    ah_vfs_storage::Publication::Staged,
+                ),
+                Default::default(),
+            )
             .await?;
         writer.write_chunk(b"12345678").await?;
         drop(writer.commit());
@@ -150,13 +170,27 @@ async fn ranges_chunking_and_repeated_eof_follow_the_stream_contract() -> TestRe
 }
 
 #[tokio::test]
-async fn quota_counts_staging_and_failure_preserves_accepted_bytes() -> TestResult {
+async fn quota_counts_staging_and_failure_discards_the_stage() -> TestResult {
     let storage = storage(8)?;
     let mut one = storage
-        .write_file(StorageWriteFileRequest::new(path("one")?))
+        .write_file(
+            ah_vfs_storage::WriteRequest::new(
+                path("one")?.to_rooted_expr(),
+                ah_vfs_storage::WriteMode::CreateNew,
+                ah_vfs_storage::Publication::Staged,
+            ),
+            Default::default(),
+        )
         .await?;
     let mut two = storage
-        .write_file(StorageWriteFileRequest::new(path("two")?))
+        .write_file(
+            ah_vfs_storage::WriteRequest::new(
+                path("two")?.to_rooted_expr(),
+                ah_vfs_storage::WriteMode::CreateNew,
+                ah_vfs_storage::Publication::Staged,
+            ),
+            Default::default(),
+        )
         .await?;
     one.write_chunk(b"12345").await?;
     assert_eq!(
@@ -168,23 +202,38 @@ async fn quota_counts_staging_and_failure_preserves_accepted_bytes() -> TestResu
         Failure::Backend(BackendFailure::CapacityExceeded)
     );
     assert_eq!(storage.used_bytes(), 5);
+    assert!(
+        matches!(two.write_chunk(b"678").await, Err(error) if error.failure() == Failure::Backend(BackendFailure::Closed))
+    );
+    assert!(
+        matches!(two.commit().await, Err(error) if error.failure() == Failure::Backend(BackendFailure::Closed))
+    );
+    let mut two = storage
+        .write_file(
+            ah_vfs_storage::WriteRequest::new(
+                path("two")?.to_rooted_expr(),
+                WriteMode::CreateNew,
+                ah_vfs_storage::Publication::Staged,
+            ),
+            Default::default(),
+        )
+        .await?;
     two.write_chunk(b"678").await?;
     assert_eq!(storage.used_bytes(), 8);
+    let failure = one.write_chunk(b"x").await.err().ok_or("expected full")?;
     assert_eq!(
-        one.write_chunk(b"x")
-            .await
-            .err()
-            .ok_or("expected full")?
-            .failure(),
+        failure.failure(),
         Failure::Backend(BackendFailure::CapacityExceeded)
     );
-    one.commit().await?;
+    assert_eq!(
+        failure.outcome(),
+        ah_vfs_storage::MutationOutcome::Unchanged
+    );
+    assert!(
+        matches!(one.commit().await, Err(error) if error.failure() == Failure::Backend(BackendFailure::Closed))
+    );
+    assert!(!exists(&storage, "one").await?);
     two.commit().await?;
-    assert_eq!(get(&storage, "one").await?, b"12345");
-    assert_eq!(get(&storage, "two").await?, b"678");
-    storage
-        .remove_entry(StorageRemoveEntryRequest { path: path("one")? })
-        .await?;
     assert_eq!(storage.used_bytes(), 3);
     Ok(())
 }
@@ -203,11 +252,14 @@ async fn readers_pin_old_versions_and_their_capacity_until_released() -> TestRes
         )
         .await?;
     let mut writer = storage
-        .write_file(StorageWriteFileRequest {
-            path: path("file")?,
-            mode: WriteMode::Replace,
-            require_atomic_publish: true,
-        })
+        .write_file(
+            ah_vfs_storage::WriteRequest::new(
+                path("file")?.to_rooted_expr(),
+                WriteMode::Replace,
+                ah_vfs_storage::Publication::Atomic,
+            ),
+            Default::default(),
+        )
         .await?;
     writer.write_chunk(b"newnew").await?;
     assert_eq!(get(&storage, "file").await?, b"oldold");
@@ -242,11 +294,14 @@ async fn full_capacity_replacement_requires_staging_room_and_keeps_original_on_a
     let storage = storage(4)?;
     put(&storage, "file", b"full").await?;
     let mut writer = storage
-        .write_file(StorageWriteFileRequest {
-            path: path("file")?,
-            mode: WriteMode::Replace,
-            require_atomic_publish: true,
-        })
+        .write_file(
+            ah_vfs_storage::WriteRequest::new(
+                path("file")?.to_rooted_expr(),
+                WriteMode::Replace,
+                ah_vfs_storage::Publication::Atomic,
+            ),
+            Default::default(),
+        )
         .await?;
     assert_eq!(
         writer
@@ -257,7 +312,9 @@ async fn full_capacity_replacement_requires_staging_room_and_keeps_original_on_a
             .failure(),
         Failure::Backend(BackendFailure::CapacityExceeded)
     );
-    writer.abort().await?;
+    assert!(
+        matches!(writer.abort().await, Err(error) if error.failure() == Failure::Backend(BackendFailure::Closed))
+    );
     assert_eq!(get(&storage, "file").await?, b"full");
     assert_eq!(storage.used_bytes(), 4);
     Ok(())
@@ -329,7 +386,14 @@ async fn invalid_parents_types_and_root_mutations_have_domain_errors() -> TestRe
     put(&storage, "file", b"data").await?;
     assert_eq!(
         storage
-            .write_file(StorageWriteFileRequest::new(path("missing/file")?))
+            .write_file(
+                ah_vfs_storage::WriteRequest::new(
+                    path("missing/file")?.to_rooted_expr(),
+                    ah_vfs_storage::WriteMode::CreateNew,
+                    ah_vfs_storage::Publication::Staged
+                ),
+                Default::default()
+            )
             .await
             .err()
             .ok_or("parent")?
@@ -338,7 +402,14 @@ async fn invalid_parents_types_and_root_mutations_have_domain_errors() -> TestRe
     );
     assert_eq!(
         storage
-            .write_file(StorageWriteFileRequest::new(path("file/child")?))
+            .write_file(
+                ah_vfs_storage::WriteRequest::new(
+                    path("file/child")?.to_rooted_expr(),
+                    ah_vfs_storage::WriteMode::CreateNew,
+                    ah_vfs_storage::Publication::Staged
+                ),
+                Default::default()
+            )
             .await
             .err()
             .ok_or("parent")?
@@ -395,7 +466,14 @@ async fn invalid_parents_types_and_root_mutations_have_domain_errors() -> TestRe
     );
     assert_eq!(
         storage
-            .write_file(StorageWriteFileRequest::new(path("")?))
+            .write_file(
+                ah_vfs_storage::WriteRequest::new(
+                    (path("")?).to_rooted_expr(),
+                    ah_vfs_storage::WriteMode::CreateNew,
+                    ah_vfs_storage::Publication::Staged
+                ),
+                Default::default()
+            )
             .await
             .err()
             .ok_or("root")?
@@ -521,7 +599,14 @@ async fn changed_parent_rejects_publication_and_failed_commit_is_terminal() -> T
     let storage = storage(8)?;
     mkdir(&storage, "dir").await?;
     let mut writer = storage
-        .write_file(StorageWriteFileRequest::new(path("dir/file")?))
+        .write_file(
+            ah_vfs_storage::WriteRequest::new(
+                path("dir/file")?.to_rooted_expr(),
+                ah_vfs_storage::WriteMode::CreateNew,
+                ah_vfs_storage::Publication::Staged,
+            ),
+            Default::default(),
+        )
         .await?;
     writer.write_chunk(b"data").await?;
     storage
@@ -550,10 +635,24 @@ async fn changed_parent_rejects_publication_and_failed_commit_is_terminal() -> T
 async fn concurrent_create_new_publication_has_one_winner_and_refunds_loser() -> TestResult {
     let storage = storage(16)?;
     let mut one = storage
-        .write_file(StorageWriteFileRequest::new(path("file")?))
+        .write_file(
+            ah_vfs_storage::WriteRequest::new(
+                path("file")?.to_rooted_expr(),
+                ah_vfs_storage::WriteMode::CreateNew,
+                ah_vfs_storage::Publication::Staged,
+            ),
+            Default::default(),
+        )
         .await?;
     let mut two = storage
-        .write_file(StorageWriteFileRequest::new(path("file")?))
+        .write_file(
+            ah_vfs_storage::WriteRequest::new(
+                path("file")?.to_rooted_expr(),
+                ah_vfs_storage::WriteMode::CreateNew,
+                ah_vfs_storage::Publication::Staged,
+            ),
+            Default::default(),
+        )
         .await?;
     one.write_chunk(b"one").await?;
     two.write_chunk(b"two").await?;
@@ -561,7 +660,7 @@ async fn concurrent_create_new_publication_has_one_winner_and_refunds_loser() ->
     assert!(first.is_ok());
     assert_eq!(
         second.err().ok_or("conflict")?.failure(),
-        Failure::Rejected(Rejection::AlreadyExists)
+        Failure::Rejected(Rejection::Conflict)
     );
     assert_eq!(storage.used_bytes(), 3);
     assert_eq!(get(&storage, "file").await?, b"one");
@@ -579,7 +678,14 @@ async fn concurrent_writers_cannot_overcommit_instance_quota() -> TestResult {
         let file = path(&format!("file{index}"))?;
         tasks.push(tokio::spawn(async move {
             let mut writer = storage
-                .write_file(StorageWriteFileRequest::new(file))
+                .write_file(
+                    ah_vfs_storage::WriteRequest::new(
+                        file.to_rooted_expr(),
+                        ah_vfs_storage::WriteMode::CreateNew,
+                        ah_vfs_storage::Publication::Staged,
+                    ),
+                    Default::default(),
+                )
                 .await?;
             barrier.wait().await;
             writer.write_chunk(b"1234").await?;
@@ -616,7 +722,14 @@ async fn streams_keep_resources_alive_after_the_storage_handle_is_dropped() -> T
         )
         .await?;
     let mut writer = storage
-        .write_file(StorageWriteFileRequest::new(path("new")?))
+        .write_file(
+            ah_vfs_storage::WriteRequest::new(
+                path("new")?.to_rooted_expr(),
+                ah_vfs_storage::WriteMode::CreateNew,
+                ah_vfs_storage::Publication::Staged,
+            ),
+            Default::default(),
+        )
         .await?;
     drop(storage);
     assert_eq!(collect(reader.as_mut()).await?, b"retained");

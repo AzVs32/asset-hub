@@ -200,7 +200,7 @@ fn bounds_apply_to_control_data_and_nested_configuration() {
 fn exported_descriptor_contains_the_complete_language_independent_contract() -> Result {
     let descriptor = prost_types::FileDescriptorSet::decode(p::FILE_DESCRIPTOR_SET)?;
     let file = descriptor.file.first().ok_or("schema")?;
-    assert_eq!(file.package.as_deref(), Some("assethub.vfs.v6"));
+    assert_eq!(file.package.as_deref(), Some("assethub.vfs.v7"));
     let storage_info = file
         .message_type
         .iter()
@@ -239,11 +239,11 @@ fn exported_descriptor_contains_the_complete_language_independent_contract() -> 
     for method in &file.service.first().ok_or("Plugin")?.method {
         assert_eq!(
             method.input_type.as_deref(),
-            Some(".assethub.vfs.v6.Request")
+            Some(".assethub.vfs.v7.Request")
         );
         assert_eq!(
             method.output_type.as_deref(),
-            Some(".assethub.vfs.v6.Reply")
+            Some(".assethub.vfs.v7.Reply")
         );
     }
     Ok(())
@@ -386,5 +386,37 @@ fn read_rejects_an_overflowing_range_before_dispatch() -> Result {
         p::decode_request(&request.encode_to_vec()),
         Err(p::CodecError::InvalidData)
     ));
+    Ok(())
+}
+
+#[test]
+fn write_round_trips_binding_and_rejects_implicit_modes() -> Result {
+    use ah_vfs_storage as d;
+    let request = d::WriteRequest::new(
+        d::PathExpr::parse("../out")?,
+        d::WriteMode::Replace,
+        d::Publication::Atomic,
+    );
+    let base = d::StoragePath::parse("work/sub")?;
+    let links = d::IntermediateSymlinks::Reject;
+    let wire = p::encode_write(7, &request, &base, links);
+    assert_eq!(wire.handle, 7);
+    assert_eq!(p::decode_write(wire.clone())?, (request, base, links));
+    for invalid in [
+        p::Write {
+            mode: 0,
+            ..wire.clone()
+        },
+        p::Write {
+            publication: i32::MAX,
+            ..wire.clone()
+        },
+    ] {
+        let operation = Op::Write(invalid);
+        assert!(matches!(
+            p::encode_request("generation", &operation, vec![]),
+            Err(p::CodecError::InvalidData)
+        ));
+    }
     Ok(())
 }

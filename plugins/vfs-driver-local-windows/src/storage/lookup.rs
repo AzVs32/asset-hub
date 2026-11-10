@@ -38,7 +38,7 @@ pub(super) fn open_reader(
         Storage::FileSystem::{FILE_GENERIC_READ, FILE_SHARE_DELETE, ReOpenFile},
     };
     let op = Operation::Read;
-    let (_, selected) = select(root, lookup, context, op)?;
+    let (_, selected, _) = select(root, lookup, context, op)?;
     let selected = selected.ok_or_else(|| rejected(op, Rejection::IsDirectory))?;
     // SAFETY: the selected handle stays live for the call. ReOpenFile returns
     // a new owned handle to that object, regardless of its namespace address.
@@ -67,7 +67,7 @@ fn select(
     lookup: PathLookup<'_>,
     context: LookupContext,
     op: Operation,
-) -> Result<(Entry, Option<File>), StorageError> {
+) -> Result<(Entry, Option<File>, Vec<(StoragePath, Dir)>), StorageError> {
     let root_dir = root.try_clone().map_err(|cause| fs::error(op, cause))?;
     let mut stack = vec![(StoragePath::root(), root_dir)];
     if lookup.path().start() == LookupStart::BaseDirectory {
@@ -140,16 +140,21 @@ fn select(
     lookup
         .check_existing_target(selected.0.path(), selected.0.entry_type())
         .map_err(|reason| rejected(op, reason))?;
-    Ok(selected)
+    Ok((selected.0, selected.1, stack))
 }
 
 fn open(op: Operation, dir: &Dir, name: &str) -> Result<(File, Metadata), StorageError> {
     fs::validate_name(op, name)?;
     let mut options = OpenOptions::new();
+    let share = if op == Operation::Write {
+        FILE_SHARE_READ
+    } else {
+        FILE_SHARE_READ | FILE_SHARE_WRITE
+    };
     options
         .read(true)
         .access_mode(FILE_READ_ATTRIBUTES | SYNCHRONIZE)
-        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+        .share_mode(share)
         .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
         .follow(FollowSymlinks::No);
     let file = dir
@@ -160,4 +165,63 @@ fn open(op: Operation, dir: &Dir, name: &str) -> Result<(File, Metadata), Storag
     }
     let metadata = file.metadata().map_err(|cause| fs::error(op, cause))?;
     Ok((file, metadata))
+}
+
+pub(super) struct WriteDestination {
+    pub parent: Dir,
+    pub path: StoragePath,
+    // Ancestors were opened without delete sharing and remain bound for publication.
+    pub ancestors: Vec<(StoragePath, Dir)>,
+}
+
+pub(super) fn write_destination(
+    root: &Dir,
+    request: &ah_vfs_storage::WriteRequest,
+    context: LookupContext,
+) -> Result<WriteDestination, StorageError> {
+    use ah_vfs_storage::{EntryType, IntermediateSymlinks, StatRequest};
+    let op = Operation::Write;
+    let Some((parent, name)) = request.path().split_final_name() else {
+        select(root, request.lookup(), context, op)?;
+        return Err(rejected(op, Rejection::NotDirectory));
+    };
+    let action = match context.intermediate_symlinks {
+        IntermediateSymlinks::FollowWithinInstance => SymlinkAction::FollowWithinInstance,
+        IntermediateSymlinks::Reject => SymlinkAction::Preserve,
+    };
+    let (entry, file, mut ancestors) =
+        select(root, StatRequest::new(parent, action).lookup(), context, op)?;
+    match entry.entry_type() {
+        EntryType::Directory => {}
+        EntryType::Symlink => return Err(rejected(op, Rejection::SymlinkNotAllowed)),
+        _ => return Err(rejected(op, Rejection::NotDirectory)),
+    }
+    let parent = match file {
+        Some(file) => Dir::from_std_file(file.into_std()),
+        None => ancestors.pop().ok_or_else(|| stale(op))?.1,
+    };
+    let path = entry
+        .path()
+        .join(name)
+        .map_err(|_| rejected(op, Rejection::PathTooLong))?;
+    match open(op, &parent, name.as_str()) {
+        Ok((_, metadata)) => {
+            let entry = fs::entry(op, path.clone(), metadata)?;
+            request
+                .lookup()
+                .check_existing_target(&path, entry.entry_type())
+                .map_err(|reason| rejected(op, reason))?;
+        }
+        Err(error) if error.failure() == Failure::Rejected(Rejection::NotFound) => {
+            request
+                .check_new_destination(&path)
+                .map_err(|reason| rejected(op, reason))?;
+        }
+        Err(error) => return Err(error),
+    }
+    Ok(WriteDestination {
+        parent,
+        path,
+        ancestors,
+    })
 }

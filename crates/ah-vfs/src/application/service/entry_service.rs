@@ -11,11 +11,11 @@ use crate::application::session::{FileReadHandle, FileWriteHandle};
 use crate::domain::namespace::{Mount, MountTable, VirtualPath};
 use crate::domain::storage::{
     MAX_DIR_PAGE_LIMIT, StorageCreateDirRequest, StorageDirQuery, StorageMoveEntryRequest,
-    StorageRemoveEntryRequest, StorageWriteFileRequest, validate_dir_page_limit,
+    StorageRemoveEntryRequest, validate_dir_page_limit,
 };
 use ah_vfs_storage::{
-    Capabilities, LinkTarget, Publication, ReadLinkRequest, ReadRequest, RenameMode, StatRequest,
-    SymlinkAction,
+    Capabilities, LinkTarget, ReadLinkRequest, ReadRequest, RenameMode, StatRequest, SymlinkAction,
+    WriteRequest,
 };
 use ah_vfs_storage::{EntryType, Permissions, StoragePath, XattrName, XattrWriteMode};
 use ah_vfs_storage::{Failure, Operation, Rejection, StorageError};
@@ -333,22 +333,28 @@ impl EntryService {
     ) -> Result<FileWriteHandle, EntryError> {
         let table = self.runtime.table().await?;
         Self::protect(&table, &request.path)?;
-        let (relative, storage, capabilities) = self.open(&table, &request.path).await?;
-        let publication = if request.require_atomic_publish {
-            Publication::Atomic
-        } else {
-            Publication::Staged
-        };
-        Self::require(
-            Operation::Write,
-            capabilities.write().supports(request.mode, publication),
-        )?;
+        let resolution = table.resolve(&request.path)?;
+        let reference = resolution.mount().driver_instance();
+        let driver = self
+            .runtime
+            .drivers
+            .get(reference.driver_key())
+            .ok_or_else(|| EntryError::DriverNotRegistered(reference.driver_key().clone()))?;
+        let operation = WriteRequest::new(
+            resolution.storage_path()?.to_rooted_expr(),
+            request.mode,
+            request.publication,
+        );
+        driver
+            .info()
+            .capabilities()
+            .require_write(&operation)
+            .map_err(|reason| {
+                StorageError::without_effects(Operation::Write, Failure::Rejected(reason), None)
+            })?;
+        let storage = self.runtime.storage(reference, driver.as_ref()).await?;
         let writer = storage
-            .write_file(StorageWriteFileRequest {
-                require_atomic_publish: request.require_atomic_publish,
-                path: relative,
-                mode: request.mode,
-            })
+            .write_file(operation, LookupContext::default())
             .await?;
         Ok(FileWriteHandle::new(
             writer,

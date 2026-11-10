@@ -13,7 +13,7 @@ use ah_vfs::application::service::{EntryService, MountService};
 use ah_vfs::domain::namespace::{ChildMountPolicy, VirtualPath};
 use ah_vfs::domain::storage::{
     StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageMoveEntryRequest,
-    StorageRemoveEntryRequest, StorageWriteFileRequest,
+    StorageRemoveEntryRequest,
 };
 use ah_vfs::domain::{DriverInstance, DriverKey, InstanceId};
 use ah_vfs::infrastructure::mount_repository::SqliteMountRepository;
@@ -142,7 +142,8 @@ impl Storage for TestStorage {
     }
     fn write_file(
         &self,
-        _: StorageWriteFileRequest,
+        _: ah_vfs_storage::WriteRequest,
+        _: ah_vfs::application::port::LookupContext,
     ) -> StorageFuture<'_, Box<dyn StorageFileWriter>> {
         unsupported(Operation::Write)
     }

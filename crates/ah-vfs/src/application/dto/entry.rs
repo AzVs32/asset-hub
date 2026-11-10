@@ -71,7 +71,7 @@ pub struct ReadFileRequest {
 
 pub struct WriteFileRequest {
     /// Require atomic complete-file publication; unsupported guarantees fail before staging.
-    pub require_atomic_publish: bool,
+    pub publication: ah_vfs_storage::Publication,
     pub path: VirtualPath,
     pub mode: WriteMode,
 }

@@ -16,7 +16,6 @@ use ah_vfs::application::port::{
 };
 use ah_vfs::application::service::{EntryService, MountService};
 use ah_vfs::domain::namespace::{ChildMountPolicy, VirtualPath};
-use ah_vfs::domain::storage::StorageWriteFileRequest;
 use ah_vfs::domain::{DriverInstance, DriverKey, InstanceId};
 use ah_vfs::infrastructure::mount_repository::SqliteMountRepository;
 use ah_vfs_storage::{
@@ -117,7 +116,8 @@ impl Storage for TestStorage {
     }
     fn write_file(
         &self,
-        _: StorageWriteFileRequest,
+        _: ah_vfs_storage::WriteRequest,
+        _: ah_vfs::application::port::LookupContext,
     ) -> StorageFuture<'_, Box<dyn StorageFileWriter>> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         Box::pin(async { Ok(Box::new(TestWriter { closed: false }) as Box<dyn StorageFileWriter>) })
@@ -189,7 +189,11 @@ fn request(atomic: bool) -> Result<WriteFileRequest, Box<dyn Error>> {
     Ok(WriteFileRequest {
         path: VirtualPath::parse("/file")?,
         mode: WriteMode::CreateNew,
-        require_atomic_publish: atomic,
+        publication: if atomic {
+            ah_vfs_storage::Publication::Atomic
+        } else {
+            ah_vfs_storage::Publication::Staged
+        },
     })
 }
 
@@ -239,6 +243,9 @@ async fn unsupported_requests_are_rejected_before_backend_side_effects() -> Test
     let caps = Capabilities::default()
         .with_read(ReadSupport::Sequential)
         .with_write(WriteSupport::staged(WriteModes::CreateNew, false));
+    let (unavailable, _) = fixture(caps, Some(LifecycleFailure::Unavailable)).await?;
+    assert!(matches!(unavailable.write_file(request(true)?).await, Err(EntryError::Storage(error))
+        if error.failure() == Failure::Rejected(Rejection::Unsupported)));
     let (service, calls) = fixture(caps, None).await?;
     assert!(
         matches!(service.write_file(request(true)?).await, Err(error) if error.storage_error().is_some_and(|e| e.failure() == Failure::Rejected(Rejection::Unsupported)))

@@ -2,7 +2,7 @@ use ah_vfs::application::driver_info::DriverInfo;
 use ah_vfs::application::dto::*;
 use ah_vfs::application::port::*;
 use ah_vfs::domain::InstanceId;
-use ah_vfs::domain::storage::{StorageRemoveEntryRequest, StorageWriteFileRequest};
+use ah_vfs::domain::storage::StorageRemoveEntryRequest;
 use ah_vfs_storage::{
     BackendFailure, ContractViolation, Failure, Operation, Rejection, StorageError,
 };
@@ -45,6 +45,8 @@ struct Faults {
     reader_drops: AtomicUsize,
     writer_drops: AtomicUsize,
     commits: AtomicUsize,
+    suspend_commit: AtomicBool,
+    committing: tokio::sync::Notify,
 }
 struct Backend {
     info: DriverInfo,
@@ -188,7 +190,8 @@ impl Storage for BackendStorage {
     }
     fn write_file(
         &self,
-        _: StorageWriteFileRequest,
+        _: ah_vfs_storage::WriteRequest,
+        _: ah_vfs::application::port::LookupContext,
     ) -> StorageFuture<'_, Box<dyn StorageFileWriter>> {
         Box::pin(
             async move { Ok(Box::new(Writer(self.faults.clone())) as Box<dyn StorageFileWriter>) },
@@ -242,6 +245,10 @@ impl StorageFileWriter for Writer {
     fn commit(&mut self) -> StorageFuture<'_, Entry> {
         Box::pin(async move {
             self.0.commits.fetch_add(1, Ordering::SeqCst);
+            if self.0.suspend_commit.load(Ordering::SeqCst) {
+                self.0.committing.notify_one();
+                std::future::pending::<()>().await;
+            }
             Err(StorageError::after_dispatch(
                 Operation::Write,
                 Failure::Rejected(Rejection::Unsupported),
@@ -841,12 +848,16 @@ impl RawSession {
     async fn writer(&mut self) -> Result<u64> {
         match self
             .call(
-                Op::Write(p::Write {
-                    handle: 1,
-                    path: "file".into(),
-                    replace: false,
-                    atomic: false,
-                }),
+                Op::Write(p::encode_write(
+                    1,
+                    &ah_vfs_storage::WriteRequest::new(
+                        ah_vfs_storage::PathExpr::parse("/file")?,
+                        ah_vfs_storage::WriteMode::CreateNew,
+                        ah_vfs_storage::Publication::Staged,
+                    ),
+                    &ah_vfs_storage::StoragePath::root(),
+                    ah_vfs_storage::IntermediateSymlinks::FollowWithinInstance,
+                )),
                 vec![],
             )
             .await?
@@ -947,6 +958,42 @@ async fn request_half_close_cancels_pending_backend_and_releases_staged_writes()
         .is_none()
     );
     assert_eq!(faults.commits.load(Ordering::SeqCst), 0);
+    drop(server);
+    Ok(())
+}
+
+#[tokio::test]
+async fn cancelling_an_inflight_commit_retires_the_writer_without_replay() -> Result {
+    let faults = Arc::new(Faults::default());
+    faults.suspend_commit.store(true, Ordering::SeqCst);
+    let (endpoint, server) = production(faults.clone(), ServerLimits::default()).await?;
+    let driver = PluginDriver::connect(Arc::new(
+        GrpcTransport::connect(endpoint, "test-token").await?,
+    ))
+    .await?;
+    driver.initialize(Default::default()).await?;
+    let storage = open(&driver).await?;
+    let mut writer = storage
+        .write_file(
+            ah_vfs_storage::WriteRequest::new(
+                StoragePath::parse("file")?.to_rooted_expr(),
+                ah_vfs_storage::WriteMode::CreateNew,
+                ah_vfs_storage::Publication::Staged,
+            ),
+            Default::default(),
+        )
+        .await?;
+    writer.write_chunk(b"staged").await?;
+    let mut commit = writer.commit();
+    tokio::select! {
+        result = &mut commit => return Err(format!("commit unexpectedly completed: {result:?}").into()),
+        started = tokio::time::timeout(std::time::Duration::from_secs(2), faults.committing.notified()) => started?,
+    }
+    drop(commit);
+    until(|| faults.writer_drops.load(Ordering::SeqCst) == 1).await?;
+    let error = writer.commit().await.err().ok_or("writer was reopened")?;
+    assert_eq!(error.failure(), Failure::Backend(BackendFailure::Closed));
+    assert_eq!(faults.commits.load(Ordering::SeqCst), 1);
     drop(server);
     Ok(())
 }
@@ -1212,7 +1259,14 @@ async fn dropping_child_resources_outside_tokio_does_not_need_an_expiry_scan() -
     let storage = open(&driver).await?;
     let reader = read(storage.as_ref()).await?;
     let writer = storage
-        .write_file(StorageWriteFileRequest::new(StoragePath::parse("file")?))
+        .write_file(
+            ah_vfs_storage::WriteRequest::new(
+                StoragePath::parse("file")?.to_rooted_expr(),
+                ah_vfs_storage::WriteMode::CreateNew,
+                ah_vfs_storage::Publication::Staged,
+            ),
+            Default::default(),
+        )
         .await?;
     std::thread::spawn(move || drop((reader, writer)))
         .join()

@@ -90,7 +90,12 @@ impl GuestStorage for Store {
     ) -> Result<Reader> {
         Ok(Reader::new(Input(Cell::new(false))))
     }
-    fn write(&self, _: String, _: bool, _: bool) -> Result<Writer> {
+    fn write(
+        &self,
+        _: ah_vfs_storage::WriteRequest,
+        _: ah_vfs_storage::StoragePath,
+        _: ah_vfs_storage::IntermediateSymlinks,
+    ) -> Result<Writer> {
         Ok(Writer::new(Output {
             fail: self.fail,
             bytes: RefCell::new(vec![]),
@@ -188,12 +193,16 @@ fn metadata_and_commit_are_tagged_protobuf_results() -> TestResult {
     let storage = open(&mut dispatcher, false)?;
     let reply = call(
         &mut dispatcher,
-        Op::Write(p::Write {
-            handle: storage,
-            path: "file".into(),
-            replace: false,
-            atomic: false,
-        }),
+        Op::Write(p::encode_write(
+            storage,
+            &ah_vfs_storage::WriteRequest::new(
+                ah_vfs_storage::PathExpr::parse("/file")?,
+                ah_vfs_storage::WriteMode::CreateNew,
+                ah_vfs_storage::Publication::Staged,
+            ),
+            &ah_vfs_storage::StoragePath::root(),
+            ah_vfs_storage::IntermediateSymlinks::FollowWithinInstance,
+        )),
         vec![],
     )?;
     let Value::Writer(p::Handle { handle }) = reply.into_value()? else {
@@ -227,12 +236,16 @@ fn failed_commit_is_terminal_and_release_never_publishes() -> TestResult {
     let storage = open(&mut dispatcher, true)?;
     let Value::Writer(p::Handle { handle }) = call(
         &mut dispatcher,
-        Op::Write(p::Write {
-            handle: storage,
-            path: "file".into(),
-            replace: false,
-            atomic: false,
-        }),
+        Op::Write(p::encode_write(
+            storage,
+            &ah_vfs_storage::WriteRequest::new(
+                ah_vfs_storage::PathExpr::parse("/file")?,
+                ah_vfs_storage::WriteMode::CreateNew,
+                ah_vfs_storage::Publication::Staged,
+            ),
+            &ah_vfs_storage::StoragePath::root(),
+            ah_vfs_storage::IntermediateSymlinks::FollowWithinInstance,
+        )),
         vec![],
     )?
     .into_value()?
@@ -258,12 +271,16 @@ fn failed_commit_is_terminal_and_release_never_publishes() -> TestResult {
     );
     let Value::Writer(p::Handle { handle }) = call(
         &mut dispatcher,
-        Op::Write(p::Write {
-            handle: storage,
-            path: "file".into(),
-            replace: false,
-            atomic: false,
-        }),
+        Op::Write(p::encode_write(
+            storage,
+            &ah_vfs_storage::WriteRequest::new(
+                ah_vfs_storage::PathExpr::parse("/file")?,
+                ah_vfs_storage::WriteMode::CreateNew,
+                ah_vfs_storage::Publication::Staged,
+            ),
+            &ah_vfs_storage::StoragePath::root(),
+            ah_vfs_storage::IntermediateSymlinks::FollowWithinInstance,
+        )),
         vec![],
     )?
     .into_value()?

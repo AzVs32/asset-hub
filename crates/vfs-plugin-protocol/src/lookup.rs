@@ -1,7 +1,7 @@
-use super::{FinalLink, IntermediateLink, Lookup, Read, Stat};
+use super::{FinalLink, IntermediateLink, Lookup, Read, Stat, Write};
 use ah_vfs_storage::{
-    IntermediateSymlinks, PathError, PathExpr, PathExprError, RangeError, ReadRange, ReadRequest,
-    StatRequest, StoragePath, SymlinkAction,
+    IntermediateSymlinks, PathError, PathExpr, PathExprError, Publication, RangeError, ReadRange,
+    ReadRequest, StatRequest, StoragePath, SymlinkAction, WriteMode, WriteRequest,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -17,6 +17,8 @@ pub enum LookupValueError {
     Policy,
     #[error("invalid read range")]
     Range(#[from] RangeError),
+    #[error("invalid write mode or publication guarantee")]
+    WritePolicy,
 }
 
 pub fn encode_lookup(
@@ -94,4 +96,43 @@ pub fn decode_read(
     let range = ReadRange::new(value.offset, value.length)?;
     let (operand, base, links) = decode_lookup(value.lookup)?;
     Ok((ReadRequest::new(operand, range), base, links))
+}
+
+pub fn encode_write(
+    handle: u64,
+    request: &WriteRequest,
+    base: &StoragePath,
+    links: IntermediateSymlinks,
+) -> Write {
+    Write {
+        handle,
+        lookup: Some(encode_lookup(request.path(), base, links)),
+        mode: match request.mode() {
+            WriteMode::CreateNew => super::WriteMode::CreateNew,
+            WriteMode::Replace => super::WriteMode::Replace,
+        }
+        .into(),
+        publication: match request.publication() {
+            Publication::Staged => super::Publication::Staged,
+            Publication::Atomic => super::Publication::Atomic,
+        }
+        .into(),
+    }
+}
+
+pub fn decode_write(
+    value: Write,
+) -> Result<(WriteRequest, StoragePath, IntermediateSymlinks), LookupValueError> {
+    let mode = match super::WriteMode::try_from(value.mode) {
+        Ok(super::WriteMode::CreateNew) => WriteMode::CreateNew,
+        Ok(super::WriteMode::Replace) => WriteMode::Replace,
+        _ => return Err(LookupValueError::WritePolicy),
+    };
+    let publication = match super::Publication::try_from(value.publication) {
+        Ok(super::Publication::Staged) => Publication::Staged,
+        Ok(super::Publication::Atomic) => Publication::Atomic,
+        _ => return Err(LookupValueError::WritePolicy),
+    };
+    let (operand, base, links) = decode_lookup(value.lookup)?;
+    Ok((WriteRequest::new(operand, mode, publication), base, links))
 }

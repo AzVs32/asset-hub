@@ -37,9 +37,9 @@ impl Metadata {
             .cloned()
     }
 }
-pub(super) enum WriteCondition {
-    Absent,
-    Match(String),
+pub(super) struct WriteCondition {
+    parent: String,
+    target_etag: Option<String>,
 }
 fn optional_text(fields: &p::JsonObject, field: &str) -> Result<Option<String>> {
     fields
@@ -481,34 +481,34 @@ impl Client {
         }
         Ok(())
     }
-    pub fn write_condition(&self, relative: &str, replace: bool) -> Result<WriteCondition> {
+    pub fn write_condition(
+        &self,
+        request: &ah_vfs_storage::WriteRequest,
+        base: &StoragePath,
+        links: ah_vfs_storage::IntermediateSymlinks,
+    ) -> Result<(String, WriteCondition)> {
         let context = &self.context;
-        path(context, relative)?;
-        if relative.is_empty() {
-            return Err(context.failure(Failure::Rejected(Rejection::RootProtected)));
-        }
-        self.parent(relative)?;
-        match self.stat(relative) {
-            Ok(_) if !replace => Err(context.failure(Failure::Rejected(Rejection::AlreadyExists))),
-            Ok(metadata) if metadata.entry.entry_type() == EntryType::Directory => {
-                Err(context.failure(Failure::Rejected(Rejection::IsDirectory)))
-            }
-            Ok(metadata) if matches!(metadata.entry.entry_type(), EntryType::File { .. }) => {
-                metadata
-                    .strong_etag()
-                    .map(WriteCondition::Match)
-                    .ok_or_else(|| context.failure(Failure::Rejected(Rejection::Unsupported)))
-            }
-            Ok(_) => Err(context.failure(Failure::Rejected(Rejection::Unsupported))),
-            Err(error)
-                if error.storage_error().is_some_and(|error| {
-                    error.failure() == Failure::Rejected(Rejection::NotFound)
-                }) =>
-            {
-                Ok(WriteCondition::Absent)
-            }
-            Err(error) => Err(error),
-        }
+        let unsupported = || context.failure(Failure::Rejected(Rejection::Unsupported));
+        let (path, parent_etag, target) =
+            api::direct_write_destination(request, base, links, |path| {
+                let metadata = self.stat(path.as_str())?;
+                let etag = metadata.strong_etag();
+                Ok((metadata.entry, etag))
+            })?;
+        let parent = path.parent().ok_or_else(unsupported)?;
+        let parent_etag = parent_etag.ok_or_else(unsupported)?;
+        let parent_url = self.url(parent.as_str(), true)?;
+        let target_etag = match target {
+            Some(tag) => Some(tag.ok_or_else(unsupported)?),
+            None => None,
+        };
+        Ok((
+            path.as_str().to_owned(),
+            WriteCondition {
+                parent: format!("<{parent_url}> ([{parent_etag}])"),
+                target_etag,
+            },
+        ))
     }
     pub fn put_file(
         &self,
@@ -521,26 +521,27 @@ impl Client {
         if size > self.max_write_bytes {
             return Err(context.failure(Failure::Rejected(Rejection::LimitExceeded)));
         }
-        let absent = matches!(&condition, WriteCondition::Absent);
-        let conditional = match condition {
-            WriteCondition::Absent => ("if-none-match", "*".into()),
-            WriteCondition::Match(etag) => ("if-match", etag),
+        let conditional = match condition.target_etag {
+            None => ("if-none-match", "*".into()),
+            Some(etag) => ("if-match", etag),
         };
         let reply = self.request(
             "PUT",
             self.url(relative, false)?,
             vec![
                 conditional,
+                ("if", condition.parent),
                 ("content-type", "application/octet-stream".into()),
             ],
             bytes,
         )?;
-        if reply.status().as_u16() == 412 {
-            return Err(context.failure(if absent {
-                Failure::Rejected(Rejection::AlreadyExists)
-            } else {
-                Failure::Rejected(Rejection::Conflict)
-            }));
+        if matches!(reply.status().as_u16(), 409 | 412) {
+            return Err(ah_vfs_storage::StorageError::without_effects(
+                Operation::Write,
+                Failure::Rejected(Rejection::Conflict),
+                None,
+            )
+            .into());
         }
         if !matches!(reply.status().as_u16(), 200 | 201 | 204) {
             return Err(status_error(context, reply.status().as_u16()));

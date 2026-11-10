@@ -1,14 +1,14 @@
 //! A bounded storage-contract entry point on the memory driver's native state.
 use super::{
-    Blob, CHUNK_SIZE, EntryData, MemoryEntry, MemoryStorage, Shared, children, descendant,
-    file_reader::MemoryFileReader,
+    CHUNK_SIZE, EntryData, MemoryEntry, MemoryStorage, Shared, children, descendant,
+    file_reader::MemoryFileReader, file_writer::MemoryFileWriter,
 };
 use crate::Capacity;
 use ah_vfs::application::port::LookupContext;
 use ah_vfs_storage::*;
 use std::{
     collections::{BTreeMap, btree_map::Entry as MapEntry},
-    sync::{Arc, MutexGuard, Weak},
+    sync::{Arc, MutexGuard},
     time::SystemTime,
 };
 
@@ -187,17 +187,17 @@ impl MemoryStorage {
         Ok(())
     }
 
-    pub fn write(
+    pub(super) fn open_writer(
         &self,
         request: &WriteRequest,
-        links: IntermediateSymlinks,
-    ) -> Result<ContractWriter, StorageError> {
+        context: LookupContext,
+    ) -> Result<MemoryFileWriter, StorageError> {
         let op = Operation::Write;
         Self::supported_capabilities()
             .require_write(request)
             .map_err(|cause| rejected(op, cause))?;
         let mut nodes = self.lock(op)?;
-        let path = select(&mut nodes, request.lookup(), links, op)?;
+        let path = select_with_context(&mut nodes, request.lookup(), &context, op)?;
         let parent_path = path
             .parent()
             .ok_or_else(|| rejected(op, Rejection::RootProtected))?;
@@ -217,90 +217,14 @@ impl MemoryStorage {
             }
             Some(_) => return Err(rejected(op, Rejection::NotRegularFile)),
         };
-        Ok(ContractWriter {
-            session: Some(PendingWrite {
-                shared: self.shared.clone(),
-                path,
-                parent_path,
-                parent,
-                destination,
-                blob: Blob {
-                    bytes: Vec::new(),
-                    quota: self.shared.quota.clone(),
-                },
-            }),
-        })
+        Ok(MemoryFileWriter::new(
+            self.shared.clone(),
+            path,
+            parent_path,
+            parent,
+            destination,
+        ))
     }
-}
-
-struct PendingWrite {
-    shared: Arc<Shared>,
-    path: StoragePath,
-    parent_path: StoragePath,
-    parent: Arc<DirectoryIdentity>,
-    destination: Option<Weak<Blob>>,
-    blob: Blob,
-}
-
-/// Private staged bytes, owned by one calling session. Drop discards the stage.
-pub struct ContractWriter {
-    session: Option<PendingWrite>,
-}
-
-impl ContractWriter {
-    pub fn append(&mut self, data: &[u8]) -> Result<(), StorageError> {
-        let pending = self.session.as_mut().ok_or_else(closed_writer)?;
-        if let Err(cause) = pending.blob.append(data) {
-            self.session.take();
-            return Err(StorageError::without_effects(
-                Operation::Write,
-                Failure::Backend(BackendFailure::CapacityExceeded),
-                Some(Box::new(cause)),
-            ));
-        }
-        Ok(())
-    }
-
-    pub fn commit(mut self) -> Result<Entry, StorageError> {
-        let op = Operation::Write;
-        let pending = self.session.take().ok_or_else(closed_writer)?;
-        let mut nodes = lock(&pending.shared, op)?;
-        let parent_matches = directory(&nodes, &pending.parent_path)
-            .is_some_and(|current| Arc::ptr_eq(current, &pending.parent));
-        let destination_matches = match (&pending.destination, nodes.get(pending.path.as_str())) {
-            (None, None) => true,
-            (
-                Some(expected),
-                Some(MemoryEntry {
-                    data: EntryData::File(actual),
-                    ..
-                }),
-            ) => expected.ptr_eq(&Arc::downgrade(actual)),
-            _ => false,
-        };
-        if !parent_matches || !destination_matches {
-            return Err(rejected(op, Rejection::Conflict));
-        }
-        let entry = MemoryEntry {
-            data: EntryData::File(Arc::new(pending.blob)),
-            modified: SystemTime::now(),
-        };
-        let response = metadata(pending.path.clone(), &entry, op)?;
-        nodes.insert(pending.path.as_str().into(), entry);
-        Ok(response)
-    }
-
-    pub fn abort(self) -> Result<(), StorageError> {
-        self.session.map(|_| ()).ok_or_else(closed_writer)
-    }
-}
-
-fn closed_writer() -> StorageError {
-    StorageError::without_effects(
-        Operation::Write,
-        Failure::Backend(BackendFailure::Closed),
-        None,
-    )
 }
 
 fn rejected(op: Operation, cause: Rejection) -> StorageError {

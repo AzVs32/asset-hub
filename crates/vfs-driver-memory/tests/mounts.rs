@@ -78,7 +78,7 @@ async fn write(entries: &EntryService, value: &str, bytes: &[u8]) -> TestResult 
         .write_file(WriteFileRequest {
             path: virtual_path(value)?,
             mode: WriteMode::CreateNew,
-            require_atomic_publish: true,
+            publication: ah_vfs_storage::Publication::Atomic,
         })
         .await?;
     writer.write_chunk(bytes).await?;
@@ -121,7 +121,7 @@ async fn mount_disable_enable_unmount_remount_preserves_instance_and_open_stream
         .write_file(WriteFileRequest {
             path: virtual_path("/ram/pending")?,
             mode: WriteMode::CreateNew,
-            require_atomic_publish: true,
+            publication: ah_vfs_storage::Publication::Atomic,
         })
         .await?;
     writer.write_chunk(b"pending").await?;
@@ -331,7 +331,7 @@ async fn capacity_and_unsupported_attribute_failures_reach_vfs_as_domain_errors(
         .write_file(WriteFileRequest {
             path: virtual_path("/small/file")?,
             mode: WriteMode::CreateNew,
-            require_atomic_publish: true,
+            publication: ah_vfs_storage::Publication::Atomic,
         })
         .await?;
     let error = writer
@@ -343,7 +343,9 @@ async fn capacity_and_unsupported_attribute_failures_reach_vfs_as_domain_errors(
         error.storage_error().ok_or("domain")?.failure(),
         Failure::Backend(BackendFailure::CapacityExceeded)
     );
-    writer.abort().await?;
+    assert!(
+        matches!(writer.abort().await, Err(error) if error.storage_error().is_some_and(|error| error.failure() == Failure::Backend(BackendFailure::Closed)))
+    );
     let error = f
         .entries
         .get_permissions(&virtual_path("/small")?)

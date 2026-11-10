@@ -30,7 +30,7 @@ impl WindowsLocalDriver {
             .with_stat(true)
             .with_list(true)
             .with_read(ReadSupport::Range)
-            .with_write(WriteSupport::staged(WriteModes::Both, true))
+            .with_write(WriteSupport::staged(WriteModes::CreateNew, true))
             .with_directories(DirectorySupport::hierarchical(true, true))
             .with_remove(true)
             .with_rename(RenameSupport::Both)

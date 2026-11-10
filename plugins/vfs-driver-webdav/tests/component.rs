@@ -2,9 +2,11 @@ use ah_vfs::application::dto::*;
 use ah_vfs::application::port::*;
 use ah_vfs::domain::InstanceId;
 use ah_vfs::domain::storage::{
-    StorageCreateDirRequest, StorageDirQuery, StorageRemoveEntryRequest, StorageWriteFileRequest,
+    StorageCreateDirRequest, StorageDirQuery, StorageRemoveEntryRequest,
 };
-use ah_vfs_storage::{EntryType, StoragePath};
+use ah_vfs_storage::{
+    EntryType, MutationOutcome, Publication, StoragePath, WriteMode, WriteRequest,
+};
 use ah_vfs_storage::{Failure, Rejection};
 use std::{
     collections::BTreeMap,
@@ -24,6 +26,8 @@ struct Fixture {
     task: tokio::task::JoinHandle<()>,
     deletes: Arc<AtomicUsize>,
     entries: Entries,
+    root_version: Arc<AtomicUsize>,
+    lost_puts: Arc<AtomicUsize>,
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
@@ -36,14 +40,19 @@ impl Fixture {
         let origin = format!("http://{}", listener.local_addr()?);
         let entries: Entries = Arc::new(Mutex::new(BTreeMap::from([(String::new(), None)])));
         let deletes = Arc::new(AtomicUsize::new(0));
+        let root_version = Arc::new(AtomicUsize::new(1));
+        let lost_puts = Arc::new(AtomicUsize::new(0));
+        let (served_version, observed_lost) = (root_version.clone(), lost_puts.clone());
         let observed = deletes.clone();
         let served = entries.clone();
         let task = tokio::spawn(async move {
             while let Ok((stream, _)) = listener.accept().await {
                 let entries = served.clone();
                 let deletes = observed.clone();
+                let root_version = served_version.clone();
+                let lost_puts = observed_lost.clone();
                 tokio::spawn(async move {
-                    let _ = handle(stream, entries, deletes).await;
+                    let _ = handle(stream, entries, deletes, root_version, lost_puts).await;
                 });
             }
         });
@@ -52,6 +61,8 @@ impl Fixture {
             task,
             deletes,
             entries,
+            root_version,
+            lost_puts,
         })
     }
 
@@ -71,7 +82,7 @@ fn etag(path: &str, data: &[u8]) -> Option<String> {
     data.hash(&mut hash);
     Some(format!("\"{:x}\"", hash.finish()))
 }
-fn metadata(path: &str, data: &Option<Vec<u8>>) -> String {
+fn metadata(path: &str, data: &Option<Vec<u8>>, root_version: usize) -> String {
     let kind = if data.is_none() {
         "<d:collection/>"
     } else {
@@ -82,9 +93,12 @@ fn metadata(path: &str, data: &Option<Vec<u8>>) -> String {
     } else {
         ""
     };
-    let version = data
-        .as_deref()
-        .and_then(|data| etag(path, data))
+    let tag = match data {
+        None if path.is_empty() => Some(format!("\"root-{root_version}\"")),
+        None => None,
+        Some(data) => etag(path, data),
+    };
+    let version = tag
         .map(|tag| format!("<d:getetag>{tag}</d:getetag>"))
         .unwrap_or_default();
     format!(
@@ -96,6 +110,8 @@ async fn handle(
     mut stream: tokio::net::TcpStream,
     entries: Entries,
     deletes: Arc<AtomicUsize>,
+    root_version: Arc<AtomicUsize>,
+    lost_puts: Arc<AtomicUsize>,
 ) -> Result {
     let mut bytes = vec![];
     let mut buffer = [0u8; 4096];
@@ -141,12 +157,13 @@ async fn handle(
         bytes.extend_from_slice(&buffer[..n]);
     }
     let (status, body, extra) = {
+        let version = root_version.load(Ordering::SeqCst);
         let mut entries = entries.lock().map_err(|_| "entries lock")?;
         match method {
             "PROPFIND" => match entries.get(path) {
                 None => ("404 Not Found", vec![], String::new()),
                 Some(value) => {
-                    let mut xml = metadata(path, value);
+                    let mut xml = metadata(path, value, version);
                     if fields.get("depth").is_some_and(|v| v == "1") {
                         let prefix = if path.is_empty() {
                             String::new()
@@ -158,7 +175,7 @@ async fn handle(
                                 && child.starts_with(&prefix)
                                 && !child[prefix.len()..].contains('/')
                         }) {
-                            xml.push_str(&metadata(child, value));
+                            xml.push_str(&metadata(child, value, version));
                         }
                     }
                     (
@@ -170,11 +187,31 @@ async fn handle(
                 }
             },
             "PUT" => {
-                entries.insert(
-                    path.into(),
-                    Some(bytes[header_end..header_end + length].to_vec()),
+                if path == "lost-response" {
+                    lost_puts.fetch_add(1, Ordering::SeqCst);
+                }
+                let parent = format!(
+                    "<http://{}/dav/> ([\"root-{version}\"])",
+                    fields.get("host").ok_or("host")?
                 );
-                ("201 Created", vec![], String::new())
+                let target = match entries.get(path) {
+                    None => fields
+                        .get("if-none-match")
+                        .is_some_and(|value| value == "*"),
+                    Some(Some(data)) => etag(path, data)
+                        .as_ref()
+                        .is_some_and(|tag| fields.get("if-match") == Some(tag)),
+                    Some(None) => false,
+                };
+                if fields.get("if") != Some(&parent) || !target {
+                    ("412 Precondition Failed", vec![], String::new())
+                } else {
+                    entries.insert(
+                        path.into(),
+                        Some(bytes[header_end..header_end + length].to_vec()),
+                    );
+                    ("201 Created", vec![], String::new())
+                }
             }
             "MKCOL" => {
                 entries.insert(path.into(), None);
@@ -213,6 +250,10 @@ async fn handle(
             _ => ("405 Method Not Allowed", vec![], String::new()),
         }
     };
+    if path == "lost-response" && status == "201 Created" {
+        // Publication completed under the server lock. Drop the connection before replying.
+        return Ok(());
+    }
     stream
         .write_all(
             format!(
@@ -270,7 +311,14 @@ async fn protobuf_component_opens_writes_commits_reads_and_lists() -> Result {
     assert!(!driver.info().capabilities().remove());
     let file = StoragePath::parse("file")?;
     let mut writer = storage
-        .write_file(StorageWriteFileRequest::new(file.clone()))
+        .write_file(
+            ah_vfs_storage::WriteRequest::new(
+                file.clone().to_rooted_expr(),
+                ah_vfs_storage::WriteMode::CreateNew,
+                ah_vfs_storage::Publication::Staged,
+            ),
+            Default::default(),
+        )
         .await?;
     writer.write_chunk(&[0, 255, 1, 2]).await?;
     let entry = writer.commit().await?;
@@ -332,6 +380,80 @@ async fn protobuf_component_opens_writes_commits_reads_and_lists() -> Result {
             .failure(),
         Failure::Rejected(Rejection::Unsupported)
     );
+    let write = |path: &str, mode, publication| -> Result<WriteRequest> {
+        Ok(WriteRequest::new(
+            StoragePath::parse(path)?.to_rooted_expr(),
+            mode,
+            publication,
+        ))
+    };
+    assert!(matches!(
+        storage.write_file(write("atomic", WriteMode::CreateNew, Publication::Atomic)?, Default::default()).await,
+        Err(error) if error.failure() == Failure::Rejected(Rejection::Unsupported)
+    ));
+
+    let mut replace = storage
+        .write_file(
+            write("file", WriteMode::Replace, Publication::Staged)?,
+            Default::default(),
+        )
+        .await?;
+    replace.write_chunk(b"staged").await?;
+    fixture.replace("file", b"winner".to_vec())?;
+    let conflict = replace.commit().await.err().ok_or("replace must fail")?;
+    assert_eq!(conflict.failure(), Failure::Rejected(Rejection::Conflict));
+    assert_eq!(conflict.outcome(), MutationOutcome::Unchanged);
+
+    let mut moved = storage
+        .write_file(
+            write("parent-replaced", WriteMode::CreateNew, Publication::Staged)?,
+            Default::default(),
+        )
+        .await?;
+    moved.write_chunk(b"staged").await?;
+    fixture.root_version.fetch_add(1, Ordering::SeqCst);
+    let conflict = moved
+        .commit()
+        .await
+        .err()
+        .ok_or("parent change must fail")?;
+    assert_eq!(conflict.failure(), Failure::Rejected(Rejection::Conflict));
+    assert_eq!(conflict.outcome(), MutationOutcome::Unchanged);
+    assert!(
+        !fixture
+            .entries
+            .lock()
+            .map_err(|_| "entries lock")?
+            .contains_key("parent-replaced")
+    );
+
+    let mut lost = storage
+        .write_file(
+            write("lost-response", WriteMode::CreateNew, Publication::Staged)?,
+            Default::default(),
+        )
+        .await?;
+    lost.write_chunk(b"published once").await?;
+    let uncertain = lost.commit().await.err().ok_or("response should be lost")?;
+    assert_eq!(uncertain.outcome(), MutationOutcome::Unknown);
+    assert_eq!(
+        uncertain.failure(),
+        Failure::Backend(ah_vfs_storage::BackendFailure::Unavailable)
+    );
+    assert!(matches!(lost.commit().await, Err(error)
+        if error.failure() == Failure::Backend(ah_vfs_storage::BackendFailure::Closed)));
+    assert!(lost.abort().await.is_err());
+    assert_eq!(fixture.lost_puts.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        fixture
+            .entries
+            .lock()
+            .map_err(|_| "entries lock")?
+            .get("lost-response")
+            .and_then(|value| value.as_deref()),
+        Some(b"published once".as_slice())
+    );
+
     assert_eq!(fixture.deletes.load(Ordering::SeqCst), 0);
     Ok(())
 }

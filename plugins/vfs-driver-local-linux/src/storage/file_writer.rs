@@ -1,213 +1,138 @@
-//! Staged complete-file writes with explicit publication and best-effort cleanup.
-
-use super::{TEMP_PREFIX, blocking, fs};
-use ah_vfs::application::port::{StorageFileWriter, StorageFuture};
-use ah_vfs::domain::storage::StorageWriteFileRequest;
-use ah_vfs_storage::WriteMode;
-use ah_vfs_storage::{BackendFailure, Failure, Operation, Rejection, StorageError};
-use ah_vfs_storage::{Entry, StoragePath};
-
-use cap_std::fs::OpenOptionsExt;
-use cap_std::fs::{Dir, File, OpenOptions, Permissions};
-use std::{
-    io::{self, Write},
-    sync::Arc,
+//! Stage anonymously and publish by linking the opened inode into an unused slot.
+use super::{blocking, fs, lookup};
+use ah_vfs::application::port::{LookupContext, StorageFileWriter, StorageFuture};
+use ah_vfs_storage::{
+    BackendFailure, Entry, Failure, Operation, Rejection, StorageError, StoragePath, WriteMode,
+    WriteRequest,
 };
+use cap_std::fs::{Dir, File};
+use rustix::fs::{AtFlags, Mode, OFlags, linkat, openat};
+use rustix::io::Errno;
+use std::{io::Write, os::fd::AsRawFd, sync::Arc};
 
-#[derive(ah_id::Id)]
-#[id(generate, display)]
-struct WriteId(ah_id::UuidV7);
+const OP: Operation = Operation::Write;
+fn closed() -> StorageError {
+    StorageError::without_effects(OP, Failure::Backend(BackendFailure::Closed), None)
+}
 
 pub(super) struct LocalFileWriter {
     session: Option<FileWriteSession>,
 }
 
 struct FileWriteSession {
-    parent: Arc<Dir>,
-    temporary: Option<String>,
-    file: Option<File>,
-    target: String,
+    parent: Dir,
+    file: File,
     path: StoragePath,
-    mode: WriteMode,
-}
-
-fn check_target(
-    parent: &Dir,
-    target: &str,
-    mode: WriteMode,
-) -> Result<Option<Permissions>, StorageError> {
-    let operation = Operation::Write;
-    match parent.symlink_metadata(target) {
-        Ok(_) if mode == WriteMode::CreateNew => Err(StorageError::without_effects(
-            operation,
-            Failure::Rejected(Rejection::AlreadyExists),
-            None,
-        )),
-        Ok(metadata) => {
-            fs::regular_file(operation, &metadata)?;
-            Ok(Some(metadata.permissions()))
-        }
-        Err(cause) if cause.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(cause) => Err(fs::error(operation, cause)),
-    }
 }
 
 impl LocalFileWriter {
-    pub(super) fn open(root: &Dir, request: StorageWriteFileRequest) -> Result<Self, StorageError> {
-        let operation = Operation::Write;
-        let (parent, target) = fs::parent(operation, root, &request.path)?;
-        check_target(&parent, &target, request.mode)?;
-        let temporary = format!("{TEMP_PREFIX}{}", WriteId::new());
-        let mut options = OpenOptions::new();
-        options.write(true).create_new(true);
-        options.mode(0o600);
-        let file = parent
-            .open_with(&temporary, &options)
-            .map_err(|cause| fs::error(operation, cause))?;
+    pub(super) fn open(
+        root: Arc<Dir>,
+        request: WriteRequest,
+        context: LookupContext,
+    ) -> Result<Self, StorageError> {
+        // Linux has no rename conditional on the destination inode.
+        if request.mode() != WriteMode::CreateNew {
+            return Err(StorageError::without_effects(
+                OP,
+                Failure::Rejected(Rejection::Unsupported),
+                None,
+            ));
+        }
+        let (parent, path) = lookup::write_destination(&root, &request, context)?;
+        // The instance-root descriptor is already the authoritative binding.
+        // linkat cannot also attest that a nested parent still occupies its name.
+        if !path.parent().is_some_and(|parent| parent.is_root()) {
+            return Err(StorageError::without_effects(
+                OP,
+                Failure::Rejected(Rejection::Unsupported),
+                None,
+            ));
+        }
+        let fd = openat(
+            &parent,
+            ".",
+            OFlags::TMPFILE | OFlags::WRONLY | OFlags::CLOEXEC,
+            Mode::RUSR | Mode::WUSR,
+        )
+        .map_err(|cause| match cause {
+            Errno::OPNOTSUPP | Errno::ISDIR | Errno::INVAL => StorageError::without_effects(
+                OP,
+                Failure::Rejected(Rejection::Unsupported),
+                Some(Box::new(cause)),
+            ),
+            _ => fs::error(OP, cause.into()),
+        })?;
+        let file = File::from_std(fd.into());
         Ok(Self {
-            session: Some(FileWriteSession {
-                parent: Arc::new(parent),
-                temporary: Some(temporary),
-                file: Some(file),
-                target,
-                path: request.path,
-                mode: request.mode,
-            }),
+            session: Some(FileWriteSession { parent, file, path }),
         })
     }
 }
 
 impl FileWriteSession {
-    fn commit(mut self) -> Result<Entry, StorageError> {
-        let operation = Operation::Write;
-        let file = self.file.take().ok_or(StorageError::without_effects(
-            operation,
-            Failure::Backend(BackendFailure::Closed),
-            None,
-        ))?;
-        // Preserve destination permissions when replacing a regular file.
-        if let Some(permissions) = check_target(&self.parent, &self.target, self.mode)? {
-            file.set_permissions(permissions)
-                .map_err(|cause| fs::error(operation, cause))?;
-        }
-        file.sync_all()
-            .map_err(|cause| fs::error(operation, cause))?;
+    fn commit(self) -> Result<Entry, StorageError> {
+        self.file.sync_all().map_err(|cause| fs::error(OP, cause))?;
         let entry = fs::entry(
-            operation,
+            OP,
             self.path.clone(),
-            file.metadata()
-                .map_err(|cause| fs::error(operation, cause))?,
+            self.file.metadata().map_err(|cause| fs::error(OP, cause))?,
         )?;
-        drop(file);
-        let temporary = self
-            .temporary
-            .as_ref()
-            .ok_or(StorageError::without_effects(
-                operation,
-                Failure::Backend(BackendFailure::Closed),
-                None,
-            ))?;
-        match self.mode {
-            WriteMode::CreateNew => {
-                // A hard link publishes without replacing a concurrently created target.
-                self.parent
-                    .hard_link(temporary, &self.parent, &self.target)
-                    .map_err(|cause| fs::dispatched_error(operation, cause))?;
-                // Publication succeeded; cleanup failure must not report a false failed commit.
-            }
-            WriteMode::Replace => {
-                self.parent
-                    .rename(temporary, &self.parent, &self.target)
-                    .map_err(|cause| fs::dispatched_error(operation, cause))?;
-                self.temporary = None;
-            }
-        }
+        let target = self.path.name().ok_or_else(|| {
+            StorageError::without_effects(OP, Failure::Rejected(Rejection::RootProtected), None)
+        })?;
+        let source = format!("/proc/self/fd/{}", self.file.as_raw_fd());
+        linkat(
+            rustix::fs::CWD,
+            source.as_str(),
+            &self.parent,
+            target.as_str(),
+            AtFlags::SYMLINK_FOLLOW,
+        )
+        .map_err(|cause| match cause {
+            Errno::EXIST => StorageError::without_effects(
+                OP,
+                Failure::Rejected(Rejection::Conflict),
+                Some(Box::new(cause)),
+            ),
+            Errno::NOENT => StorageError::without_effects(
+                OP,
+                Failure::Rejected(Rejection::Unsupported),
+                Some(Box::new(cause)),
+            ),
+            _ => fs::dispatched_error(OP, cause.into()),
+        })?;
         Ok(entry)
-    }
-
-    fn abort(mut self) -> Result<(), StorageError> {
-        let operation = Operation::Write;
-        drop(self.file.take());
-        if let Some(temporary) = &self.temporary {
-            match self.parent.remove_file(temporary) {
-                Ok(()) => (),
-                Err(cause) if cause.kind() == io::ErrorKind::NotFound => (),
-                Err(cause) => return Err(fs::error(operation, cause)),
-            }
-        }
-        self.temporary = None;
-        Ok(())
-    }
-}
-
-impl Drop for FileWriteSession {
-    fn drop(&mut self) {
-        drop(self.file.take());
-        if let Some(temporary) = &self.temporary {
-            let _ = self.parent.remove_file(temporary);
-        }
     }
 }
 
 impl StorageFileWriter for LocalFileWriter {
     fn write_chunk<'a>(&'a mut self, data: &'a [u8]) -> StorageFuture<'a, ()> {
-        let operation = Operation::Write;
         Box::pin(async move {
-            let mut session = self.session.take().ok_or(StorageError::without_effects(
-                operation,
-                Failure::Backend(BackendFailure::Closed),
-                None,
-            ))?;
+            let mut session = self.session.take().ok_or_else(closed)?;
             let bytes = data.to_vec();
-            let session = blocking(operation, false, move || {
-                session
-                    .file
-                    .as_mut()
-                    .ok_or(StorageError::without_effects(
-                        operation,
-                        Failure::Backend(BackendFailure::Closed),
-                        None,
-                    ))?
-                    .write_all(&bytes)
-                    .map_err(|cause| fs::error(operation, cause))?;
-                Ok(session)
-            })
-            .await?;
-            self.session = Some(session);
+            self.session = Some(
+                blocking(OP, false, move || {
+                    session
+                        .file
+                        .write_all(&bytes)
+                        .map_err(|cause| fs::error(OP, cause))?;
+                    Ok(session)
+                })
+                .await?,
+            );
             Ok(())
         })
     }
 
     fn commit(&mut self) -> StorageFuture<'_, Entry> {
-        let operation = Operation::Write;
         Box::pin(async move {
-            let session = self.session.take().ok_or(StorageError::without_effects(
-                operation,
-                Failure::Backend(BackendFailure::Closed),
-                None,
-            ))?;
-            // A task failure can happen after publication; do not report a known rollback.
-            tokio::task::spawn_blocking(move || session.commit())
-                .await
-                .map_err(|error| {
-                    StorageError::after_dispatch(
-                        operation,
-                        Failure::Backend(BackendFailure::Other),
-                        Some(Box::new(error)),
-                    )
-                })?
+            let session = self.session.take().ok_or_else(closed)?;
+            blocking(OP, true, move || session.commit()).await
         })
     }
 
     fn abort(&mut self) -> StorageFuture<'_, ()> {
-        let operation = Operation::Write;
-        Box::pin(async move {
-            let session = self.session.take().ok_or(StorageError::without_effects(
-                operation,
-                Failure::Backend(BackendFailure::Closed),
-                None,
-            ))?;
-            blocking(operation, false, move || session.abort()).await
-        })
+        Box::pin(async move { self.session.take().map(|_| ()).ok_or_else(closed) })
     }
 }

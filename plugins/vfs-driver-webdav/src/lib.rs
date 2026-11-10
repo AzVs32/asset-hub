@@ -218,16 +218,17 @@ impl GuestStorage for WebdavStorage {
             eof: Cell::new(false),
         }))
     }
-    fn write(&self, path: String, replace: bool, atomic: bool) -> Result<api::Writer> {
+    fn write(
+        &self,
+        request: ah_vfs_storage::WriteRequest,
+        base: ah_vfs_storage::StoragePath,
+        links: ah_vfs_storage::IntermediateSymlinks,
+    ) -> Result<api::Writer> {
         let client = self.client.for_operation(Operation::Write);
-        let context = client.context.clone();
-        if atomic {
-            return Err(context.failure(Failure::Rejected(Rejection::Unsupported)));
-        }
-        let condition = client.write_condition(&path, replace)?;
+        let (path, condition) = client.write_condition(&request, &base, links)?;
         Ok(api::Writer::new(WebdavWriter {
             session: RefCell::new(Some(WriteSession {
-                client: client.clone(),
+                client,
                 path,
                 condition,
                 bytes: vec![],

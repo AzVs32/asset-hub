@@ -8,7 +8,7 @@ use ah_vfs::application::mount_runtime::MountRuntime;
 use ah_vfs::application::port::*;
 use ah_vfs::application::service::{EntryService, InstanceService, MountService};
 use ah_vfs::domain::namespace::VirtualPath;
-use ah_vfs::domain::storage::{StorageDirQuery, StorageMoveEntryRequest, StorageWriteFileRequest};
+use ah_vfs::domain::storage::{StorageDirQuery, StorageMoveEntryRequest};
 use ah_vfs::domain::{DriverInstance, InstanceId};
 use ah_vfs::infrastructure::instance_record_repository::SqliteInstanceRecordRepository;
 use ah_vfs::infrastructure::mount_repository::SqliteMountRepository;
@@ -122,7 +122,7 @@ async fn component(origins: Vec<String>) -> Result<Arc<PluginDriver>> {
 
 #[tokio::test]
 #[ignore = "requires the built S3 WASM component; no external service"]
-async fn protobuf_bootstrap_and_reads_bind_a_single_s3_version() -> Result {
+async fn protobuf_reads_and_conditional_commits_bind_a_single_s3_version() -> Result {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let endpoint = format!("http://{}", listener.local_addr()?);
@@ -158,6 +158,17 @@ async fn protobuf_bootstrap_and_reads_bind_a_single_s3_version() -> Result {
                 "",
                 vec![],
             ),
+            ("head /fixture/file ", "200 OK", 65540, "etag: \"original\"\r\n", vec![]),
+            ("get /fixture/?", "200 OK", 19, "", b"<ListBucketResult/>".to_vec()),
+            (
+                "post /fixture/file?uploads=", "200 OK",
+                b"<InitiateMultipartUploadResult><UploadId>mock</UploadId></InitiateMultipartUploadResult>".len(),
+                "",
+                b"<InitiateMultipartUploadResult><UploadId>mock</UploadId></InitiateMultipartUploadResult>".to_vec(),
+            ),
+            ("put /fixture/file?partnumber=1&uploadid=mock", "200 OK", 0, "etag: \"part\"\r\n", vec![]),
+            ("post /fixture/file?uploadid=mock", "412 Precondition Failed", 0, "", vec![]),
+            ("delete /fixture/file?uploadid=mock", "204 No Content", 0, "", vec![]),
         ] {
             let (mut stream, _) = listener.accept().await?;
             let mut request = Vec::new();
@@ -170,7 +181,15 @@ async fn protobuf_bootstrap_and_reads_bind_a_single_s3_version() -> Result {
                 request.extend_from_slice(&chunk[..read]);
                 assert!(request.len() < 16384);
             }
-            let request = String::from_utf8_lossy(&request).to_ascii_lowercase();
+            let header_end = request.windows(4).position(|bytes| bytes == b"\r\n\r\n").ok_or(std::io::Error::other("headers"))? + 4;
+            let headers = String::from_utf8_lossy(&request[..header_end]).to_ascii_lowercase();
+            let content_length = headers.lines().find_map(|line| line.strip_prefix("content-length:"))
+                .and_then(|value| value.trim().parse::<usize>().ok()).unwrap_or_default();
+            if request.len() < header_end + content_length {
+                let mut rest = vec![0; header_end + content_length - request.len()];
+                stream.read_exact(&mut rest).await?;
+            }
+            let request = headers;
             assert!(request.starts_with(expected), "{request}");
             assert!(request.contains("authorization: aws4-hmac-sha256 "));
             assert!(request.contains("x-amz-date:"));
@@ -183,6 +202,10 @@ async fn protobuf_bootstrap_and_reads_bind_a_single_s3_version() -> Result {
                     "1-65536"
                 };
                 assert!(request.contains(&format!("range: bytes={range}\r\n")));
+            }
+            if expected == "post /fixture/file?uploadid=mock" {
+                assert!(request.contains("if-match: \"original\"\r\n"));
+                assert!(request.contains("signedheaders=content-type;host;if-match;"));
             }
             stream.write_all(format!(
                 "HTTP/1.1 {status}\r\nContent-Length: {length}\r\n{extra}Connection: close\r\n\r\n"
@@ -231,12 +254,42 @@ async fn protobuf_bootstrap_and_reads_bind_a_single_s3_version() -> Result {
         if error.failure() == Failure::Rejected(Rejection::Conflict)));
     assert!(matches!(reader.next_chunk().await, Err(error)
         if error.failure() == Failure::Backend(ah_vfs_storage::BackendFailure::Closed)));
+    let mut writer = storage
+        .write_file(
+            ah_vfs_storage::WriteRequest::new(
+                StoragePath::parse("file")?.to_rooted_expr(),
+                WriteMode::Replace,
+                ah_vfs_storage::Publication::Atomic,
+            ),
+            Default::default(),
+        )
+        .await?;
+    writer.write_chunk(b"private part").await?;
+    let conflict = writer
+        .commit()
+        .await
+        .err()
+        .ok_or("expected conditional conflict")?;
+    assert_eq!(conflict.failure(), Failure::Rejected(Rejection::Conflict));
+    assert_eq!(
+        conflict.outcome(),
+        ah_vfs_storage::MutationOutcome::Unchanged
+    );
+    assert!(matches!(writer.commit().await, Err(error)
+        if error.failure() == Failure::Backend(ah_vfs_storage::BackendFailure::Closed)));
     tokio::time::timeout(std::time::Duration::from_secs(5), server).await???;
     Ok(())
 }
 async fn put(s: &dyn Storage, name: &str, bytes: &[u8]) -> Result {
     let mut w = s
-        .write_file(StorageWriteFileRequest::new(StoragePath::parse(name)?))
+        .write_file(
+            ah_vfs_storage::WriteRequest::new(
+                (StoragePath::parse(name)?).to_rooted_expr(),
+                ah_vfs_storage::WriteMode::CreateNew,
+                ah_vfs_storage::Publication::Staged,
+            ),
+            Default::default(),
+        )
         .await?;
     for part in bytes.chunks(64 * 1024) {
         w.write_chunk(part).await?;
@@ -340,7 +393,14 @@ async fn s3_component_runs_through_host_records_mounts_and_streams() -> Result {
                 .supports(ah_vfs_storage::RenameMode::Replace)
         );
         let mut pending = storage
-            .write_file(StorageWriteFileRequest::new(StoragePath::parse("staged")?))
+            .write_file(
+                ah_vfs_storage::WriteRequest::new(
+                    StoragePath::parse("staged")?.to_rooted_expr(),
+                    ah_vfs_storage::WriteMode::CreateNew,
+                    ah_vfs_storage::Publication::Staged,
+                ),
+                Default::default(),
+            )
             .await?;
         pending.write_chunk(b"not yet visible").await?;
         assert_eq!(
@@ -359,7 +419,27 @@ async fn s3_component_runs_through_host_records_mounts_and_streams() -> Result {
             Failure::Rejected(Rejection::NotFound)
         );
         pending.abort().await?;
-        put(storage.as_ref(), "目录/文件", b"portable object bytes").await?;
+        assert!(
+            fixture_request(
+                "PUT",
+                &endpoint,
+                &bucket,
+                Some("目录/文件"),
+                &access,
+                &secret
+            )
+            .await?
+            .is_success()
+        );
+        let nested = ah_vfs_storage::WriteRequest::new(
+            StoragePath::parse("目录/other")?.to_rooted_expr(),
+            WriteMode::CreateNew,
+            ah_vfs_storage::Publication::Atomic,
+        );
+        assert!(
+            matches!(storage.write_file(nested, Default::default()).await, Err(error)
+            if error.failure() == Failure::Rejected(Rejection::Unsupported))
+        );
         put(storage.as_ref(), "empty", b"").await?;
         let large = vec![0x5a; 9 * 1024 * 1024 + 17];
         put(storage.as_ref(), "multipart", &large).await?;
@@ -407,7 +487,7 @@ async fn s3_component_runs_through_host_records_mounts_and_streams() -> Result {
             .write_file(WriteFileRequest {
                 path: VirtualPath::parse("/through-vfs")?,
                 mode: WriteMode::CreateNew,
-                require_atomic_publish: true,
+                publication: ah_vfs_storage::Publication::Atomic,
             })
             .await?;
         writer.write_chunk(b"host-managed WASM mount").await?;
@@ -424,17 +504,31 @@ async fn s3_component_runs_through_host_records_mounts_and_streams() -> Result {
         );
         assert!(reader.next_chunk().await?.is_none());
         let mut conflict = storage
-            .write_file(StorageWriteFileRequest::new(StoragePath::parse("race")?))
+            .write_file(
+                ah_vfs_storage::WriteRequest::new(
+                    StoragePath::parse("race")?.to_rooted_expr(),
+                    ah_vfs_storage::WriteMode::CreateNew,
+                    ah_vfs_storage::Publication::Staged,
+                ),
+                Default::default(),
+            )
             .await?;
         let mut winner = storage
-            .write_file(StorageWriteFileRequest::new(StoragePath::parse("race")?))
+            .write_file(
+                ah_vfs_storage::WriteRequest::new(
+                    StoragePath::parse("race")?.to_rooted_expr(),
+                    ah_vfs_storage::WriteMode::CreateNew,
+                    ah_vfs_storage::Publication::Staged,
+                ),
+                Default::default(),
+            )
             .await?;
         winner.write_chunk(b"winner").await?;
         conflict.write_chunk(b"loser").await?;
         winner.commit().await?;
         assert_eq!(
             conflict.commit().await.err().ok_or("conflict")?.failure(),
-            Failure::Rejected(Rejection::AlreadyExists)
+            Failure::Rejected(Rejection::Conflict)
         );
         let error = storage
             .move_entry(StorageMoveEntryRequest {

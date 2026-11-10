@@ -2,9 +2,8 @@ syntax = "proto3";
 package assethub.storage.v2;
 import "plugin.proto";
 
-// A stream binds one instance, uses its root as cwd, and owns one listing
-// and one writer. Calls and replies are ordered. Closing a stream discards
-// private staging. No command is replayed by the server.
+// A stream binds one instance, uses its root as cwd, and owns one listing.
+// Calls and replies are ordered. No command is replayed by the server.
 service StorageContract {
   rpc Session(stream Command) returns (stream Reply);
 }
@@ -14,11 +13,8 @@ message List { string path = 1; uint32 page_size = 2; }
 message CreateDirectory { string path = 1; bool recursive = 2; }
 enum RemoveKind { REMOVE_KIND_UNSPECIFIED = 0; NON_DIRECTORY = 1; EMPTY_DIRECTORY = 2; }
 message Remove { string path = 1; RemoveKind kind = 2; }
-enum WriteMode { WRITE_MODE_UNSPECIFIED = 0; CREATE_NEW = 1; REPLACE = 2; }
-enum Publication { PUBLICATION_UNSPECIFIED = 0; STAGED = 1; ATOMIC = 2; }
-message Write { string path = 1; WriteMode mode = 2; Publication publication = 3; }
 message Command {
-  reserved 2, 11, 13, 14;
+  reserved 2, 7, 8, 9, 10, 11, 13, 14;
   // Applies to ordinary path lookups. The final link has its own policy.
   bool reject_intermediate_links = 1;
   oneof action {
@@ -26,10 +22,6 @@ message Command {
     Unit next_page = 4;
     CreateDirectory create_directory = 5;
     Remove remove = 6;
-    Write begin_write = 7;
-    bytes stage = 8;
-    Unit commit = 9;
-    Unit abort = 10;
     Operand get_permissions = 12;
   }
 }
@@ -46,9 +38,9 @@ message Reply {
   reserved 5, 7, 8;
   oneof result {
     Unit unit = 1;
-    assethub.vfs.v6.Entry entry = 2;
+    assethub.vfs.v7.Entry entry = 2;
     Selection selected_directory = 3;
     Page page = 4;
-    assethub.vfs.v6.StorageFailure failure = 6;
+    assethub.vfs.v7.StorageFailure failure = 6;
   }
 }

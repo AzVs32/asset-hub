@@ -11,7 +11,6 @@ use ah_vfs::application::error::EntryError;
 use ah_vfs::application::port::{Driver, Storage};
 use ah_vfs::application::service::{EntryService, MountService};
 use ah_vfs::domain::namespace::VirtualPath;
-use ah_vfs::domain::storage::StorageWriteFileRequest;
 use ah_vfs::domain::{DriverInstance, DriverKey, InstanceId};
 use ah_vfs::infrastructure::mount_repository::SqliteMountRepository;
 use ah_vfs_storage::{Permissions, StoragePath, XattrName, XattrWriteMode};
@@ -91,9 +90,17 @@ async fn instance_support_matches_driver_and_atomic_publication_is_honored() -> 
         caps.rename().supports(RenameMode::NoReplace),
         cfg!(any(target_os = "linux", target_os = "android"))
     );
-    let mut request = StorageWriteFileRequest::new(path("new")?);
-    request.require_atomic_publish = true;
-    let mut writer = f.storage.write_file(request).await?;
+    let mut writer = f
+        .storage
+        .write_file(
+            ah_vfs_storage::WriteRequest::new(
+                path("new")?.to_rooted_expr(),
+                ah_vfs_storage::WriteMode::CreateNew,
+                ah_vfs_storage::Publication::Atomic,
+            ),
+            Default::default(),
+        )
+        .await?;
     writer.write_chunk(b"new bytes").await?;
     assert!(!f.root.join("new").exists());
     writer.commit().await?;

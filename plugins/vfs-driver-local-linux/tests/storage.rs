@@ -5,7 +5,6 @@ mod common;
 use ah_vfs::application::port::{Driver, Storage, StorageFileReader};
 use ah_vfs::domain::storage::{
     StorageCreateDirRequest, StorageDirQuery, StorageMoveEntryRequest, StorageRemoveEntryRequest,
-    StorageWriteFileRequest,
 };
 use ah_vfs_storage::WriteMode;
 use ah_vfs_storage::{EntryType, StoragePath};
@@ -252,7 +251,14 @@ async fn chunked_writes_publish_only_at_commit_and_reads_honor_ranges() -> TestR
         .collect();
     let mut writer = f
         .storage
-        .write_file(StorageWriteFileRequest::new(path("data")?))
+        .write_file(
+            ah_vfs_storage::WriteRequest::new(
+                path("data")?.to_rooted_expr(),
+                ah_vfs_storage::WriteMode::CreateNew,
+                ah_vfs_storage::Publication::Staged,
+            ),
+            Default::default(),
+        )
         .await?;
     writer.write_chunk(&[]).await?;
     for chunk in bytes.chunks(7777) {
@@ -332,22 +338,29 @@ async fn chunked_writes_publish_only_at_commit_and_reads_honor_ranges() -> TestR
 }
 
 #[tokio::test]
-async fn replacing_and_aborting_keep_existing_data_until_publication() -> TestResult {
+async fn unsupported_replacement_and_aborted_creation_leave_targets_unchanged() -> TestResult {
     let f = fixture().await?;
     std::fs::write(f.root.join("data"), b"original longer contents")?;
     assert!(matches!(
         f.storage
-            .write_file(StorageWriteFileRequest::new(path("data")?))
+            .write_file(ah_vfs_storage::WriteRequest::new(path("data")?.to_rooted_expr(), ah_vfs_storage::WriteMode::CreateNew, ah_vfs_storage::Publication::Staged), Default::default())
             .await,
         Err(error) if error.failure() == Failure::Rejected(Rejection::AlreadyExists)
     ));
+    assert!(matches!(
+        f.storage.write_file(ah_vfs_storage::WriteRequest::new(path("data")?.to_rooted_expr(), WriteMode::Replace, ah_vfs_storage::Publication::Staged), Default::default()).await,
+        Err(error) if error.failure() == Failure::Rejected(Rejection::Unsupported)
+    ));
     let mut writer = f
         .storage
-        .write_file(StorageWriteFileRequest {
-            require_atomic_publish: false,
-            path: path("data")?,
-            mode: WriteMode::Replace,
-        })
+        .write_file(
+            ah_vfs_storage::WriteRequest::new(
+                path("discard")?.to_rooted_expr(),
+                WriteMode::CreateNew,
+                ah_vfs_storage::Publication::Staged,
+            ),
+            Default::default(),
+        )
         .await?;
     writer.write_chunk(b"new").await?;
     assert_eq!(
@@ -371,20 +384,17 @@ async fn replacing_and_aborting_keep_existing_data_until_publication() -> TestRe
         std::fs::read(f.root.join("data"))?,
         b"original longer contents"
     );
-    let mut writer = f
-        .storage
-        .write_file(StorageWriteFileRequest {
-            require_atomic_publish: false,
-            path: path("data")?,
-            mode: WriteMode::Replace,
-        })
-        .await?;
-    writer.write_chunk(b"new").await?;
-    writer.commit().await?;
-    assert_eq!(std::fs::read(f.root.join("data"))?, b"new");
+    assert!(!f.root.join("discard").exists());
     let mut empty = f
         .storage
-        .write_file(StorageWriteFileRequest::new(path("empty")?))
+        .write_file(
+            ah_vfs_storage::WriteRequest::new(
+                path("empty")?.to_rooted_expr(),
+                ah_vfs_storage::WriteMode::CreateNew,
+                ah_vfs_storage::Publication::Staged,
+            ),
+            Default::default(),
+        )
         .await?;
     assert_eq!(empty.commit().await?.entry_type(), EntryType::file(Some(0)));
     assert_eq!(std::fs::read_dir(&f.root)?.count(), 2);
@@ -396,10 +406,17 @@ async fn dropping_pending_writes_cleans_up_without_publishing() -> TestResult {
     let f = fixture().await?;
     let mut writer = f
         .storage
-        .write_file(StorageWriteFileRequest::new(path("pending")?))
+        .write_file(
+            ah_vfs_storage::WriteRequest::new(
+                path("pending")?.to_rooted_expr(),
+                ah_vfs_storage::WriteMode::CreateNew,
+                ah_vfs_storage::Publication::Staged,
+            ),
+            Default::default(),
+        )
         .await?;
     writer.write_chunk(b"uncommitted").await?;
-    assert_eq!(std::fs::read_dir(&f.root)?.count(), 1);
+    assert_eq!(std::fs::read_dir(&f.root)?.count(), 0);
     drop(writer);
     assert_eq!(std::fs::read_dir(&f.root)?.count(), 0);
     Ok(())
@@ -410,20 +427,34 @@ async fn concurrent_create_new_writers_cannot_overwrite_each_other() -> TestResu
     let f = fixture().await?;
     let mut first = f
         .storage
-        .write_file(StorageWriteFileRequest::new(path("same")?))
+        .write_file(
+            ah_vfs_storage::WriteRequest::new(
+                path("same")?.to_rooted_expr(),
+                ah_vfs_storage::WriteMode::CreateNew,
+                ah_vfs_storage::Publication::Staged,
+            ),
+            Default::default(),
+        )
         .await?;
     let mut second = f
         .storage
-        .write_file(StorageWriteFileRequest::new(path("same")?))
+        .write_file(
+            ah_vfs_storage::WriteRequest::new(
+                path("same")?.to_rooted_expr(),
+                ah_vfs_storage::WriteMode::CreateNew,
+                ah_vfs_storage::Publication::Staged,
+            ),
+            Default::default(),
+        )
         .await?;
     first.write_chunk(b"first").await?;
     second.write_chunk(b"second").await?;
     let (first, second) = tokio::join!(first.commit(), second.commit());
     match (first, second) {
-        (Ok(_), Err(error)) if error.failure() == Failure::Rejected(Rejection::AlreadyExists) => {
+        (Ok(_), Err(error)) if error.failure() == Failure::Rejected(Rejection::Conflict) => {
             assert_eq!(std::fs::read(f.root.join("same"))?, b"first")
         }
-        (Err(error), Ok(_)) if error.failure() == Failure::Rejected(Rejection::AlreadyExists) => {
+        (Err(error), Ok(_)) if error.failure() == Failure::Rejected(Rejection::Conflict) => {
             assert_eq!(std::fs::read(f.root.join("same"))?, b"second")
         }
         results => return Err(format!("unexpected commit results: {results:?}").into()),
@@ -437,13 +468,20 @@ async fn failed_commit_is_terminal_and_preserves_a_concurrently_created_target()
     let f = fixture().await?;
     let mut writer = f
         .storage
-        .write_file(StorageWriteFileRequest::new(path("data")?))
+        .write_file(
+            ah_vfs_storage::WriteRequest::new(
+                path("data")?.to_rooted_expr(),
+                ah_vfs_storage::WriteMode::CreateNew,
+                ah_vfs_storage::Publication::Staged,
+            ),
+            Default::default(),
+        )
         .await?;
     writer.write_chunk(b"pending").await?;
     std::fs::write(f.root.join("data"), b"external")?;
     assert!(matches!(
         writer.commit().await,
-        Err(error) if error.failure() == Failure::Rejected(Rejection::AlreadyExists)
+        Err(error) if error.failure() == Failure::Rejected(Rejection::Conflict)
     ));
     assert!(matches!(
         writer.commit().await,
@@ -454,15 +492,18 @@ async fn failed_commit_is_terminal_and_preserves_a_concurrently_created_target()
 
     let mut writer = f
         .storage
-        .write_file(StorageWriteFileRequest {
-            require_atomic_publish: false,
-            path: path("directory")?,
-            mode: WriteMode::Replace,
-        })
+        .write_file(
+            ah_vfs_storage::WriteRequest::new(
+                path("directory")?.to_rooted_expr(),
+                WriteMode::CreateNew,
+                ah_vfs_storage::Publication::Staged,
+            ),
+            Default::default(),
+        )
         .await?;
     std::fs::create_dir(f.root.join("directory"))?;
     assert!(
-        matches!(writer.commit().await, Err(error) if error.failure() == Failure::Rejected(Rejection::IsDirectory))
+        matches!(writer.commit().await, Err(error) if error.failure() == Failure::Rejected(Rejection::Conflict))
     );
     assert!(f.root.join("directory").is_dir());
     assert_eq!(std::fs::read_dir(&f.root)?.count(), 2);
@@ -485,7 +526,14 @@ async fn sessions_keep_resources_after_the_storage_handle_is_dropped() -> TestRe
         .await?;
     let mut writer = f
         .storage
-        .write_file(StorageWriteFileRequest::new(path("write")?))
+        .write_file(
+            ah_vfs_storage::WriteRequest::new(
+                path("write")?.to_rooted_expr(),
+                ah_vfs_storage::WriteMode::CreateNew,
+                ah_vfs_storage::Publication::Staged,
+            ),
+            Default::default(),
+        )
         .await?;
     drop(f.storage);
     assert_eq!(read_all(reader.as_mut()).await?, b"retained");
@@ -510,18 +558,15 @@ async fn wrong_entry_types_and_root_writes_are_rejected() -> TestResult {
     }
     assert!(matches!(
         f.storage
-            .write_file(StorageWriteFileRequest::new(path("")?))
+            .write_file(ah_vfs_storage::WriteRequest::new((path("")?).to_rooted_expr(), ah_vfs_storage::WriteMode::CreateNew, ah_vfs_storage::Publication::Staged), Default::default())
             .await,
         Err(error) if error.failure() == Failure::Rejected(Rejection::RootProtected)
     ));
     assert!(matches!(
         f.storage
-            .write_file(StorageWriteFileRequest { require_atomic_publish: false,
-                path: path("directory")?,
-                mode: WriteMode::Replace,
-            })
+            .write_file(ah_vfs_storage::WriteRequest::new(path("directory")?.to_rooted_expr(), WriteMode::CreateNew, ah_vfs_storage::Publication::Staged), Default::default())
             .await,
-        Err(error) if error.failure() == Failure::Rejected(Rejection::IsDirectory)
+        Err(error) if error.failure() == Failure::Rejected(Rejection::AlreadyExists)
     ));
     assert!(matches!(
         f.storage
@@ -627,15 +672,17 @@ async fn staging_names_are_hidden_and_cannot_be_accessed() -> TestResult {
     let f = fixture().await?;
     let _writer = f
         .storage
-        .write_file(StorageWriteFileRequest::new(path("pending")?))
+        .write_file(
+            ah_vfs_storage::WriteRequest::new(
+                path("pending")?.to_rooted_expr(),
+                ah_vfs_storage::WriteMode::CreateNew,
+                ah_vfs_storage::Publication::Staged,
+            ),
+            Default::default(),
+        )
         .await?;
-    let staging = std::fs::read_dir(&f.root)?
-        .next()
-        .ok_or("missing staging file")??;
-    let name = staging
-        .file_name()
-        .into_string()
-        .map_err(|_| "invalid staging name")?;
+    assert_eq!(std::fs::read_dir(&f.root)?.count(), 0);
+    let name = ".asset-hub-write-reserved";
     assert!(
         f.storage
             .list_entries(StorageDirQuery::new(path("")?))
@@ -645,13 +692,13 @@ async fn staging_names_are_hidden_and_cannot_be_accessed() -> TestResult {
     );
     assert!(matches!(
         f.storage
-            .stat_entry(ah_vfs_storage::StatRequest::new((path(&name)?).to_rooted_expr(), ah_vfs_storage::SymlinkAction::Preserve), Default::default())
+            .stat_entry(ah_vfs_storage::StatRequest::new((path(name)?).to_rooted_expr(), ah_vfs_storage::SymlinkAction::Preserve), Default::default())
             .await,
         Err(error) if error.failure() == Failure::Rejected(Rejection::AccessDenied)
     ));
     assert!(matches!(
         f.storage
-            .remove_entry(StorageRemoveEntryRequest { path: path(&name)? })
+            .remove_entry(StorageRemoveEntryRequest { path: path(name)? })
             .await,
         Err(error) if error.failure() == Failure::Rejected(Rejection::AccessDenied)
     ));
@@ -728,16 +775,13 @@ async fn lookup_policy_controls_links_without_escaping_the_instance() -> TestRes
     ));
     assert!(matches!(
         f.storage
-            .write_file(StorageWriteFileRequest { require_atomic_publish: false,
-                path: path("leaf")?,
-                mode: WriteMode::Replace,
-            })
+            .write_file(ah_vfs_storage::WriteRequest::new(path("leaf")?.to_rooted_expr(), WriteMode::Replace, ah_vfs_storage::Publication::Staged), Default::default())
             .await,
         Err(error) if error.failure() == Failure::Rejected(Rejection::Unsupported)
     ));
     assert!(matches!(
         f.storage
-            .write_file(StorageWriteFileRequest::new(path("dangling")?))
+            .write_file(ah_vfs_storage::WriteRequest::new(path("dangling")?.to_rooted_expr(), ah_vfs_storage::WriteMode::CreateNew, ah_vfs_storage::Publication::Staged), Default::default())
             .await,
         Err(error) if error.failure() == Failure::Rejected(Rejection::AlreadyExists)
     ));
@@ -770,7 +814,14 @@ async fn lookup_policy_controls_links_without_escaping_the_instance() -> TestRes
     );
     assert!(
         f.storage
-            .write_file(StorageWriteFileRequest::new(path("linked/new")?))
+            .write_file(
+                ah_vfs_storage::WriteRequest::new(
+                    path("linked/new")?.to_rooted_expr(),
+                    ah_vfs_storage::WriteMode::CreateNew,
+                    ah_vfs_storage::Publication::Staged
+                ),
+                Default::default()
+            )
             .await
             .is_err()
     );
@@ -835,36 +886,20 @@ async fn lookup_policy_controls_links_without_escaping_the_instance() -> TestRes
 
 #[cfg(unix)]
 #[tokio::test]
-async fn an_open_writer_pins_its_parent_even_when_the_dir_is_replaced_by_a_link() -> TestResult {
-    use std::os::unix::fs::symlink;
+async fn nested_writes_without_atomic_parent_binding_are_rejected_before_staging() -> TestResult {
     let f = fixture().await?;
-    let outside = tempfile::tempdir()?;
     std::fs::create_dir(f.root.join("parent"))?;
-    let mut writer = f
-        .storage
-        .write_file(StorageWriteFileRequest::new(path("parent/file")?))
-        .await?;
-    writer.write_chunk(b"inside").await?;
-    std::fs::rename(f.root.join("parent"), f.root.join("original-parent"))?;
-    symlink(outside.path(), f.root.join("parent"))?;
-    writer.commit().await?;
-    assert_eq!(
-        std::fs::read(f.root.join("original-parent/file"))?,
-        b"inside"
+    let request = ah_vfs_storage::WriteRequest::new(
+        path("parent/file")?.to_rooted_expr(),
+        WriteMode::CreateNew,
+        ah_vfs_storage::Publication::Atomic,
     );
-    assert!(!outside.path().join("file").exists());
     assert!(
-        f.storage
-            .read_file(
-                ah_vfs_storage::ReadRequest::new(
-                    path("parent/file")?.to_rooted_expr(),
-                    ah_vfs_storage::ReadRange::FULL
-                ),
-                Default::default()
-            )
-            .await
-            .is_err()
+        matches!(f.storage.write_file(request, Default::default()).await,
+            Err(error) if error.failure() == Failure::Rejected(Rejection::Unsupported)
+        )
     );
+    assert_eq!(std::fs::read_dir(f.root.join("parent"))?.count(), 0);
     Ok(())
 }
 
@@ -885,27 +920,22 @@ async fn non_utf8_dir_entries_fail_without_lossy_conversion() -> TestResult {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn new_files_are_private_and_replacement_preserves_destination_permissions() -> TestResult {
-    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+async fn new_files_are_private() -> TestResult {
+    use std::os::unix::fs::MetadataExt;
     let f = fixture().await?;
     let mut writer = f
         .storage
-        .write_file(StorageWriteFileRequest::new(path("new")?))
+        .write_file(
+            ah_vfs_storage::WriteRequest::new(
+                path("new")?.to_rooted_expr(),
+                ah_vfs_storage::WriteMode::CreateNew,
+                ah_vfs_storage::Publication::Staged,
+            ),
+            Default::default(),
+        )
         .await?;
     writer.commit().await?;
     assert_eq!(std::fs::metadata(f.root.join("new"))?.mode() & 0o777, 0o600);
-    std::fs::set_permissions(f.root.join("new"), std::fs::Permissions::from_mode(0o640))?;
-    let mut writer = f
-        .storage
-        .write_file(StorageWriteFileRequest {
-            require_atomic_publish: false,
-            path: path("new")?,
-            mode: WriteMode::Replace,
-        })
-        .await?;
-    writer.write_chunk(b"replacement").await?;
-    writer.commit().await?;
-    assert_eq!(std::fs::metadata(f.root.join("new"))?.mode() & 0o777, 0o640);
     Ok(())
 }
 

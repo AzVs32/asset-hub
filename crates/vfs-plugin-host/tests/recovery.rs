@@ -1,6 +1,5 @@
 use ah_vfs::application::port::*;
 use ah_vfs::domain::InstanceId;
-use ah_vfs::domain::storage::StorageWriteFileRequest;
 use ah_vfs_storage::{BackendFailure, Failure, Operation, Rejection, StorageError};
 use ah_vfs_storage::{Entry, StoragePath};
 use std::sync::{
@@ -284,7 +283,14 @@ async fn unknown_commit_is_not_replayed_during_recovery() -> Result {
     let driver = connect(&peer).await?;
     let old = open(&driver).await?;
     let mut writer = old
-        .write_file(StorageWriteFileRequest::new(StoragePath::parse("file")?))
+        .write_file(
+            ah_vfs_storage::WriteRequest::new(
+                StoragePath::parse("file")?.to_rooted_expr(),
+                ah_vfs_storage::WriteMode::CreateNew,
+                ah_vfs_storage::Publication::Staged,
+            ),
+            Default::default(),
+        )
         .await?;
     let error = writer.commit().await.err().ok_or("lost response")?;
     assert_eq!(error.operation(), Operation::Write);

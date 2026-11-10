@@ -122,6 +122,10 @@ impl Client {
         let publishes = (method == "DELETE" && !query.iter().any(|(key, _)| key == "uploadId"))
             || (method == "PUT" && !query.iter().any(|(key, _)| key == "uploadId"))
             || (method == "POST" && query.iter().any(|(key, _)| key == "uploadId"));
+        let guarded_write = publishes
+            && extra
+                .iter()
+                .any(|(header, _)| matches!(header.as_str(), "if-match" | "if-none-match"));
         let request = self.sign(
             method,
             key,
@@ -143,6 +147,12 @@ impl Client {
             vfs_plugin_guest::wasi_http::send(request).map_err(|cause| context.failure(cause))?;
         match response.status().as_u16() {
             200..=299 => Ok(response),
+            404 | 409 | 412 if guarded_write => Err(ah_vfs_storage::StorageError::without_effects(
+                Operation::Write,
+                Failure::Rejected(Rejection::Conflict),
+                None,
+            )
+            .into()),
             403 => Err(context.failure(Failure::Rejected(Rejection::AccessDenied))),
             404 => Err(context.failure(Failure::Rejected(Rejection::NotFound))),
             409 => Err(context.failure(Failure::Rejected(Rejection::Conflict))),
@@ -479,7 +489,7 @@ impl Client {
         name: &str,
         upload: &str,
         parts: &[String],
-        replace: bool,
+        target_etag: Option<&str>,
     ) -> Result<()> {
         let context = &self.context;
         let mut body = String::from("<CompleteMultipartUpload>");
@@ -491,10 +501,10 @@ impl Client {
             ));
         }
         body.push_str("</CompleteMultipartUpload>");
-        let mut headers = vec![("content-type".into(), "application/xml".into())];
-        if !replace {
-            headers.push(("if-none-match".into(), "*".into()));
-        }
+        let headers = vec![
+            ("content-type".into(), "application/xml".into()),
+            write_condition(target_etag),
+        ];
         let r = self.request(
             "POST",
             name,
@@ -502,11 +512,36 @@ impl Client {
             headers,
             body.into_bytes(),
         )?;
-        if xml(context, r.body())?.contains("<Error>") {
-            return Err(context.failure(Failure::Backend(BackendFailure::Other)));
+        let body = xml(context, r.body())?;
+        let mut document = quick_xml::Reader::from_str(body);
+        document.config_mut().trim_text(true);
+        loop {
+            use quick_xml::events::Event;
+            match document.read_event() {
+                Ok(Event::Decl(_) | Event::Comment(_)) => {}
+                Ok(Event::Start(event))
+                    if event.local_name().as_ref() == b"CompleteMultipartUploadResult" =>
+                {
+                    break;
+                }
+                Ok(Event::Start(event)) if event.local_name().as_ref() == b"Error" => {
+                    return Err(context.failure(Failure::Backend(BackendFailure::Other)));
+                }
+                _ => return Err(context.failure(Failure::Backend(BackendFailure::CorruptData))),
+            }
+        }
+        let complete: Completed = quick_xml::de::from_str(body)
+            .map_err(|_| context.failure(Failure::Backend(BackendFailure::CorruptData)))?;
+        if complete.etag.is_empty() {
+            return Err(context.failure(Failure::Backend(BackendFailure::CorruptData)));
         }
         Ok(())
     }
+}
+#[derive(Deserialize)]
+struct Completed {
+    #[serde(rename = "ETag")]
+    etag: String,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -546,4 +581,11 @@ fn entry(
         .map_err(|_| context.failure(Failure::Backend(BackendFailure::UnrepresentableName)))?;
     Entry::new(path, kind, modified)
         .map_err(|_| context.failure(Failure::Backend(BackendFailure::CorruptData)))
+}
+
+pub(super) fn write_condition(etag: Option<&str>) -> (String, String) {
+    match etag {
+        Some(etag) => ("if-match".into(), etag.into()),
+        None => ("if-none-match".into(), "*".into()),
+    }
 }

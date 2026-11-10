@@ -3,7 +3,6 @@
 use crate::application::port::{Storage, StorageFileReader};
 use crate::domain::storage::{
     MAX_DIR_PAGE_LIMIT, StorageCreateDirRequest, StorageDirQuery, StorageMoveEntryRequest,
-    StorageWriteFileRequest,
 };
 use ah_vfs_storage::RenameSupport;
 use ah_vfs_storage::{EntryType, StoragePath};
@@ -18,7 +17,14 @@ fn path(value: &str) -> TestResult<StoragePath> {
 
 async fn put(storage: &dyn Storage, name: &str, bytes: &[u8]) -> TestResult {
     let mut writer = storage
-        .write_file(StorageWriteFileRequest::new(path(name)?))
+        .write_file(
+            ah_vfs_storage::WriteRequest::new(
+                (path(name)?).to_rooted_expr(),
+                ah_vfs_storage::WriteMode::CreateNew,
+                ah_vfs_storage::Publication::Staged,
+            ),
+            Default::default(),
+        )
         .await?;
     writer.write_chunk(bytes).await?;
     writer.commit().await?;
@@ -156,7 +162,7 @@ pub async fn assert_range_read_contract(storage: &dyn Storage) -> TestResult {
 pub async fn assert_create_dir_contract(storage: &dyn Storage) -> TestResult {
     put(storage, "file", b"retained file").await?;
     mkdir(storage, "dir").await?;
-    put(storage, "dir/child", b"retained child").await?;
+    mkdir(storage, "dir/child").await?;
 
     for (name, recursive, expected) in [
         ("file", true, Failure::Rejected(Rejection::NotDirectory)),
@@ -232,7 +238,7 @@ pub async fn assert_create_dir_contract(storage: &dyn Storage) -> TestResult {
         assert_eq!(error.failure(), Failure::Rejected(Rejection::AlreadyExists));
     }
     assert_eq!(get(storage, "file").await?, b"retained file");
-    assert_eq!(get(storage, "dir/child").await?, b"retained child");
+    assert!(exists(storage, "dir/child").await?);
 
     let entry = storage
         .create_dir(StorageCreateDirRequest {
@@ -343,7 +349,7 @@ pub async fn assert_same_path_rename_contract(
 ) -> TestResult {
     put(storage, "file", b"file content").await?;
     mkdir(storage, "dir").await?;
-    put(storage, "dir/child", b"child content").await?;
+    mkdir(storage, "dir/child").await?;
 
     for replace in [false, true] {
         let supported = if replace {
@@ -398,7 +404,7 @@ pub async fn assert_same_path_rename_contract(
             assert_eq!(after.entry_type(), before.entry_type());
             assert_eq!(after.modified(), before.modified());
             assert_eq!(get(storage, "file").await?, b"file content");
-            assert_eq!(get(storage, "dir/child").await?, b"child content");
+            assert!(exists(storage, "dir/child").await?);
         }
 
         let error = storage

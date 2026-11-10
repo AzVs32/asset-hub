@@ -1,7 +1,6 @@
 use ah_vfs::application::driver_error::DriverError;
 use ah_vfs::application::port::*;
 use ah_vfs::domain::InstanceId;
-use ah_vfs::domain::storage::StorageWriteFileRequest;
 use ah_vfs_storage::Capabilities;
 use ah_vfs_storage::{BackendFailure, ContractViolation, Failure, Operation};
 use ah_vfs_storage::{Entry, EntryType, PermissionsError, StoragePath, XattrName, XattrNameError};
@@ -155,7 +154,14 @@ async fn malformed_commit_response_is_unknown_and_is_never_replayed() -> Result 
         ))
         .await?;
     let mut writer = storage
-        .write_file(StorageWriteFileRequest::new(StoragePath::parse("file")?))
+        .write_file(
+            ah_vfs_storage::WriteRequest::new(
+                StoragePath::parse("file")?.to_rooted_expr(),
+                ah_vfs_storage::WriteMode::CreateNew,
+                ah_vfs_storage::Publication::Staged,
+            ),
+            Default::default(),
+        )
         .await?;
     writer.write_chunk(b"accepted").await?;
     let error = writer.commit().await.err().ok_or("unknown outcome")?;

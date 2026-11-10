@@ -1,19 +1,20 @@
-use super::{
-    Blob, BlobError, EntryData, MemoryEntry, Shared, error, metadata_error, require_dir,
-    writable_target,
-};
+use super::{Blob, EntryData, MemoryEntry, Shared, error, metadata_error};
 use ah_vfs::application::port::{StorageFileWriter, StorageFuture};
-use ah_vfs::domain::storage::StorageWriteFileRequest;
-use ah_vfs_storage::WriteMode;
-use ah_vfs_storage::{BackendFailure, Failure, Operation, Rejection, StorageError};
-use ah_vfs_storage::{Entry, StoragePath};
-use std::{sync::Arc, time::SystemTime};
+use ah_vfs_storage::{
+    BackendFailure, DirectoryIdentity, Entry, Failure, Operation, Rejection, StorageError,
+    StoragePath,
+};
+use std::{
+    sync::{Arc, Weak},
+    time::SystemTime,
+};
 
 struct WriteSession {
     shared: Arc<Shared>,
     path: StoragePath,
-    parent: Arc<ah_vfs_storage::DirectoryIdentity>,
-    mode: WriteMode,
+    parent_path: StoragePath,
+    parent: Arc<DirectoryIdentity>,
+    destination: Option<Weak<Blob>>,
     blob: Blob,
 }
 
@@ -21,11 +22,17 @@ pub(super) struct MemoryFileWriter {
     session: Option<WriteSession>,
 }
 
+fn closed() -> StorageError {
+    error(Operation::Write, Failure::Backend(BackendFailure::Closed))
+}
+
 impl MemoryFileWriter {
     pub(super) fn new(
         shared: Arc<Shared>,
-        request: StorageWriteFileRequest,
-        parent: Arc<ah_vfs_storage::DirectoryIdentity>,
+        path: StoragePath,
+        parent_path: StoragePath,
+        parent: Arc<DirectoryIdentity>,
+        destination: Option<Weak<Blob>>,
     ) -> Self {
         let blob = Blob {
             bytes: Vec::new(),
@@ -34,9 +41,10 @@ impl MemoryFileWriter {
         Self {
             session: Some(WriteSession {
                 shared,
-                path: request.path,
+                path,
+                parent_path,
                 parent,
-                mode: request.mode,
+                destination,
                 blob,
             }),
         }
@@ -44,67 +52,56 @@ impl MemoryFileWriter {
 }
 
 impl StorageFileWriter for MemoryFileWriter {
-    fn write_chunk<'a>(&'a mut self, bytes: &'a [u8]) -> StorageFuture<'a, ()> {
+    fn write_chunk<'a>(&'a mut self, data: &'a [u8]) -> StorageFuture<'a, ()> {
         Box::pin(async move {
-            self.session
-                .as_mut()
-                .ok_or_else(|| error(Operation::Write, Failure::Backend(BackendFailure::Closed)))?
-                .blob
-                .append(bytes)
-                .map_err(|cause| match cause {
-                    BlobError::Quota => error(
-                        Operation::Write,
-                        Failure::Backend(BackendFailure::CapacityExceeded),
-                    ),
-                    BlobError::Allocation(source) => StorageError::without_effects(
-                        Operation::Write,
-                        Failure::Backend(BackendFailure::CapacityExceeded),
-                        Some(Box::new(source)),
-                    ),
-                })
+            let mut session = self.session.take().ok_or_else(closed)?;
+            session.blob.append(data).map_err(|cause| {
+                StorageError::without_effects(
+                    Operation::Write,
+                    Failure::Backend(BackendFailure::CapacityExceeded),
+                    Some(Box::new(cause)),
+                )
+            })?;
+            self.session = Some(session);
+            Ok(())
         })
     }
 
     fn commit(&mut self) -> StorageFuture<'_, Entry> {
         Box::pin(async move {
-            let session = self
-                .session
-                .take()
-                .ok_or_else(|| error(Operation::Write, Failure::Backend(BackendFailure::Closed)))?;
-            let mut entries = session.shared.lock(Operation::Write)?;
-            let parent = session.path.parent().ok_or_else(|| {
-                error(
-                    Operation::Write,
-                    Failure::Rejected(Rejection::RootProtected),
-                )
-            })?;
-            let identity = require_dir(Operation::Write, &entries, parent.as_str())
-                .map_err(|_| error(Operation::Write, Failure::Rejected(Rejection::Conflict)))?;
-            if !Arc::ptr_eq(identity, &session.parent) {
-                return Err(error(
-                    Operation::Write,
-                    Failure::Rejected(Rejection::Conflict),
-                ));
+            let op = Operation::Write;
+            let session = self.session.take().ok_or_else(closed)?;
+            let mut nodes = session.shared.lock(op)?;
+            let parent_matches = matches!(nodes.get(session.parent_path.as_str()),
+                Some(MemoryEntry { data: EntryData::Dir(actual), .. }) if Arc::ptr_eq(actual, &session.parent));
+            let destination_matches = match (&session.destination, nodes.get(session.path.as_str()))
+            {
+                (None, None) => true,
+                (
+                    Some(expected),
+                    Some(MemoryEntry {
+                        data: EntryData::File(actual),
+                        ..
+                    }),
+                ) => expected.ptr_eq(&Arc::downgrade(actual)),
+                _ => false,
+            };
+            if !parent_matches || !destination_matches {
+                return Err(error(op, Failure::Rejected(Rejection::Conflict)));
             }
-            writable_target(Operation::Write, &entries, &session.path, session.mode)?;
             let entry = MemoryEntry {
                 data: EntryData::File(Arc::new(session.blob)),
                 modified: SystemTime::now(),
             };
             let metadata = entry
                 .metadata(session.path.clone())
-                .map_err(|cause| metadata_error(Operation::Write, cause))?;
-            entries.insert(session.path.as_str().into(), entry);
+                .map_err(|cause| metadata_error(op, cause))?;
+            nodes.insert(session.path.as_str().into(), entry);
             Ok(metadata)
         })
     }
 
     fn abort(&mut self) -> StorageFuture<'_, ()> {
-        Box::pin(async move {
-            self.session
-                .take()
-                .ok_or_else(|| error(Operation::Write, Failure::Backend(BackendFailure::Closed)))?;
-            Ok(())
-        })
+        Box::pin(async move { self.session.take().map(|_| ()).ok_or_else(closed) })
     }
 }

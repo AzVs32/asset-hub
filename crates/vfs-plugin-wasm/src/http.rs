@@ -123,7 +123,11 @@ impl HttpPolicy {
             if response.status().is_redirection()
                 && response.headers().contains_key(http::header::LOCATION)
             {
-                if !self.grants.allow_redirects {
+                // A redirect can follow an applied mutation. Never send a
+                // second request carrying a publication or its preconditions.
+                if !self.grants.allow_redirects
+                    || !matches!(method.as_str(), "GET" | "HEAD" | "OPTIONS" | "PROPFIND")
+                {
                     return Err(Error::HttpRequestDenied);
                 }
                 if attempt == 5 {

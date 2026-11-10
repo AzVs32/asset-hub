@@ -1,6 +1,6 @@
 //! An authenticated, bounded memory-storage session using the new domain contract.
 //! The service is independent of plugin registration and binds one configured
-//! instance. One stream owns its active writer and listing.
+//! instance. One stream owns its active listing.
 use crate::{ServerLimits, limits, security::AuthToken};
 use ah_vfs::application::driver_error::DriverError;
 use ah_vfs_storage as d;
@@ -8,7 +8,7 @@ use std::{pin::Pin, sync::Arc};
 use tokio::sync::mpsc;
 use tokio_stream::{Stream, wrappers::ReceiverStream};
 use tonic::{Request, Response, Status};
-use vfs_driver_memory::{ContractWriter, MemoryStorage};
+use vfs_driver_memory::MemoryStorage;
 pub use vfs_plugin_grpc_wire::storage_contract as wire;
 use wire::{command::Action, reply::Result as Reply};
 
@@ -51,7 +51,6 @@ impl wire::storage_contract_server::StorageContract for ContractService {
         let mut session = Session {
             storage: self.storage.clone(),
             listing: None,
-            writer: None,
         };
         let admission = self.admission.clone();
         let task_permit = permit.clone();
@@ -135,7 +134,6 @@ struct Listing {
 struct Session {
     storage: Arc<MemoryStorage>,
     listing: Option<Listing>,
-    writer: Option<ContractWriter>,
 }
 
 enum CallError {
@@ -240,51 +238,6 @@ impl Session {
                 let request = d::RemoveRequest::new(path(&request.path)?, kind)
                     .map_err(|_| invalid_request())?;
                 self.storage.remove(&request, links)?;
-                Ok(unit())
-            }
-            Action::BeginWrite(request) => {
-                if self.writer.is_some() {
-                    return Err(reject(d::Operation::Write, d::Rejection::Conflict).into());
-                }
-                let mode = match wire::WriteMode::try_from(request.mode) {
-                    Ok(wire::WriteMode::CreateNew) => d::WriteMode::CreateNew,
-                    Ok(wire::WriteMode::Replace) => d::WriteMode::Replace,
-                    _ => return Err(invalid_request().into()),
-                };
-                let publication = match wire::Publication::try_from(request.publication) {
-                    Ok(wire::Publication::Staged) => d::Publication::Staged,
-                    Ok(wire::Publication::Atomic) => d::Publication::Atomic,
-                    _ => return Err(invalid_request().into()),
-                };
-                let request = d::WriteRequest::new(path(&request.path)?, mode, publication);
-                self.writer = Some(self.storage.write(&request, links)?);
-                Ok(unit())
-            }
-            Action::Stage(bytes) => {
-                if bytes.len() > wire::MAX_CHUNK_BYTES {
-                    return Err(invalid_request().into());
-                }
-                let mut writer = self
-                    .writer
-                    .take()
-                    .ok_or_else(|| closed(d::Operation::Write))?;
-                writer.append(&bytes)?;
-                self.writer = Some(writer);
-                Ok(unit())
-            }
-            Action::Commit(_) => {
-                let writer = self
-                    .writer
-                    .take()
-                    .ok_or_else(|| closed(d::Operation::Write))?;
-                entry(d::Operation::Write, writer.commit()?)
-            }
-            Action::Abort(_) => {
-                let writer = self
-                    .writer
-                    .take()
-                    .ok_or_else(|| closed(d::Operation::Write))?;
-                writer.abort()?;
                 Ok(unit())
             }
             Action::GetPermissions(request) => {

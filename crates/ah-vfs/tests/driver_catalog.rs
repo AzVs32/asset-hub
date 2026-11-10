@@ -14,7 +14,7 @@ use ah_vfs::domain::namespace::{
 };
 use ah_vfs::domain::storage::{
     StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageMoveEntryRequest,
-    StorageRemoveEntryRequest, StorageWriteFileRequest,
+    StorageRemoveEntryRequest,
 };
 use ah_vfs::domain::{DriverInstance, DriverKey, DriverKeyError, InstanceId};
 use ah_vfs_storage::Entry;
@@ -65,7 +65,8 @@ impl Storage for TestStorage {
     }
     fn write_file(
         &self,
-        _: StorageWriteFileRequest,
+        _: ah_vfs_storage::WriteRequest,
+        _: ah_vfs::application::port::LookupContext,
     ) -> StorageFuture<'_, Box<dyn StorageFileWriter>> {
         unsupported(Operation::Write)
     }

@@ -318,3 +318,55 @@ mod tests {
         Ok(())
     }
 }
+
+pub(super) fn write_destination(
+    root: &Dir,
+    request: &ah_vfs_storage::WriteRequest,
+    context: LookupContext,
+) -> Result<(Dir, StoragePath), StorageError> {
+    use ah_vfs_storage::{IntermediateSymlinks, StatRequest};
+    let op = Operation::Write;
+    let Some((parent, name)) = request.path().split_final_name() else {
+        Walk::select(root, request.lookup(), context, op)?;
+        return Err(rejected(op, Rejection::NotDirectory));
+    };
+    let action = match context.intermediate_symlinks {
+        IntermediateSymlinks::FollowWithinInstance => SymlinkAction::FollowWithinInstance,
+        IntermediateSymlinks::Reject => SymlinkAction::Preserve,
+    };
+    let parent = Walk::select(root, StatRequest::new(parent, action).lookup(), context, op)?;
+    match parent.entry.entry_type() {
+        EntryType::Directory => {}
+        EntryType::Symlink => return Err(rejected(op, Rejection::SymlinkNotAllowed)),
+        _ => return Err(rejected(op, Rejection::NotDirectory)),
+    }
+    let path = parent
+        .entry
+        .path()
+        .join(name)
+        .map_err(|_| rejected(op, Rejection::PathTooLong))?;
+    fs::validate(op, &path)?;
+    let dir = Dir::from_std_file(
+        parent
+            .file
+            .try_clone()
+            .map_err(|cause| fs::error(op, cause))?
+            .into_std(),
+    );
+    match dir.symlink_metadata(name.as_str()) {
+        Ok(metadata) => {
+            let entry = fs::entry(op, path.clone(), metadata)?;
+            request
+                .lookup()
+                .check_existing_target(&path, entry.entry_type())
+                .map_err(|reason| rejected(op, reason))?;
+        }
+        Err(cause) if cause.kind() == std::io::ErrorKind::NotFound => {
+            request
+                .check_new_destination(&path)
+                .map_err(|reason| rejected(op, reason))?;
+        }
+        Err(cause) => return Err(fs::error(op, cause)),
+    }
+    Ok((dir, path))
+}

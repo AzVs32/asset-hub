@@ -1,7 +1,7 @@
 use crate::api::{ErrorContext, Result};
 use ah_vfs_storage::{
     ContractViolation, Entry, EntryType, Failure, IntermediateSymlinks, LookupStart, Operation,
-    PathComponent, PathLookup, Rejection, StoragePath, SymlinkAction,
+    PathComponent, PathLookup, Rejection, StatRequest, StoragePath, SymlinkAction, WriteRequest,
 };
 use vfs_plugin_protocol as p;
 
@@ -34,7 +34,10 @@ pub fn direct_lookup<T>(
         return Err(unsupported());
     }
     let mut path = StoragePath::root();
-    let components = lookup.path().components();
+    let mut components = lookup.path().components();
+    if components == [PathComponent::CurrentDirectory] {
+        components = &[];
+    }
     if components
         .iter()
         .any(|part| !matches!(part, PathComponent::Name(_)))
@@ -76,4 +79,61 @@ pub fn direct_lookup<T>(
         .check_existing_target(&path, result.0.entry_type())
         .map_err(reject)?;
     Ok(result)
+}
+
+/// Resolve a write operand without interpreting absence as permission to replace.
+/// The backend must apply the returned binding data as publication conditions.
+pub fn direct_write_destination<T>(
+    request: &WriteRequest,
+    base: &StoragePath,
+    links: IntermediateSymlinks,
+    mut select: impl FnMut(&StoragePath) -> Result<(Entry, T)>,
+) -> Result<(StoragePath, T, Option<T>)> {
+    let op = Operation::Write;
+    let context = ErrorContext::storage(op);
+    let reject = |reason| context.failure(Failure::Rejected(reason));
+    let Some((parent, name)) = request.path().split_final_name() else {
+        direct_lookup(request.lookup(), base, links, op, select)?;
+        return Err(reject(Rejection::NotDirectory));
+    };
+    let final_link = match links {
+        IntermediateSymlinks::FollowWithinInstance => SymlinkAction::FollowWithinInstance,
+        IntermediateSymlinks::Reject => SymlinkAction::Preserve,
+    };
+    let (parent, parent_binding) = direct_lookup(
+        StatRequest::new(parent, final_link).lookup(),
+        base,
+        links,
+        op,
+        &mut select,
+    )?;
+    match parent.entry_type() {
+        EntryType::Directory => {}
+        EntryType::Symlink => return Err(reject(Rejection::SymlinkNotAllowed)),
+        _ => return Err(reject(Rejection::NotDirectory)),
+    }
+    let path = parent
+        .path()
+        .join(name)
+        .map_err(|_| reject(Rejection::PathTooLong))?;
+    let destination = match select(&path) {
+        Ok((entry, value)) if entry.path() == &path => {
+            request
+                .lookup()
+                .check_existing_target(&path, entry.entry_type())
+                .map_err(reject)?;
+            Some(value)
+        }
+        Ok(_) => return Err(context.failure(Failure::Contract(ContractViolation::InvalidEntry))),
+        Err(error)
+            if error
+                .storage_error()
+                .is_some_and(|error| error.failure() == Failure::Rejected(Rejection::NotFound)) =>
+        {
+            request.check_new_destination(&path).map_err(reject)?;
+            None
+        }
+        Err(error) => return Err(error),
+    };
+    Ok((path, parent_binding, destination))
 }

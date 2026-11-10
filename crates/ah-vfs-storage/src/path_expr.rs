@@ -124,6 +124,27 @@ impl PathExpr {
         Ok(())
     }
 
+    /// Split a final ordinary name from its unevaluated parent operand.
+    /// The caller still applies the original operand's directory requirement.
+    pub fn split_final_name(&self) -> Option<(Self, &EntryName)> {
+        let (PathComponent::Name(name), parents) = self.components.split_last()? else {
+            return None;
+        };
+        let components = if parents.is_empty() && self.start == LookupStart::BaseDirectory {
+            vec![PathComponent::CurrentDirectory]
+        } else {
+            parents.to_vec()
+        };
+        Some((
+            Self {
+                start: self.start,
+                components,
+                trailing_slash: parents.is_empty() && self.start == LookupStart::InstanceRoot,
+            },
+            name,
+        ))
+    }
+
     pub(super) fn ends_in_name(&self) -> bool {
         matches!(self.components.last(), Some(PathComponent::Name(_)))
     }

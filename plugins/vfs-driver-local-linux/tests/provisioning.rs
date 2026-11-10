@@ -4,7 +4,6 @@ mod common;
 use ah_vfs::application::driver_error::DriverError;
 use ah_vfs::application::dto::*;
 use ah_vfs::application::port::*;
-use ah_vfs::domain::storage::StorageWriteFileRequest;
 use ah_vfs_storage::StoragePath;
 use vfs_driver_local_linux::LinuxLocalDriver;
 type Result = std::result::Result<(), Box<dyn std::error::Error>>;
@@ -48,7 +47,14 @@ async fn host_creation_opens_for_read_write_and_rejects_root_changes() -> Result
         .await?;
     let path = StoragePath::parse("file")?;
     let mut writer = storage
-        .write_file(StorageWriteFileRequest::new(path.clone()))
+        .write_file(
+            ah_vfs_storage::WriteRequest::new(
+                path.clone().to_rooted_expr(),
+                ah_vfs_storage::WriteMode::CreateNew,
+                ah_vfs_storage::Publication::Staged,
+            ),
+            Default::default(),
+        )
         .await?;
     writer.write_chunk(b"data").await?;
     writer.commit().await?;

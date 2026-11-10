@@ -3,9 +3,9 @@ use ah_vfs::application::port::LookupContext;
 use ah_vfs::application::port::{Storage, StorageFileReader, StorageFileWriter, StorageFuture};
 use ah_vfs::domain::storage::{
     StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageMoveEntryRequest,
-    StorageRemoveEntryRequest, StorageWriteFileRequest,
+    StorageRemoveEntryRequest,
 };
-use ah_vfs_storage::WriteMode;
+use ah_vfs_storage::WriteRequest;
 use ah_vfs_storage::{
     BackendFailure, ContractViolation, Failure, Operation, Rejection, StorageError,
 };
@@ -25,8 +25,6 @@ use std::{
 pub(crate) mod contract;
 mod file_reader;
 mod file_writer;
-
-use file_writer::MemoryFileWriter;
 
 const CHUNK_SIZE: usize = 64 * 1024;
 
@@ -221,33 +219,6 @@ fn require_parents(
     Ok(())
 }
 
-fn writable_target(
-    operation: Operation,
-    entries: &BTreeMap<String, MemoryEntry>,
-    path: &StoragePath,
-    mode: WriteMode,
-) -> Result<(), StorageError> {
-    if path.is_root() {
-        return Err(error(
-            operation,
-            Failure::Rejected(Rejection::RootProtected),
-        ));
-    }
-    require_parents(operation, entries, path)?;
-    if let Some(entry) = entries.get(path.as_str()) {
-        if mode == WriteMode::CreateNew {
-            return Err(error(
-                operation,
-                Failure::Rejected(Rejection::AlreadyExists),
-            ));
-        }
-        if matches!(entry.data, EntryData::Dir(_)) {
-            return Err(error(operation, Failure::Rejected(Rejection::IsDirectory)));
-        }
-    }
-    Ok(())
-}
-
 /// Hierarchical volatile storage. Namespace mutations and publication are atomic
 /// under one instance lock. Readers retain immutable versions of opened files.
 ///
@@ -355,22 +326,11 @@ impl Storage for MemoryStorage {
 
     fn write_file(
         &self,
-        request: StorageWriteFileRequest,
+        request: WriteRequest,
+        context: LookupContext,
     ) -> StorageFuture<'_, Box<dyn StorageFileWriter>> {
         Box::pin(async move {
-            let operation = Operation::Write;
-            let entries = self.shared.lock(operation)?;
-            writable_target(operation, &entries, &request.path, request.mode)?;
-            let parent = request
-                .path
-                .parent()
-                .ok_or_else(|| error(operation, Failure::Rejected(Rejection::RootProtected)))?;
-            let identity = require_dir(operation, &entries, parent.as_str())?.clone();
-            Ok(Box::new(MemoryFileWriter::new(
-                self.shared.clone(),
-                request,
-                identity,
-            )) as Box<dyn StorageFileWriter>)
+            Ok(Box::new(self.open_writer(&request, context)?) as Box<dyn StorageFileWriter>)
         })
     }
 

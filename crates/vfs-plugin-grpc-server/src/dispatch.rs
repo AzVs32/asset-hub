@@ -4,12 +4,9 @@ use ah_vfs::application::port::*;
 use ah_vfs::domain::InstanceId;
 use ah_vfs::domain::storage::{
     StorageCreateDirRequest, StorageDirQuery, StorageMoveEntryRequest, StorageRemoveEntryRequest,
-    StorageWriteFileRequest,
 };
 use ah_vfs_storage::{BackendFailure, Failure, Operation, Rejection, StorageError};
-use ah_vfs_storage::{
-    Permissions, ReadLinkRequest, StoragePath, WriteMode, XattrName, XattrWriteMode,
-};
+use ah_vfs_storage::{Permissions, ReadLinkRequest, StoragePath, XattrName, XattrWriteMode};
 use futures_util::FutureExt;
 use std::{
     collections::HashMap,
@@ -547,12 +544,23 @@ impl Session {
                 );
                 Value::Reader(p::Handle { handle })
             }
-            Op::Write(p::Write {
-                handle,
-                path: raw,
-                replace,
-                atomic,
-            }) => {
+            Op::Write(write) => {
+                let handle = write.handle;
+                let (request, working_directory, intermediate_symlinks) =
+                    p::decode_write(write).map_err(invalid_lookup)?;
+                self.generation
+                    .driver
+                    .info()
+                    .capabilities()
+                    .require_write(&request)
+                    .map_err(|reason| {
+                        StorageError::without_effects(
+                            Operation::Write,
+                            Failure::Rejected(reason),
+                            None,
+                        )
+                    })?;
+                let storage = self.storage(Operation::Write, handle).await?;
                 let capacity = self.generation.reserve().map_err(|source| {
                     StorageError::without_effects(
                         Operation::Write,
@@ -560,18 +568,14 @@ impl Session {
                         Some(Box::new(source)),
                     )
                 })?;
-                let writer = self
-                    .storage(Operation::Write, handle)
-                    .await?
-                    .write_file(StorageWriteFileRequest {
-                        path: path(&raw)?,
-                        mode: if replace {
-                            WriteMode::Replace
-                        } else {
-                            WriteMode::CreateNew
+                let writer = storage
+                    .write_file(
+                        request,
+                        LookupContext {
+                            working_directory,
+                            intermediate_symlinks,
                         },
-                        require_atomic_publish: atomic,
-                    })
+                    )
                     .await?;
                 let mut resources = self.resources.lock().await;
                 let handle = resources.allocate(Operation::Write)?;
@@ -618,7 +622,11 @@ impl Session {
                     &self.resources.lock().await.writers,
                     handle,
                 )?;
-                writer.lock().await.write_chunk(&data).await?;
+                let result = writer.lock().await.write_chunk(&data).await;
+                if let Err(error) = result {
+                    self.resources.lock().await.writers.remove(&handle);
+                    return Err(error.into());
+                }
                 Value::Unit(p::Empty {})
             }
             Op::Commit(p::Handle { handle }) => {
@@ -630,7 +638,10 @@ impl Session {
                     .remove(&handle)
                     .ok_or_else(|| missing(Operation::Write))?;
                 let entry = writer.value.lock().await.commit().await?;
-                Value::Entry(c::entry(Operation::Write, entry)?)
+                Value::Entry(
+                    c::entry(Operation::Write, entry)
+                        .map_err(|error| c::response_error(Operation::Write, true, error))?,
+                )
             }
             Op::Abort(p::Handle { handle }) => {
                 let writer = self

@@ -3,11 +3,12 @@
 use super::{StoragePermissions, StorageXattrs};
 use crate::domain::storage::{
     StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageMoveEntryRequest,
-    StorageRemoveEntryRequest, StorageWriteFileRequest,
+    StorageRemoveEntryRequest,
 };
 use ah_vfs_storage::Capabilities;
 use ah_vfs_storage::{
-    Entry, IntermediateSymlinks, LinkTarget, ReadLinkRequest, ReadRequest, StatRequest, StoragePath,
+    Entry, IntermediateSymlinks, LinkTarget, ReadLinkRequest, ReadRequest, StatRequest,
+    StoragePath, WriteRequest,
 };
 use ah_vfs_storage::{Failure, Operation, Rejection, StorageError};
 
@@ -90,7 +91,8 @@ pub trait Storage: Send + Sync {
     /// Stage a complete-file write. The target changes only when commit publishes it.
     fn write_file(
         &self,
-        _request: StorageWriteFileRequest,
+        _request: WriteRequest,
+        _context: LookupContext,
     ) -> StorageFuture<'_, Box<dyn StorageFileWriter>> {
         unsupported(Operation::Write)
     }
@@ -131,6 +133,8 @@ pub trait StorageFileReader: Send {
 /// transparently reopened after a crash. See the port module's plugin contract.
 pub trait StorageFileWriter: Send {
     /// Accept bytes for the pending write, including a final partial chunk.
+    /// A staging failure rules out publication and makes the stage ineligible
+    /// for commit. It may be discarded immediately or released by abort/drop.
     fn write_chunk<'a>(&'a mut self, data: &'a [u8]) -> StorageFuture<'a, ()>;
 
     /// Publish the completed write and return its metadata. Publication semantics

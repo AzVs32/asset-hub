@@ -1,7 +1,7 @@
 //! Instance-local operation requests and directory query results.
 
 use super::{DEFAULT_DIR_PAGE_LIMIT, validate_dir_page_limit};
-use ah_vfs_storage::{Entry, EntryName, StoragePath, WriteMode};
+use ah_vfs_storage::{Entry, EntryName, StoragePath};
 use ah_vfs_storage::{Failure, Operation, Rejection, StorageError};
 use std::num::NonZeroUsize;
 
@@ -45,23 +45,6 @@ pub struct StorageDirPage {
     pub entries: Vec<Entry>,
     /// Pass as `after`; `None` means there are no more entries now.
     pub next_after: Option<EntryName>,
-}
-
-/// A complete-file write staged until its writer commits publication.
-pub struct StorageWriteFileRequest {
-    /// Require atomic complete-file publication. Never emulate with incremental overwrite.
-    pub require_atomic_publish: bool,
-    pub path: StoragePath,
-    pub mode: WriteMode,
-}
-impl StorageWriteFileRequest {
-    pub fn new(path: StoragePath) -> Self {
-        Self {
-            path,
-            require_atomic_publish: false,
-            mode: WriteMode::CreateNew,
-        }
-    }
 }
 
 /// Create a backend directory without overwriting file contents.

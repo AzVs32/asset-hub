@@ -9,4 +9,3 @@ pub use capacity::{Capacity, CapacityError, CapacityUnit};
 pub use driver::MemoryDriver;
 pub use error::MemoryDriverError;
 pub use storage::MemoryStorage;
-pub use storage::contract::ContractWriter;

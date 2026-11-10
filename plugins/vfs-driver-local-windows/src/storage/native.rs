@@ -11,21 +11,11 @@ use std::{
     os::windows::io::AsRawHandle,
     ptr,
 };
-use windows_sys::Win32::{
-    Foundation::LocalFree,
-    Security::{
-        ACL,
-        Authorization::{GetSecurityInfo, SE_FILE_OBJECT, SetSecurityInfo},
-        DACL_SECURITY_INFORMATION, GetSecurityDescriptorControl,
-        PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, SE_DACL_PROTECTED,
-        UNPROTECTED_DACL_SECURITY_INFORMATION,
-    },
-    Storage::FileSystem::{
-        DELETE, FILE_DISPOSITION_INFO, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
-        FILE_READ_ATTRIBUTES, FILE_RENAME_INFO, FILE_RENAME_INFO_0, FILE_SHARE_DELETE,
-        FILE_SHARE_READ, FILE_SHARE_WRITE, FileDispositionInfo, FileRenameInfo,
-        GetFinalPathNameByHandleW, SYNCHRONIZE, SetFileInformationByHandle,
-    },
+use windows_sys::Win32::Storage::FileSystem::{
+    DELETE, FILE_DISPOSITION_INFO, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+    FILE_READ_ATTRIBUTES, FILE_RENAME_INFO, FILE_RENAME_INFO_0, FILE_SHARE_DELETE, FILE_SHARE_READ,
+    FILE_SHARE_WRITE, FileDispositionInfo, FileRenameInfo, GetFinalPathNameByHandleW, SYNCHRONIZE,
+    SetFileInformationByHandle,
 };
 
 pub(super) fn open_public(
@@ -175,87 +165,6 @@ pub(super) fn delete(operation: Operation, file: &File) -> Result<(), StorageErr
         } else {
             fs::dispatched_error(operation, io::Error::last_os_error())
         });
-    }
-    Ok(())
-}
-
-struct Descriptor(PSECURITY_DESCRIPTOR);
-impl Drop for Descriptor {
-    fn drop(&mut self) {
-        if !self.0.is_null() {
-            // SAFETY: GetSecurityInfo allocated this descriptor with LocalAlloc.
-            unsafe {
-                LocalFree(self.0);
-            }
-        }
-    }
-}
-
-/// Preserve destination access control before publishing a replacement. Missing
-/// READ_CONTROL/WRITE_DAC rights fail before publication instead of widening access.
-pub(super) fn copy_dacl(
-    operation: Operation,
-    source: &File,
-    staged: &File,
-) -> Result<(), StorageError> {
-    let mut dacl: *mut ACL = ptr::null_mut();
-    let mut descriptor: PSECURITY_DESCRIPTOR = ptr::null_mut();
-    // SAFETY: handles are live and all output pointers reference initialized locals.
-    let result = unsafe {
-        GetSecurityInfo(
-            source.as_raw_handle(),
-            SE_FILE_OBJECT,
-            DACL_SECURITY_INFORMATION,
-            ptr::null_mut(),
-            ptr::null_mut(),
-            &mut dacl,
-            ptr::null_mut(),
-            &mut descriptor,
-        )
-    };
-    let descriptor = Descriptor(descriptor);
-    if result != 0 {
-        return Err(fs::error(
-            operation,
-            io::Error::from_raw_os_error(result as i32),
-        ));
-    }
-    if descriptor.0.is_null() {
-        return Err(StorageError::without_effects(
-            operation,
-            Failure::Backend(BackendFailure::CorruptData),
-            None,
-        ));
-    }
-    let mut control = 0u16;
-    let mut revision = 0u32;
-    // SAFETY: descriptor owns the security descriptor until the function returns.
-    if unsafe { GetSecurityDescriptorControl(descriptor.0, &mut control, &mut revision) } == 0 {
-        return Err(fs::error(operation, io::Error::last_os_error()));
-    }
-    let inheritance = if control & SE_DACL_PROTECTED != 0 {
-        PROTECTED_DACL_SECURITY_INFORMATION
-    } else {
-        UNPROTECTED_DACL_SECURITY_INFORMATION
-    };
-    // SAFETY: dacl is either null (a valid null DACL) or points into the owned
-    // descriptor. The staged handle was opened with WRITE_DAC.
-    let result = unsafe {
-        SetSecurityInfo(
-            staged.as_raw_handle(),
-            SE_FILE_OBJECT,
-            DACL_SECURITY_INFORMATION | inheritance,
-            ptr::null_mut(),
-            ptr::null_mut(),
-            dacl,
-            ptr::null_mut(),
-        )
-    };
-    if result != 0 {
-        return Err(fs::error(
-            operation,
-            io::Error::from_raw_os_error(result as i32),
-        ));
     }
     Ok(())
 }

@@ -11,10 +11,10 @@ use ah_vfs::application::dto::*;
 use ah_vfs::application::port::*;
 use ah_vfs::domain::storage::{
     StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageMoveEntryRequest,
-    StorageRemoveEntryRequest, StorageWriteFileRequest,
+    StorageRemoveEntryRequest,
 };
 use ah_vfs_storage::{Entry, Permissions, StoragePath, XattrName, XattrWriteMode};
-use ah_vfs_storage::{LinkTarget, ReadLinkRequest, ReadRequest, StatRequest, WriteMode};
+use ah_vfs_storage::{LinkTarget, ReadLinkRequest, ReadRequest, StatRequest, WriteRequest};
 use std::{
     collections::HashSet,
     future::Future,
@@ -545,12 +545,14 @@ impl RemoteStorage {
 }
 // When traversal cannot redirect the operand, verify the selected address
 // rather than accepting an arbitrary response for this request.
-fn expected_stat_address(request: &StatRequest, context: &LookupContext) -> Option<StoragePath> {
+fn expected_lookup_address(
+    lookup: ah_vfs_storage::PathLookup<'_>,
+    context: &LookupContext,
+) -> Option<StoragePath> {
     use ah_vfs_storage::{IntermediateSymlinks, LookupStart, PathComponent, SymlinkAction};
-    let operand = request.path();
+    let operand = lookup.path();
     let components = operand.components();
-    if !components.is_empty()
-        && request.lookup().final_symlink() == SymlinkAction::FollowWithinInstance
+    if !components.is_empty() && lookup.final_symlink() == SymlinkAction::FollowWithinInstance
         || components.len() > 1 && context.intermediate_symlinks != IntermediateSymlinks::Reject
     {
         return None;
@@ -625,7 +627,7 @@ impl Storage for RemoteStorage {
                     {
                         return Err(bad_response(op, false));
                     }
-                    if let Some(expected) = expected_stat_address(&request, &context)
+                    if let Some(expected) = expected_lookup_address(request.lookup(), &context)
                         && entry.path() != &expected
                     {
                         return Err(bad_response(op, false));
@@ -822,18 +824,25 @@ impl Storage for RemoteStorage {
     }
     fn write_file(
         &self,
-        r: StorageWriteFileRequest,
+        request: WriteRequest,
+        context: LookupContext,
     ) -> StorageFuture<'_, Box<dyn StorageFileWriter>> {
         Box::pin(async move {
+            self.driver_info
+                .capabilities()
+                .require_write(&request)
+                .map_err(|reason| {
+                    StorageError::without_effects(Operation::Write, Failure::Rejected(reason), None)
+                })?;
             let value = self
                 .resource
                 .runtime
-                .value(Op::Write(p::Write {
-                    handle: self.resource.handle,
-                    path: r.path.as_str().into(),
-                    replace: r.mode == WriteMode::Replace,
-                    atomic: r.require_atomic_publish,
-                }))
+                .value(Op::Write(p::encode_write(
+                    self.resource.handle,
+                    &request,
+                    &context.working_directory,
+                    context.intermediate_symlinks,
+                )))
                 .await
                 .map_err(|error| convert::storage_error(Operation::Write, false, error))?;
             match value {
@@ -846,7 +855,7 @@ impl Storage for RemoteStorage {
                         )
                         .map_err(|error| convert::storage_error(Operation::Write, false, error))?,
                     ),
-                    path: r.path,
+                    path: expected_lookup_address(request.lookup(), &context),
                 })
                     as Box<dyn StorageFileWriter>),
                 _ => Err(bad_response(Operation::Write, false)),
@@ -906,7 +915,7 @@ impl StorageFileReader for RemoteReader {
 }
 struct RemoteWriter {
     resource: Option<Resource>,
-    path: StoragePath,
+    path: Option<StoragePath>,
 }
 impl StorageFileWriter for RemoteWriter {
     fn write_chunk<'a>(&'a mut self, data: &'a [u8]) -> StorageFuture<'a, ()> {
@@ -959,7 +968,10 @@ impl StorageFileWriter for RemoteWriter {
                         convert::decode_entry(Operation::Write, entry).map_err(|source| {
                             convert::response_error(Operation::Write, true, source)
                         })?;
-                    if entry.path() != &self.path {
+                    if self.path.as_ref().is_some_and(|path| entry.path() != path)
+                        || entry.path().is_root()
+                        || !matches!(entry.entry_type(), ah_vfs_storage::EntryType::File { .. })
+                    {
                         return Err(bad_response(Operation::Write, true));
                     }
                     Ok(entry)

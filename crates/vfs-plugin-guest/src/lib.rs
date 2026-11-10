@@ -8,7 +8,7 @@ pub mod api {
     use super::*;
     pub use crate::error::Failure;
     pub use crate::error_context::ErrorContext;
-    pub use crate::lookup::{direct_lookup, direct_stat};
+    pub use crate::lookup::{direct_lookup, direct_stat, direct_write_destination};
     pub type Result<T> = std::result::Result<T, Failure>;
     pub trait Guest {
         fn describe() -> p::Description;
@@ -30,7 +30,12 @@ pub mod api {
             working_directory: ah_vfs_storage::StoragePath,
             intermediate_symlinks: ah_vfs_storage::IntermediateSymlinks,
         ) -> Result<Reader>;
-        fn write(&self, path: String, replace: bool, atomic: bool) -> Result<Writer>;
+        fn write(
+            &self,
+            request: ah_vfs_storage::WriteRequest,
+            working_directory: ah_vfs_storage::StoragePath,
+            intermediate_symlinks: ah_vfs_storage::IntermediateSymlinks,
+        ) -> Result<Writer>;
     }
     pub trait GuestReader {
         fn next(&self) -> Result<Option<Vec<u8>>>;
@@ -263,16 +268,18 @@ impl<D: api::Guest> Dispatcher<D> {
                     handle: self.insert(Resource::Reader(reader)),
                 })
             }
-            Op::Write(p::Write {
-                handle,
-                path,
-                replace,
-                atomic,
-            }) => {
+            Op::Write(write) => {
+                let handle = write.handle;
+                let (request, base, links) = p::decode_write(write)
+                    .map_err(|_| p::Failure::new(p::FailureCode::InvalidRequest))?;
+                p::decode_capabilities(&D::describe().capabilities)
+                    .map_err(|cause| context.failure(ah_vfs_storage::Failure::Contract(cause)))?
+                    .require_write(&request)
+                    .map_err(|reason| context.failure(ah_vfs_storage::Failure::Rejected(reason)))?;
                 self.capacity(&context)?;
                 let writer = self
                     .storage(&context, handle)?
-                    .write(path, replace, atomic)?;
+                    .write(request, base, links)?;
                 Value::Writer(p::Handle {
                     handle: self.insert(Resource::Writer(writer)),
                 })

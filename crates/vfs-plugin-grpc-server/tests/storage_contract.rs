@@ -158,6 +158,7 @@ impl Fixture {
             tx,
             replies,
             handle: opened.handle,
+            writer: None,
         })
     }
 
@@ -207,21 +208,13 @@ impl Session {
         }
         Ok(())
     }
-    async fn begin(&mut self, path: &str, mode: wire::WriteMode) -> TestResult {
-        self.unit(write(path, mode)).await
-    }
-    async fn stage(&mut self, bytes: &[u8]) -> TestResult {
-        self.unit(Action::Stage(bytes.to_vec())).await
-    }
-    async fn commit(&mut self) -> TestResult<d::Entry> {
-        self.entry(Action::Commit(wire::Unit {})).await
-    }
 }
 
 struct FormalSession {
     tx: mpsc::Sender<p::Request>,
     replies: Streaming<p::Reply>,
     handle: u64,
+    writer: Option<u64>,
 }
 impl FormalSession {
     async fn call(&mut self, operation: p::StorageOp) -> TestResult<p::Reply> {
@@ -233,10 +226,19 @@ impl FormalSession {
     }
 
     async fn invoke(&mut self, operation: p::Operation) -> TestResult<p::Reply> {
+        self.invoke_with_data(operation, vec![]).await
+    }
+
+    async fn invoke_with_data(
+        &mut self,
+        operation: p::Operation,
+        data: Vec<u8>,
+    ) -> TestResult<p::Reply> {
         // Deliberately let the server validate even malformed test requests.
         self.tx
             .send(p::Request {
                 operation: Some(operation),
+                data,
                 ..Default::default()
             })
             .await?;
@@ -272,6 +274,55 @@ impl FormalSession {
             }
             _ => Err("expected formal read chunk or EOF".into()),
         }
+    }
+
+    async fn begin(&mut self, path: &str, mode: d::WriteMode) -> TestResult {
+        let reply = self.invoke(write(self.handle, path, mode)?).await?;
+        let Some(p::Value::Writer(handle)) = reply.result else {
+            return Err("expected writer".into());
+        };
+        self.writer = Some(handle.handle);
+        Ok(())
+    }
+    async fn stage_reply(&mut self, bytes: &[u8]) -> TestResult<p::Reply> {
+        let handle = self.writer.ok_or("missing writer")?;
+        self.invoke_with_data(
+            p::Operation::WriterChunk(p::Handle { handle }),
+            bytes.to_vec(),
+        )
+        .await
+    }
+    async fn stage(&mut self, bytes: &[u8]) -> TestResult {
+        if !matches!(
+            self.stage_reply(bytes).await?.result,
+            Some(p::Value::Unit(_))
+        ) {
+            return Err("expected stage acknowledgement".into());
+        }
+        Ok(())
+    }
+    async fn commit_reply(&mut self) -> TestResult<p::Reply> {
+        let handle = self.writer.take().ok_or("missing writer")?;
+        self.invoke(p::Operation::Commit(p::Handle { handle }))
+            .await
+    }
+    async fn commit(&mut self) -> TestResult<d::Entry> {
+        let Some(p::Value::Entry(entry)) = self.commit_reply().await?.result else {
+            return Err("expected commit metadata".into());
+        };
+        Ok(p::decode_entry(entry)?)
+    }
+    async fn abort(&mut self) -> TestResult {
+        let handle = self.writer.take().ok_or("missing writer")?;
+        if !matches!(
+            self.invoke(p::Operation::Abort(p::Handle { handle }))
+                .await?
+                .result,
+            Some(p::Value::Unit(_))
+        ) {
+            return Err("expected abort acknowledgement".into());
+        }
+        Ok(())
     }
 
     async fn stat_entry(&mut self, op: p::StorageOp) -> TestResult<d::Entry> {
@@ -328,12 +379,13 @@ fn rmdir(path: &str) -> Action {
         kind: wire::RemoveKind::EmptyDirectory.into(),
     })
 }
-fn write(path: &str, mode: wire::WriteMode) -> Action {
-    Action::BeginWrite(wire::Write {
-        path: path.into(),
-        mode: mode.into(),
-        publication: wire::Publication::Atomic.into(),
-    })
+fn write(handle: u64, path: &str, mode: d::WriteMode) -> TestResult<p::Operation> {
+    Ok(p::Operation::Write(p::encode_write(
+        handle,
+        &d::WriteRequest::new(d::PathExpr::parse(path)?, mode, d::Publication::Atomic),
+        &d::StoragePath::root(),
+        d::IntermediateSymlinks::FollowWithinInstance,
+    )))
 }
 fn select(path: &str, page_size: u32) -> Action {
     Action::SelectDirectory(wire::List {
@@ -478,12 +530,12 @@ async fn formal_lookup_preserves_policy_instance_and_link_bytes() -> TestResult 
         d::Failure::Backend(d::BackendFailure::UnrepresentableLinkTarget),
     )?;
 
-    rejected(
-        operations
-            .call(write("root-link/..", wire::WriteMode::Replace))
+    formal_failure(
+        formal
+            .invoke(write(formal.handle, "root-link/..", d::WriteMode::Replace)?)
             .await?,
         d::Operation::Write,
-        d::Rejection::RootProtected,
+        d::Failure::Rejected(d::Rejection::RootProtected),
     )?;
     rejected(
         operations
@@ -496,11 +548,9 @@ async fn formal_lookup_preserves_policy_instance_and_link_bytes() -> TestResult 
     )?;
     assert_eq!(fixture.storage.used_bytes(), 0);
 
-    operations
-        .begin("docs/file", wire::WriteMode::CreateNew)
-        .await?;
-    operations.stage(b"scoped read").await?;
-    operations.commit().await?;
+    formal.begin("docs/file", d::WriteMode::CreateNew).await?;
+    formal.stage(b"scoped read").await?;
+    formal.commit().await?;
     let read = p::encode_read(
         formal.handle,
         &d::ReadRequest::new(d::PathExpr::parse("../file")?, d::ReadRange::FULL),
@@ -625,10 +675,11 @@ async fn listing_checks_separate_binding_and_rejects_replaced_directory() -> Tes
 #[tokio::test]
 async fn staging_releases_resources_and_commit_revalidates_slot_and_parent() -> TestResult {
     let fixture = Fixture::new(24).await?;
-    let mut first = fixture.session().await?;
-    let mut second = fixture.session().await?;
+    let mut first = fixture.formal_session().await?;
+    let mut second = fixture.formal_session().await?;
+    let mut operations = fixture.session().await?;
     let mut formal = fixture.formal_session().await?;
-    first.begin("/file", wire::WriteMode::CreateNew).await?;
+    first.begin("/file", d::WriteMode::CreateNew).await?;
     first.stage(b"old").await?;
     stat_failure(
         formal.call(stat("file", true)).await?,
@@ -643,20 +694,20 @@ async fn staging_releases_resources_and_commit_revalidates_slot_and_parent() -> 
         d::Failure::Rejected(d::Rejection::NotDirectory),
     )?;
 
-    first.begin("file", wire::WriteMode::Replace).await?;
+    first.begin("file", d::WriteMode::Replace).await?;
     first.stage(b"staged").await?;
     let retained = formal.read("/file", d::ReadRange::FULL).await?;
-    second.begin("file", wire::WriteMode::Replace).await?;
+    second.begin("file", d::WriteMode::Replace).await?;
     second.stage(b"winner").await?;
     second.stage(b"!").await?;
     assert_eq!(
         second.commit().await?.entry_type(),
         d::EntryType::file(Some(7))
     );
-    rejected(
-        first.call(Action::Commit(wire::Unit {})).await?,
+    formal_failure(
+        first.commit_reply().await?,
         d::Operation::Write,
-        d::Rejection::Conflict,
+        d::Failure::Rejected(d::Rejection::Conflict),
     )?;
     assert_eq!(
         formal.stat_entry(stat("file", true)).await?.entry_type(),
@@ -676,45 +727,41 @@ async fn staging_releases_resources_and_commit_revalidates_slot_and_parent() -> 
     }
     assert_eq!(fixture.storage.used_bytes(), 7);
 
-    second.entry(mkdir("parent", false)).await?;
-    first
-        .begin("parent/child", wire::WriteMode::CreateNew)
-        .await?;
+    operations.entry(mkdir("parent", false)).await?;
+    first.begin("parent/child", d::WriteMode::CreateNew).await?;
     first.stage(b"private").await?;
-    second.unit(rmdir("parent")).await?;
-    second.entry(mkdir("parent", false)).await?;
-    rejected(
-        first.call(Action::Commit(wire::Unit {})).await?,
+    operations.unit(rmdir("parent")).await?;
+    operations.entry(mkdir("parent", false)).await?;
+    formal_failure(
+        first.commit_reply().await?,
         d::Operation::Write,
-        d::Rejection::Conflict,
+        d::Failure::Rejected(d::Rejection::Conflict),
     )?;
     stat_failure(
         formal.call(stat("parent/child", true)).await?,
         d::Failure::Rejected(d::Rejection::NotFound),
     )?;
 
-    first.begin("abort", wire::WriteMode::CreateNew).await?;
+    first.begin("abort", d::WriteMode::CreateNew).await?;
     first.stage(b"private").await?;
-    first.unit(Action::Abort(wire::Unit {})).await?;
+    first.abort().await?;
     assert_eq!(fixture.storage.used_bytes(), 7);
 
-    first.begin("overflow", wire::WriteMode::CreateNew).await?;
+    first.begin("overflow", d::WriteMode::CreateNew).await?;
     first.stage(b"private").await?;
-    error(
-        first.call(Action::Stage(vec![0; 24])).await?,
+    formal_failure(
+        first.stage_reply(&[0; 24]).await?,
         d::Operation::Write,
         d::Failure::Backend(d::BackendFailure::CapacityExceeded),
-        d::MutationOutcome::Unchanged,
     )?;
-    error(
-        first.call(Action::Commit(wire::Unit {})).await?,
+    formal_failure(
+        first.commit_reply().await?,
         d::Operation::Write,
         d::Failure::Backend(d::BackendFailure::Closed),
-        d::MutationOutcome::Unchanged,
     )?;
     assert_eq!(fixture.storage.used_bytes(), 7);
 
-    first.begin("dropped", wire::WriteMode::CreateNew).await?;
+    first.begin("dropped", d::WriteMode::CreateNew).await?;
     first.stage(b"private").await?;
     assert_eq!(fixture.storage.used_bytes(), 14);
     drop(first);
@@ -725,7 +772,9 @@ async fn staging_releases_resources_and_commit_revalidates_slot_and_parent() -> 
     )?;
 
     error(
-        second.call(mkdir("created/../file/child", true)).await?,
+        operations
+            .call(mkdir("created/../file/child", true))
+            .await?,
         d::Operation::CreateDirectory,
         d::Failure::Rejected(d::Rejection::NotDirectory),
         d::MutationOutcome::Unknown,
