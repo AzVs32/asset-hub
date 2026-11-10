@@ -4,8 +4,8 @@ use ah_vfs_storage::{
     WriteSupport,
 };
 use std::error::Error;
-use vfs_plugin_codec::{capabilities, decode_capabilities};
-use vfs_plugin_protocol::Capability;
+use vfs_plugin_codec::decode_capabilities;
+use vfs_plugin_protocol::{self as p, Capability};
 
 #[test]
 fn contradictory_wire_capabilities_fail_before_constructing_a_declaration()
@@ -49,7 +49,7 @@ fn valid_capabilities_round_trip_and_unknown_optional_values_do_not_enable_featu
             .with_rename(RenameSupport::Both)
             .with_permissions(AttributeSupport::ReadWrite)
             .with_xattrs(AttributeSupport::Read);
-        let mut wire = capabilities(declared);
+        let mut wire = p::encode_capabilities(declared);
         wire.push(i32::MAX);
         assert_eq!(decode_capabilities(&wire)?, declared);
     }

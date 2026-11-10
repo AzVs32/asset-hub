@@ -2978,15 +2978,17 @@ version = "0.1.0"
 dependencies = [
  "ah-config",
  "ah-vfs",
+ "ah-vfs-storage",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror",
  "tokio",
  "url",
+ "vfs-driver-memory",
  "vfs-plugin-grpc",
+ "vfs-plugin-grpc-server",
  "vfs-plugin-host",
- "vfs-plugin-protocol",
  "vfs-plugin-wasm",
 ]
 

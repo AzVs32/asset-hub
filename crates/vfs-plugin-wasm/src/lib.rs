@@ -18,8 +18,8 @@ use std::{
 };
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
 use vfs_plugin_host::{
-    ConnectFuture, OpenFuture, OpenedStorage, Transport, TransportFactory, TransportFuture,
-    convert as c,
+    ConnectFuture, OpenFuture, OpenedStorage, SessionTransport, Transport, TransportFactory,
+    TransportFuture, convert as c,
 };
 use vfs_plugin_protocol::{self as p, Operation as Op, Value};
 use wasmtime::component::ResourceTable;
@@ -272,24 +272,6 @@ impl State {
                 ))
         {
             self.resources.remove(handle);
-            // Guests close failed/finished readers; release is also idempotent for
-            // other implementations and never reopens or advances a stream.
-            if !self.faulted
-                && result.as_ref().err().is_none_or(|error| {
-                    error.storage_error().is_none_or(|error| {
-                        error.failure() != Failure::Backend(BackendFailure::Stale)
-                    })
-                })
-            {
-                self.invoke(
-                    &Op::Release(p::ResourceRef {
-                        kind: p::ResourceKind::Reader as i32,
-                        handle: *handle,
-                    }),
-                    vec![],
-                )
-                .await?;
-            }
         }
         let mut reply = result?;
         match reply.result.as_mut().ok_or_else(c::protocol_violation)? {
@@ -563,10 +545,7 @@ impl TransportFactory for WasmTransport {
         })
     }
 }
-impl Transport for ControlTransport {
-    fn host_capabilities(&self) -> &[&str] {
-        &self.factory.capabilities
-    }
+impl SessionTransport for ControlTransport {
     fn disconnected(&self) -> Option<Arc<AtomicBool>> {
         Some(self.instance.disconnected.clone())
     }
@@ -593,8 +572,13 @@ impl Transport for ControlTransport {
             Ok(reply)
         })
     }
-    fn open_session<'a>(&'a self, generation: &'a str, open: p::Open) -> Option<OpenFuture<'a>> {
-        Some(Box::pin(async move {
+}
+impl Transport for ControlTransport {
+    fn host_capabilities(&self) -> &[&str] {
+        &self.factory.capabilities
+    }
+    fn open_session(self: Arc<Self>, generation: &str, open: p::Open) -> OpenFuture<'_> {
+        Box::pin(async move {
             if self.instance.disconnected.load(Ordering::Acquire) {
                 return Err(LifecycleError::new(LifecycleFailure::Stale).into());
             }
@@ -676,14 +660,14 @@ impl Transport for ControlTransport {
                     _factory: self.factory.clone(),
                 }),
             })
-        }))
+        })
     }
 }
 struct StorageTransport {
     instance: Instance,
     _factory: Arc<InstanceFactory>,
 }
-impl Transport for StorageTransport {
+impl SessionTransport for StorageTransport {
     fn disconnected(&self) -> Option<Arc<AtomicBool>> {
         Some(self.instance.disconnected.clone())
     }

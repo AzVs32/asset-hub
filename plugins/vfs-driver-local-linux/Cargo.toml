@@ -17,11 +17,9 @@ panic = "warn"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 ah-vfs-storage = { path = "../../crates/ah-vfs-storage", version = "0.1.0" }
-ah-id = { version = "0.1.0", features = ["uuid_v7"] }
 ah-vfs = { path = "../../crates/ah-vfs", version = "0.1.0" }
 vfs-plugin-grpc-server = { path = "../../crates/vfs-plugin-grpc-server", version = "0.1.0" }
 cap-std = "3.4.6"
-cap-fs-ext = "3.4.6"
 rustix = { version = "1.1.5", features = ["fs"] }
 semver = "1.0.28"
 serde_json = "1.0.154"

@@ -16,7 +16,6 @@ ah-vfs = { path = "../ah-vfs", version = "0.1.0" }
 vfs-plugin-host = { path = "../vfs-plugin-host", version = "0.1.0" }
 vfs-plugin-grpc = { path = "../vfs-plugin-grpc", version = "0.1.0" }
 vfs-plugin-wasm = { path = "../vfs-plugin-wasm", version = "0.1.0" }
-vfs-plugin-protocol = { path = "../vfs-plugin-protocol", version = "0.1.0" }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 thiserror.workspace = true
@@ -24,4 +23,8 @@ tokio = { version = "1.54.1", features = ["fs", "rt"] }
 url = "2.5.8"
 
 [dev-dependencies]
+ah-vfs-storage = { path = "../ah-vfs-storage", version = "0.1.0" }
+vfs-driver-memory = { path = "../vfs-driver-memory", version = "0.1.0" }
+vfs-plugin-grpc-server = { path = "../vfs-plugin-grpc-server", version = "0.1.0" }
+tokio = { version = "1.54.1", features = ["net", "sync"] }
 tempfile = "3.27.0"

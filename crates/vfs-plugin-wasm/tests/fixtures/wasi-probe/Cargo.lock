@@ -554,6 +554,7 @@ dependencies = [
 name = "wasi-probe"
 version = "0.1.0"
 dependencies = [
+ "ah-vfs-storage",
  "http",
  "vfs-plugin-guest",
  "vfs-plugin-protocol",

@@ -13,32 +13,28 @@ std::thread_local! {
 }
 struct Driver;
 impl Guest for Driver {
-    fn describe() -> p::Description {
-        p::Description {
-            major: p::PROTOCOL_MAJOR,
-            minor: p::PROTOCOL_MINOR,
+    fn describe() -> Description {
+        Description {
             required_features: vec![],
-            features: p::PROTOCOL_FEATURES.iter().map(|v| (*v).into()).collect(),
             required_host_capabilities: vec![],
-            instance_schema_profile: p::INSTANCE_SCHEMA_PROFILE.into(),
-            generation: String::new(),
             key: "fixture".into(),
             name: "Fixture".into(),
             version: "1.0.0".into(),
             child_mounts: true,
-            capabilities: [
-                p::Capability::Stat,
-                p::Capability::WriteNew,
-                p::Capability::RangeRead,
-            ]
-            .into_iter()
-            .chain(
-                DECLARE_ATTRIBUTES
-                    .with(Cell::get)
-                    .then_some(p::Capability::PermissionsRead),
-            )
-            .map(Into::into)
-            .collect(),
+            capabilities: ah_vfs_storage::Capabilities::default()
+                .with_stat(true)
+                .with_read_link(true)
+                .with_read(ah_vfs_storage::ReadSupport::Range)
+                .with_write(ah_vfs_storage::WriteSupport::staged(
+                    ah_vfs_storage::WriteModes::CreateNew,
+                    false,
+                ))
+                .with_permissions(if DECLARE_ATTRIBUTES.with(Cell::get) {
+                    AttributeSupport::Read
+                } else {
+                    AttributeSupport::None
+                }),
+
             settings_schema: None,
             instance_schema: None,
             config_version: 1,
@@ -74,35 +70,41 @@ impl Guest for Driver {
         }))
     }
 }
-fn entry(size: u64) -> p::Entry {
-    p::Entry {
-        path: "file".into(),
-        kind: p::EntryKind::File as i32,
-        size: Some(size),
-        modified: None,
-    }
+fn entry(size: u64) -> Result<ah_vfs_storage::Entry> {
+    let path =
+        StoragePath::parse("file").map_err(|_| p::Failure::new(p::FailureCode::InvalidRequest))?;
+    ah_vfs_storage::Entry::new(path, ah_vfs_storage::EntryType::file(Some(size)), None)
+        .map_err(|_| p::Failure::new(p::FailureCode::InvalidRequest).into())
 }
 struct Store {
     attributes: bool,
     fail: bool,
 }
 impl GuestStorage for Store {
-    fn info(&self) -> p::StorageInfo {
-        p::StorageInfo { chunk_size: 65536 }
+    fn chunk_size(&self) -> std::num::NonZeroUsize {
+        std::num::NonZeroUsize::new(65536).unwrap_or(std::num::NonZeroUsize::MIN)
     }
     fn attributes(&self) -> Option<&dyn GuestAttributes> {
         self.attributes.then_some(self)
     }
-    fn call(&self, request: p::StorageOp, _: Vec<u8>) -> Result<p::Reply> {
-        match request {
-            p::StorageOp::Stat(_) => Ok(p::Reply::new(Value::Entry(entry(0)))),
-            _ => Err(StorageError::without_effects(
-                request.storage_operation(),
-                Failure::Rejected(Rejection::Unsupported),
-                None,
-            )
-            .into()),
-        }
+    fn stat(
+        &self,
+        request: &ah_vfs_storage::StatRequest,
+        base: &StoragePath,
+        links: IntermediateSymlinks,
+    ) -> Result<ah_vfs_storage::Entry> {
+        direct_stat(request, base, links, |_| entry(0))
+    }
+    fn read_link(
+        &self,
+        request: &ah_vfs_storage::ReadLinkRequest,
+        base: &StoragePath,
+        links: IntermediateSymlinks,
+    ) -> Result<ah_vfs_storage::LinkTarget> {
+        assert_eq!(request.path().to_string(), "../opaque");
+        assert_eq!(base.as_str(), "work/sub");
+        assert_eq!(links, IntermediateSymlinks::Reject);
+        Ok(ah_vfs_storage::LinkTarget::new(vec![0xff, b'/']))
     }
     fn read(
         &self,
@@ -165,7 +167,7 @@ impl GuestWriter for Output {
         self.bytes.borrow_mut().extend(data);
         Ok(())
     }
-    fn commit(&self) -> Result<p::Entry> {
+    fn commit(&self) -> Result<ah_vfs_storage::Entry> {
         COMMITS.with(|v| v.set(v.get() + 1));
         if self.fail {
             Err(StorageError::after_dispatch(
@@ -175,7 +177,7 @@ impl GuestWriter for Output {
             )
             .into())
         } else {
-            Ok(entry(self.bytes.borrow().len() as u64))
+            entry(self.bytes.borrow().len() as u64)
         }
     }
     fn abort(&self) -> Result<()> {
@@ -260,7 +262,7 @@ fn metadata_and_commit_are_tagged_protobuf_results() -> TestResult {
     assert_eq!(COMMITS.with(Cell::get), 0);
     assert_eq!(
         call(&mut dispatcher, Op::Commit(p::Handle { handle }), vec![])?.into_value()?,
-        Value::Entry(entry(3))
+        Value::Entry(p::encode_entry(&entry(3)?)?)
     );
     assert_eq!(COMMITS.with(Cell::get), 1);
     let repeated = p::encode_request("generation", &Op::Commit(p::Handle { handle }), vec![])?;
@@ -423,33 +425,58 @@ fn readers_binary_data_and_generation_checks_do_not_rebind_resources() -> TestRe
     Ok(())
 }
 #[test]
-fn capacity_is_checked_before_open_and_released_ids_are_not_reused() -> TestResult {
+fn each_store_has_one_storage_and_released_reader_ids_are_not_reused() -> TestResult {
     let mut dispatcher = setup()?;
-    for _ in 0..p::MAX_RESOURCES {
-        open(&mut dispatcher, false)?;
+    let storage = open(&mut dispatcher, false)?;
+    assert_eq!(storage, 1);
+    let second_open = Op::Open(p::Open {
+        id: "other".into(),
+        config: Some(p::Object::new()),
+    });
+    let bytes = p::encode_request("generation", &second_open, vec![])?;
+    assert_eq!(
+        p::decode_reply(&dispatcher.call(&bytes))?,
+        Err(p::Failure::new(p::FailureCode::InvalidRequest))
+    );
+    assert_eq!(OPENS.with(Cell::get), 1);
+    let read = Op::Read(p::encode_read(
+        storage,
+        &ah_vfs_storage::ReadRequest::new(
+            PathExpr::parse("/file")?,
+            ah_vfs_storage::ReadRange::FULL,
+        ),
+        &StoragePath::root(),
+        IntermediateSymlinks::FollowWithinInstance,
+    ));
+    for id in 2..=p::MAX_RESOURCES as u64 {
+        assert_eq!(
+            call(&mut dispatcher, read.clone(), vec![])?.into_value()?,
+            Value::Reader(p::Handle { handle: id })
+        );
     }
-    let request = p::encode_request(
-        "generation",
-        &Op::Open(p::Open {
-            id: "one".into(),
-            config: Some(p::Object::new()),
+    let request = p::encode_request("generation", &read, vec![])?;
+    assert_eq!(
+        p::decode_reply(&dispatcher.call(&request))?,
+        Err(storage_failure(StorageError::without_effects(
+            Operation::Read,
+            Failure::Backend(BackendFailure::CapacityExceeded),
+            None,
+        )))
+    );
+    call(
+        &mut dispatcher,
+        Op::Release(p::ResourceRef {
+            kind: p::ResourceKind::Reader.into(),
+            handle: 2,
         }),
         vec![],
     )?;
     assert_eq!(
-        p::decode_reply(&dispatcher.call(&request))?,
-        Err(p::Failure::new(p::FailureCode::LifecycleCapacityExceeded))
+        call(&mut dispatcher, read, vec![])?.into_value()?,
+        Value::Reader(p::Handle {
+            handle: p::MAX_RESOURCES as u64 + 1,
+        })
     );
-    assert_eq!(OPENS.with(Cell::get), p::MAX_RESOURCES);
-    call(
-        &mut dispatcher,
-        Op::Release(p::ResourceRef {
-            kind: p::ResourceKind::Storage as i32,
-            handle: 1,
-        }),
-        vec![],
-    )?;
-    assert_eq!(open(&mut dispatcher, false)?, p::MAX_RESOURCES as u64 + 1);
     assert_eq!(
         p::decode_reply(&dispatcher.call(b"{\"operation\":\"describe\"}"))?,
         Err(p::Failure::new(p::FailureCode::InvalidRequest))
@@ -472,6 +499,28 @@ fn missing_open_configuration_is_invalid_request_without_opening_storage() -> Te
 
 fn storage_failure(error: StorageError) -> p::Failure {
     vfs_plugin_guest::api::Failure::from(error).into()
+}
+
+#[test]
+fn read_link_uses_the_typed_guest_port_and_preserves_opaque_bytes() -> TestResult {
+    let mut dispatcher = setup()?;
+    let storage = open(&mut dispatcher, false)?;
+    let request = ah_vfs_storage::ReadLinkRequest::new(PathExpr::parse("../opaque")?);
+    let reply = call(
+        &mut dispatcher,
+        Op::Storage(p::StorageCall {
+            handle: storage,
+            operation: Some(p::StorageOp::ReadLink(p::encode_read_link(
+                &request,
+                &StoragePath::parse("work/sub")?,
+                IntermediateSymlinks::Reject,
+            ))),
+        }),
+        vec![],
+    )?;
+    assert!(matches!(reply.result, Some(Value::Bytes(_))));
+    assert_eq!(reply.data, [0xff, b'/']);
+    Ok(())
 }
 
 #[test]

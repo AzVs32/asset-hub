@@ -12,7 +12,9 @@ use std::{
     },
     time::{Duration, UNIX_EPOCH},
 };
-use vfs_plugin_host::{PluginDriver, Transport, TransportFuture, convert};
+use vfs_plugin_host::{
+    OpenFuture, OpenedStorage, PluginDriver, SessionTransport, Transport, TransportFuture, convert,
+};
 use vfs_plugin_protocol::{self as p, Operation as Op, Value};
 type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 enum Fault {
@@ -57,6 +59,20 @@ impl vfs_plugin_host::TransportFactory for Peer {
     }
 }
 impl Transport for Peer {
+    fn open_session(self: Arc<Self>, generation: &str, _: p::Open) -> OpenFuture<'_> {
+        Box::pin(async move {
+            Ok(OpenedStorage {
+                transport: self,
+                generation: generation.into(),
+                storage: p::Storage {
+                    handle: 1,
+                    info: Some(p::StorageInfo { chunk_size: 65536 }),
+                },
+            })
+        })
+    }
+}
+impl SessionTransport for Peer {
     fn call<'a>(&'a self, _generation: &'a str, op: Op, _data: Vec<u8>) -> TransportFuture<'a> {
         Box::pin(async move {
             Ok(p::Reply::new(match op {
@@ -89,10 +105,6 @@ impl Transport for Peer {
                     }
                     .into(),
                 ),
-                Op::Open(_) => Value::Storage(p::Storage {
-                    handle: 1,
-                    info: Some(p::StorageInfo { chunk_size: 65536 }),
-                }),
                 Op::Storage(call) => match call.operation {
                     Some(p::StorageOp::SelectDirectory(_)) => {
                         Value::SelectedDirectory(p::DirectorySelection {
@@ -321,7 +333,7 @@ fn timestamps_and_unknown_error_codes_preserve_boundary_semantics() -> Result {
     assert_eq!(caps, Capabilities::default());
     let caps = caps.with_stat(true);
     assert_eq!(
-        convert::decode_capabilities(&convert::capabilities(caps))?,
+        convert::decode_capabilities(&p::encode_capabilities(caps))?,
         caps
     );
     Ok(())

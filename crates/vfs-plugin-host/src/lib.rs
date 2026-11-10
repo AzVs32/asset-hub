@@ -36,29 +36,31 @@ pub trait TransportFactory: Send + Sync {
 }
 /// A Storage owns an independent transport and resource generation.
 pub struct OpenedStorage {
-    pub transport: Arc<dyn Transport>,
+    pub transport: Arc<dyn SessionTransport>,
     pub generation: String,
     pub storage: p::Storage,
 }
 pub type OpenFuture<'a> =
     Pin<Box<dyn Future<Output = Result<OpenedStorage, DriverError>> + Send + 'a>>;
-pub trait Transport: Send + Sync {
-    /// A permanent status token for this connection incarnation. A later
-    /// reconnect publishes another token and can never revive existing handles.
+/// Calls associated with a single transport incarnation. A storage session
+/// accepts only resource requests and cannot open another instance.
+pub trait SessionTransport: Send + Sync {
+    /// A later reconnect publishes a different token and cannot revive handles.
     fn disconnected(&self) -> Option<Arc<AtomicBool>> {
         None
     }
-    fn open_session<'a>(&'a self, _generation: &'a str, _open: p::Open) -> Option<OpenFuture<'a>> {
-        None
-    }
+    fn call<'a>(&'a self, generation: &'a str, operation: Op, data: Vec<u8>)
+    -> TransportFuture<'a>;
+}
 
-    /// Services this execution environment supplies to guest code. Native RPC
-    /// plugins own their process resources and do not import host services.
+/// Control requests and the only entry point for opening an instance session.
+pub trait Transport: SessionTransport {
+    fn open_session(self: Arc<Self>, generation: &str, open: p::Open) -> OpenFuture<'_>;
+
+    /// Native RPC plugins own their process resources and have no host imports.
     fn host_capabilities(&self) -> &[&str] {
         &[]
     }
-    fn call<'a>(&'a self, generation: &'a str, operation: Op, data: Vec<u8>)
-    -> TransportFuture<'a>;
 }
 
 fn connection_failure(error: &DriverError) -> bool {
@@ -78,16 +80,16 @@ fn connection_failure(error: &DriverError) -> bool {
     })
 }
 
-struct Runtime {
-    transport: Arc<dyn Transport>,
+struct Runtime<T: SessionTransport + ?Sized = dyn SessionTransport> {
+    transport: Arc<T>,
     generation: String,
     resources: Mutex<HashSet<(p::ResourceKind, u64)>>,
     disconnected: Option<Arc<AtomicBool>>,
     executor: Option<tokio::runtime::Handle>,
     stale: AtomicBool,
 }
-impl Runtime {
-    fn new(transport: Arc<dyn Transport>, generation: String) -> Arc<Self> {
+impl<T: SessionTransport + ?Sized> Runtime<T> {
+    fn new(transport: Arc<T>, generation: String) -> Arc<Self> {
         Arc::new(Self {
             disconnected: transport.disconnected(),
             executor: tokio::runtime::Handle::try_current().ok(),
@@ -274,44 +276,39 @@ impl Driver for PluginDriver {
                     id: context.instance_id().as_str().into(),
                     config: Some(context.config().clone().into_object().into()),
                 };
-                let (runtime, storage) = if let Some(open) = runtime
+                let opened = match runtime
                     .transport
-                    .open_session(&runtime.generation, request.clone())
+                    .clone()
+                    .open_session(&runtime.generation, request)
+                    .await
                 {
-                    let opened = match open.await {
-                        Ok(opened) => opened,
-                        Err(error) => {
-                            if runtime.is_stale()
-                                || error
-                                    .lifecycle_error()
-                                    .is_some_and(|error| error.failure() == LifecycleFailure::Stale)
-                            {
-                                runtime.stale.store(true, Ordering::Release);
-                            }
-                            if attempt == 0 && connection_failure(&error) {
-                                attempt += 1;
-                                continue;
-                            }
-                            return Err(error);
+                    Ok(opened) => opened,
+                    Err(error) => {
+                        if runtime.is_stale()
+                            || error
+                                .lifecycle_error()
+                                .is_some_and(|error| error.failure() == LifecycleFailure::Stale)
+                        {
+                            runtime.stale.store(true, Ordering::Release);
                         }
-                    };
-                    (
-                        Runtime::new(opened.transport, opened.generation),
-                        opened.storage,
-                    )
-                } else {
-                    let Value::Storage(storage) = runtime.value(Op::Open(request)).await? else {
-                        return Err(convert::protocol_violation());
-                    };
-                    (runtime, storage)
+                        if attempt == 0 && connection_failure(&error) {
+                            attempt += 1;
+                            continue;
+                        }
+                        return Err(error);
+                    }
                 };
+                let runtime = Runtime::new(opened.transport, opened.generation);
                 let p::Storage {
                     handle,
                     info: Some(info),
-                } = storage
+                } = opened.storage
                 else {
                     return Err(convert::protocol_violation());
                 };
+                if handle != 1 {
+                    return Err(convert::protocol_violation());
+                }
                 let resource = Resource::new(runtime, p::ResourceKind::Storage, handle)?;
                 let chunk_size = NonZeroUsize::new(info.chunk_size as usize)
                     .filter(|size| size.get() <= p::MAX_DATA_BYTES)
@@ -333,11 +330,11 @@ struct RemoteInstances {
     connection: Arc<tokio::sync::Mutex<Connection>>,
 }
 struct Connection {
-    runtime: Arc<Runtime>,
+    runtime: Arc<Runtime<dyn Transport>>,
     settings: Option<p::Object>,
 }
 impl RemoteInstances {
-    async fn runtime(&self) -> Result<Arc<Runtime>, DriverError> {
+    async fn runtime(&self) -> Result<Arc<Runtime<dyn Transport>>, DriverError> {
         let connection = self.connection.lock().await;
         if !connection.runtime.is_stale() {
             return Ok(connection.runtime.clone());
@@ -348,7 +345,7 @@ impl RemoteInstances {
     async fn value(&self, op: Op) -> Result<Value, DriverError> {
         self.runtime().await?.value(op).await
     }
-    async fn reconnect(&self, force: bool) -> Result<Arc<Runtime>, DriverError> {
+    async fn reconnect(&self, force: bool) -> Result<Arc<Runtime<dyn Transport>>, DriverError> {
         let factory = self.factory.clone();
         let mut expected = self.description.clone();
         let connection = self.connection.clone();

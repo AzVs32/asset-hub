@@ -211,8 +211,7 @@ pub fn validate_request(request: &Request) -> Result<()> {
                 super::decode_list(request.clone()).map_err(|_| CodecError::InvalidData)?;
             }
             StorageOp::ReadLink(request) => {
-                super::decode_lookup(request.lookup.clone())
-                    .map_err(|_| CodecError::InvalidData)?;
+                super::decode_read_link(request.clone()).map_err(|_| CodecError::InvalidData)?;
             }
             attribute @ (StorageOp::GetPermissions(_)
             | StorageOp::SetPermissions(_)

@@ -6,13 +6,16 @@ use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
 };
-use vfs_plugin_host::{PluginDriver, Transport, TransportFuture};
+use vfs_plugin_host::{
+    OpenFuture, OpenedStorage, PluginDriver, SessionTransport, Transport, TransportFuture,
+};
 use vfs_plugin_protocol::{self as p, Operation as Op, Value};
 
 type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 struct Peer {
     generation: AtomicUsize,
+    sessions_disconnected: Mutex<Arc<AtomicBool>>,
     initialized: Mutex<Vec<(usize, p::Object)>>,
     descriptions: AtomicUsize,
     next: AtomicU64,
@@ -27,9 +30,10 @@ impl Peer {
     fn new() -> Arc<Self> {
         Arc::new(Self {
             generation: AtomicUsize::new(1),
+            sessions_disconnected: Mutex::new(Arc::new(AtomicBool::new(false))),
             initialized: Mutex::new(vec![]),
             descriptions: AtomicUsize::new(0),
-            next: AtomicU64::new(1),
+            next: AtomicU64::new(2),
             changed: AtomicBool::new(false),
             fail_describe: AtomicBool::new(false),
             commits: AtomicUsize::new(0),
@@ -39,7 +43,13 @@ impl Peer {
         })
     }
     fn restart(&self) {
+        let mut sessions = self
+            .sessions_disconnected
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         self.generation.fetch_add(1, Ordering::SeqCst);
+        sessions.store(true, Ordering::Release);
+        *sessions = Arc::new(AtomicBool::new(false));
     }
     fn description(&self) -> p::Description {
         p::Description {
@@ -80,6 +90,46 @@ impl vfs_plugin_host::TransportFactory for Peer {
     }
 }
 impl Transport for Peer {
+    fn open_session(self: Arc<Self>, generation: &str, _: p::Open) -> OpenFuture<'_> {
+        Box::pin(async move {
+            let sessions = self
+                .sessions_disconnected
+                .lock()
+                .map_err(|_| vfs_plugin_host::convert::protocol_violation())?;
+            if generation != self.generation.load(Ordering::SeqCst).to_string() {
+                return Err(ah_vfs::application::driver_error::LifecycleError::new(
+                    ah_vfs::application::driver_error::LifecycleFailure::Stale,
+                )
+                .into());
+            }
+            Ok(OpenedStorage {
+                transport: Arc::new(PeerSession {
+                    peer: self.clone(),
+                    disconnected: sessions.clone(),
+                }),
+                generation: generation.into(),
+                storage: p::Storage {
+                    handle: 1,
+                    info: Some(p::StorageInfo { chunk_size: 65536 }),
+                },
+            })
+        })
+    }
+}
+struct PeerSession {
+    peer: Arc<Peer>,
+    disconnected: Arc<AtomicBool>,
+}
+impl SessionTransport for PeerSession {
+    fn disconnected(&self) -> Option<Arc<AtomicBool>> {
+        Some(self.disconnected.clone())
+    }
+
+    fn call<'a>(&'a self, generation: &'a str, op: Op, data: Vec<u8>) -> TransportFuture<'a> {
+        self.peer.call(generation, op, data)
+    }
+}
+impl SessionTransport for Peer {
     fn call<'a>(&'a self, generation: &'a str, op: Op, _data: Vec<u8>) -> TransportFuture<'a> {
         Box::pin(async move {
             let current = self.generation.load(Ordering::SeqCst);
@@ -116,10 +166,6 @@ impl Transport for Peer {
                     }
                     Value::Unit(p::Empty {})
                 }
-                Op::Open(_) => Value::Storage(p::Storage {
-                    handle: self.next.fetch_add(1, Ordering::SeqCst),
-                    info: Some(p::StorageInfo { chunk_size: 65536 }),
-                }),
                 Op::Storage(p::StorageCall {
                     operation: Some(p::StorageOp::Stat(stat)),
                     ..
@@ -139,7 +185,8 @@ impl Transport for Peer {
                     operation: Some(p::StorageOp::ReadLink(link)),
                     ..
                 }) => {
-                    let (operand, base, links) = p::decode_lookup(link.lookup).map_err(|_| vfs_plugin_host::convert::protocol_violation())?;
+                    let (operand, base, links) = p::decode_lookup(link.lookup)
+                        .map_err(|_| vfs_plugin_host::convert::protocol_violation())?;
                     assert_eq!(operand.to_string(), "../link");
                     assert_eq!(base.as_str(), "docs/sub");
                     assert_eq!(links, ah_vfs_storage::IntermediateSymlinks::Reject);
@@ -393,7 +440,7 @@ impl vfs_plugin_host::TransportFactory for ReopeningFactory {
         })
     }
 }
-impl Transport for ReopeningControl {
+impl SessionTransport for ReopeningControl {
     fn call<'a>(
         &'a self,
         generation: &'a str,
@@ -402,12 +449,10 @@ impl Transport for ReopeningControl {
     ) -> TransportFuture<'a> {
         self.peer.call(generation, operation, data)
     }
-    fn open_session<'a>(
-        &'a self,
-        generation: &'a str,
-        open: p::Open,
-    ) -> Option<vfs_plugin_host::OpenFuture<'a>> {
-        Some(Box::pin(async move {
+}
+impl Transport for ReopeningControl {
+    fn open_session(self: Arc<Self>, generation: &str, open: p::Open) -> OpenFuture<'_> {
+        Box::pin(async move {
             if self.reject_open {
                 self.peer.restart();
                 return Err(ah_vfs::application::driver_error::LifecycleError::new(
@@ -415,21 +460,8 @@ impl Transport for ReopeningControl {
                 )
                 .into());
             }
-            let Value::Storage(storage) = self
-                .peer
-                .call(generation, Op::Open(open), vec![])
-                .await?
-                .into_value()
-                .map_err(|_| vfs_plugin_host::convert::protocol_violation())?
-            else {
-                return Err(vfs_plugin_host::convert::protocol_violation());
-            };
-            Ok(vfs_plugin_host::OpenedStorage {
-                storage,
-                generation: generation.into(),
-                transport: self.peer.clone(),
-            })
-        }))
+            self.peer.clone().open_session(generation, open).await
+        })
     }
 }
 #[tokio::test]
@@ -461,13 +493,15 @@ async fn stale_open_recreates_transport_describes_initializes_and_opens_once_mor
 async fn host_forwards_bound_lookup_context_and_preserves_link_bytes() -> Result {
     let driver = connect(&Peer::new()).await?;
     let storage = open(&driver).await?;
-    let target = storage.read_link(
-        ah_vfs_storage::ReadLinkRequest::new(ah_vfs_storage::PathExpr::parse("../link")?),
-        LookupContext {
-            working_directory: StoragePath::parse("docs/sub")?,
-            intermediate_symlinks: ah_vfs_storage::IntermediateSymlinks::Reject,
-        },
-    ).await?;
+    let target = storage
+        .read_link(
+            ah_vfs_storage::ReadLinkRequest::new(ah_vfs_storage::PathExpr::parse("../link")?),
+            LookupContext {
+                working_directory: StoragePath::parse("docs/sub")?,
+                intermediate_symlinks: ah_vfs_storage::IntermediateSymlinks::Reject,
+            },
+        )
+        .await?;
     assert_eq!(target.as_bytes(), b"\xff/");
     Ok(())
 }

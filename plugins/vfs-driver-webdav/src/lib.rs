@@ -13,14 +13,15 @@ use ah_vfs_storage::{BackendFailure, ContractViolation, EntryType, Failure, Oper
 mod client;
 mod multistatus;
 
+use std::num::NonZeroUsize;
 use std::{
     cell::{Cell, RefCell},
     collections::BTreeMap,
 };
-use vfs_plugin_protocol::{self as p, Value};
+use vfs_plugin_protocol as p;
 
 vfs_plugin_guest::export_plugin!(WebdavDriver, "../../crates/vfs-plugin-protocol/wit");
-use vfs_plugin_guest::api::{self, Guest, GuestReader, GuestStorage, GuestWriter};
+use vfs_plugin_guest::api::{self, Description, Guest, GuestReader, GuestStorage, GuestWriter};
 
 type Result<T> = std::result::Result<T, api::Failure>;
 const CHUNK_SIZE: u32 = 64 * 1024;
@@ -39,21 +40,19 @@ fn path(context: &api::ErrorContext, value: &str) -> Result<()> {
         .map(|_| ())
         .map_err(|_| context.failure(Failure::Rejected(Rejection::UnsupportedName)))
 }
-fn capabilities() -> Vec<i32> {
+fn capabilities() -> ah_vfs_storage::Capabilities {
     use ah_vfs_storage::{Capabilities, DirectorySupport, ReadSupport, WriteModes, WriteSupport};
-    p::encode_capabilities(
-        Capabilities::default()
-            .with_stat(true)
-            .with_list(true)
-            .with_read(ReadSupport::Range)
-            .with_write(WriteSupport::staged(WriteModes::Both, false))
-            .with_directories(DirectorySupport::hierarchical(true, true)),
-    )
+    Capabilities::default()
+        .with_stat(true)
+        .with_list(true)
+        .with_read(ReadSupport::Range)
+        .with_write(WriteSupport::staged(WriteModes::Both, false))
+        .with_directories(DirectorySupport::hierarchical(true, true))
 }
 
 struct WebdavDriver;
 impl Guest for WebdavDriver {
-    fn describe() -> p::Description {
+    fn describe() -> Description {
         let schema = serde_json::json!({
             "type": "object",
             "properties": {
@@ -69,17 +68,9 @@ impl Guest for WebdavDriver {
         let instance_schema = schema
             .as_object()
             .map(|map| map.clone().into_iter().collect::<p::JsonObject>());
-        p::Description {
-            major: p::PROTOCOL_MAJOR,
-            minor: p::PROTOCOL_MINOR,
+        Description {
             required_features: vec![],
-            features: p::PROTOCOL_FEATURES
-                .iter()
-                .map(|feature| (*feature).into())
-                .collect(),
             required_host_capabilities: vec!["http".into()],
-            instance_schema_profile: p::INSTANCE_SCHEMA_PROFILE.into(),
-            generation: String::new(),
             key: "webdav".into(),
             name: "WebDAV".into(),
             version: env!("CARGO_PKG_VERSION").into(),
@@ -143,28 +134,22 @@ struct WebdavStorage {
     directory_generation: [u8; 16],
 }
 impl GuestStorage for WebdavStorage {
-    fn info(&self) -> p::StorageInfo {
-        p::StorageInfo {
-            chunk_size: CHUNK_SIZE,
-        }
+    fn chunk_size(&self) -> NonZeroUsize {
+        NonZeroUsize::new(CHUNK_SIZE as usize).unwrap_or(NonZeroUsize::MIN)
     }
-    fn call(&self, request: p::StorageOp, data: Vec<u8>) -> Result<p::Reply> {
-        let client = self.client.for_operation(request.storage_operation());
-        let context = client.context.clone();
-        if !data.is_empty() {
-            return Err(context.failure(Failure::Rejected(Rejection::Conflict)));
-        }
-        let value = match request {
-            p::StorageOp::Stat(request) => {
-                let entry = api::direct_stat(request, |path| {
-                    client.stat(path.as_str()).map(|metadata| metadata.entry)
-                })?;
-                Value::Entry(encode_entry(&context, &entry)?)
-            }
-            _ => return Err(context.failure(Failure::Rejected(Rejection::Unsupported))),
-        };
-        Ok(p::Reply::new(value))
+
+    fn stat(
+        &self,
+        request: &ah_vfs_storage::StatRequest,
+        base: &ah_vfs_storage::StoragePath,
+        links: ah_vfs_storage::IntermediateSymlinks,
+    ) -> Result<ah_vfs_storage::Entry> {
+        let client = self.client.for_operation(Operation::Stat);
+        api::direct_stat(request, base, links, |path| {
+            client.stat(path.as_str()).map(|metadata| metadata.entry)
+        })
     }
+
     fn create_dir(
         &self,
         request: &ah_vfs_storage::CreateDirectoryRequest,
@@ -360,7 +345,7 @@ impl GuestWriter for WebdavWriter {
         *self.session.borrow_mut() = Some(session);
         Ok(())
     }
-    fn commit(&self) -> Result<p::Entry> {
+    fn commit(&self) -> Result<ah_vfs_storage::Entry> {
         let context = api::ErrorContext::storage(Operation::Write);
         // Both success and failure are terminal; no remote request is retried.
         let session = self
@@ -371,7 +356,6 @@ impl GuestWriter for WebdavWriter {
         session
             .client
             .put_file(&session.path, session.condition, session.bytes)
-            .and_then(|entry| encode_entry(&session.client.context, &entry))
     }
     fn abort(&self) -> Result<()> {
         let context = api::ErrorContext::storage(Operation::Write);
@@ -399,27 +383,14 @@ mod tests {
     #[test]
     fn driver_declaration_excludes_partial_remove_support() -> Result<()> {
         let description = WebdavDriver::describe();
-        let info = storage()?.info();
-        assert_eq!(description.capabilities, capabilities());
-        assert_eq!(info.chunk_size, CHUNK_SIZE);
-        assert!(
-            !description
-                .capabilities
-                .iter()
-                .any(|capability| *capability == p::Capability::Remove as i32)
+        let caps = description.capabilities;
+        assert_eq!(caps, capabilities());
+        assert_eq!(storage()?.chunk_size().get(), CHUNK_SIZE as usize);
+        assert!(!caps.remove());
+        assert_eq!(
+            caps.directories(),
+            ah_vfs_storage::DirectorySupport::hierarchical(true, true)
         );
-        for capability in [
-            p::Capability::Hierarchical as i32,
-            p::Capability::EmptyDirs as i32,
-            p::Capability::CreateDir as i32,
-        ] {
-            assert!(
-                description
-                    .capabilities
-                    .iter()
-                    .any(|actual| *actual == capability)
-            );
-        }
         Ok(())
     }
 
@@ -461,9 +432,4 @@ mod tests {
         }
         Ok(())
     }
-}
-
-fn encode_entry(context: &api::ErrorContext, entry: &ah_vfs_storage::Entry) -> Result<p::Entry> {
-    p::encode_entry(entry)
-        .map_err(|_| context.failure(Failure::Contract(ContractViolation::InvalidResponse)))
 }

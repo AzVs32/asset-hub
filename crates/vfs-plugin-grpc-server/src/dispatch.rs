@@ -2,8 +2,8 @@
 use ah_vfs::application::driver_error::{DriverError, LifecycleError, LifecycleFailure};
 use ah_vfs::application::port::*;
 use ah_vfs::domain::InstanceId;
+use ah_vfs_storage::ContractViolation;
 use ah_vfs_storage::{BackendFailure, Failure, Operation, Rejection, StorageError};
-use ah_vfs_storage::{ContractViolation, ReadLinkRequest};
 use futures_util::FutureExt;
 use std::{
     collections::HashMap,
@@ -672,6 +672,10 @@ impl Session {
         data: Vec<u8>,
     ) -> Result<p::Reply, DriverError> {
         let operation = op.storage_operation();
+        let capabilities = self.generation.driver.info().capabilities();
+        if !capabilities.supports(operation) {
+            return Err(unsupported_storage(operation).into());
+        }
         let value = match op {
             p::StorageOp::Stat(stat) => {
                 let (request, working_directory, intermediate_symlinks) =
@@ -683,25 +687,15 @@ impl Session {
                 Value::Entry(c::entry(operation, s.stat_entry(request, context).await?)?)
             }
             p::StorageOp::ReadLink(request) => {
-                let (operand, working_directory, intermediate_symlinks) =
-                    p::decode_lookup(request.lookup).map_err(invalid_lookup)?;
+                let (request, working_directory, intermediate_symlinks) =
+                    p::decode_read_link(request).map_err(invalid_lookup)?;
                 let context = LookupContext {
                     working_directory,
                     intermediate_symlinks,
                 };
-                let target = s.read_link(ReadLinkRequest::new(operand), context).await?;
-                let data = target.into_bytes();
-                if data.len() > p::MAX_DATA_BYTES {
-                    return Err(StorageError::without_effects(
-                        operation,
-                        Failure::Rejected(Rejection::LimitExceeded),
-                        None,
-                    )
-                    .into());
-                }
-                return Ok(p::Reply {
-                    result: Some(Value::Bytes(p::Empty {})),
-                    data,
+                let target = s.read_link(request, context).await?;
+                return p::encode_link_target(target).map_err(|reason| {
+                    StorageError::without_effects(operation, Failure::Rejected(reason), None).into()
                 });
             }
             p::StorageOp::SelectDirectory(wire) => {
@@ -745,21 +739,6 @@ impl Session {
                 });
             }
             p::StorageOp::CreateDirectory(wire) => {
-                if !self
-                    .generation
-                    .driver
-                    .info()
-                    .capabilities()
-                    .directories()
-                    .can_create()
-                {
-                    return Err(StorageError::without_effects(
-                        operation,
-                        Failure::Rejected(Rejection::Unsupported),
-                        None,
-                    )
-                    .into());
-                }
                 let (request, working_directory, intermediate_symlinks) =
                     p::decode_create_directory(wire).map_err(invalid_lookup)?;
                 let entry = s
@@ -779,9 +758,6 @@ impl Session {
             p::StorageOp::Remove(wire) => {
                 let (request, working_directory, intermediate_symlinks) =
                     p::decode_remove(wire).map_err(invalid_lookup)?;
-                if !self.generation.driver.info().capabilities().remove() {
-                    return Err(unsupported_mutation(operation).into());
-                }
                 s.remove_entry(
                     request,
                     LookupContext {
@@ -795,15 +771,8 @@ impl Session {
             p::StorageOp::Rename(wire) => {
                 let (request, working_directory, intermediate_symlinks) =
                     p::decode_rename(wire).map_err(invalid_lookup)?;
-                if !self
-                    .generation
-                    .driver
-                    .info()
-                    .capabilities()
-                    .rename()
-                    .supports(request.mode())
-                {
-                    return Err(unsupported_mutation(operation).into());
+                if capabilities.require_rename(&request).is_err() {
+                    return Err(unsupported_storage(operation).into());
                 }
                 let entry = s
                     .move_entry(
@@ -829,20 +798,6 @@ impl Session {
                     p::decode_attribute(attribute, data).map_err(|cause| {
                         LifecycleError::with_source(LifecycleFailure::InvalidRequest, cause)
                     })?;
-                if !self
-                    .generation
-                    .driver
-                    .info()
-                    .capabilities()
-                    .supports(operation)
-                {
-                    return Err(StorageError::without_effects(
-                        operation,
-                        Failure::Rejected(Rejection::Unsupported),
-                        None,
-                    )
-                    .into());
-                }
                 let attributes = s.attributes().ok_or_else(|| {
                     StorageError::without_effects(
                         operation,
@@ -889,6 +844,6 @@ mod request_validation_tests {
     }
 }
 
-fn unsupported_mutation(operation: Operation) -> StorageError {
+fn unsupported_storage(operation: Operation) -> StorageError {
     StorageError::without_effects(operation, Failure::Rejected(Rejection::Unsupported), None)
 }

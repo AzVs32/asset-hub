@@ -3,16 +3,15 @@ use ah_vfs_storage::{
     ContractViolation, Entry, EntryType, Failure, IntermediateSymlinks, LookupStart, Operation,
     PathComponent, PathLookup, Rejection, StatRequest, StoragePath, SymlinkAction, WriteRequest,
 };
-use vfs_plugin_protocol as p;
 
 /// Resolve metadata on a backend with direct instance-root addressing.
 pub fn direct_stat(
-    value: p::Stat,
+    request: &StatRequest,
+    base: &StoragePath,
+    links: IntermediateSymlinks,
     mut stat: impl FnMut(&StoragePath) -> Result<Entry>,
 ) -> Result<Entry> {
-    let (request, base, links) =
-        p::decode_stat(value).map_err(|_| p::Failure::new(p::FailureCode::InvalidRequest))?;
-    let (entry, ()) = direct_lookup(request.lookup(), &base, links, Operation::Stat, |path| {
+    let (entry, ()) = direct_lookup(request.lookup(), base, links, Operation::Stat, |path| {
         Ok((stat(path)?, ()))
     })?;
     Ok(entry)

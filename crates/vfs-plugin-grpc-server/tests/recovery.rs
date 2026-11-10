@@ -21,7 +21,7 @@ use vfs_plugin_grpc_server::{
     dispatch::{Dispatcher, DriverFactory},
     serve_with_limits, service, wire,
 };
-use vfs_plugin_host::{OpenFuture, OpenedStorage, PluginDriver, Transport, TransportFuture};
+use vfs_plugin_host::PluginDriver;
 use vfs_plugin_protocol::{self as p, Operation as Op};
 
 type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
@@ -264,41 +264,6 @@ impl StorageFileWriter for Writer {
         Box::pin(async { Ok(()) })
     }
 }
-struct Direct(Arc<Dispatcher>);
-impl vfs_plugin_host::TransportFactory for Direct {
-    fn connect(self: Arc<Self>) -> vfs_plugin_host::ConnectFuture {
-        Box::pin(async move { Ok(self as Arc<dyn Transport>) })
-    }
-}
-impl Transport for Direct {
-    fn open_session<'a>(&'a self, generation: &'a str, open: p::Open) -> Option<OpenFuture<'a>> {
-        Some(Box::pin(async move {
-            let session = self.0.open_session(generation, open).await?;
-            let p::Value::Storage(storage) = session
-                .opened()
-                .into_value()
-                .map_err(|_| c::protocol_violation())?
-            else {
-                return Err(c::protocol_violation());
-            };
-            Ok(OpenedStorage {
-                generation: generation.into(),
-                storage,
-                transport: Arc::new(DirectSession(session)),
-            })
-        }))
-    }
-
-    fn call<'a>(&'a self, generation: &'a str, op: Op, data: Vec<u8>) -> TransportFuture<'a> {
-        Box::pin(self.0.call(generation, op, data))
-    }
-}
-struct DirectSession(vfs_plugin_grpc_server::dispatch::Session);
-impl Transport for DirectSession {
-    fn call<'a>(&'a self, _generation: &'a str, op: Op, data: Vec<u8>) -> TransportFuture<'a> {
-        Box::pin(self.0.call(op, data))
-    }
-}
 async fn open(driver: &PluginDriver) -> Result<Arc<dyn Storage>> {
     Ok(driver
         .open(OpenContext::new(
@@ -360,7 +325,13 @@ async fn panic_recovery_uses_a_fresh_backend_and_never_replays_the_mutation() ->
     };
     let dispatcher = Arc::new(Dispatcher::with_factory(factory).await?);
     let original = dispatcher.generation();
-    let driver = PluginDriver::connect(Arc::new(Direct(dispatcher.clone()))).await?;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let endpoint = format!("http://{}", listener.local_addr()?);
+    let _server = start(listener, dispatcher.clone()).await?;
+    let driver = PluginDriver::connect(Arc::new(
+        GrpcTransport::connect(endpoint, "test-token").await?,
+    ))
+    .await?;
     driver.initialize(Default::default()).await?;
     let old = open(&driver).await?;
     let mut reader = read(old.as_ref()).await?;
@@ -1369,7 +1340,13 @@ async fn shutdown_cannot_be_undone_by_an_inflight_backend_recovery() -> Result {
         })
     };
     let dispatcher = Arc::new(Dispatcher::with_factory(factory).await?);
-    let driver = PluginDriver::connect(Arc::new(Direct(dispatcher.clone()))).await?;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let endpoint = format!("http://{}", listener.local_addr()?);
+    let _server = start(listener, dispatcher.clone()).await?;
+    let driver = PluginDriver::connect(Arc::new(
+        GrpcTransport::connect(endpoint, "test-token").await?,
+    ))
+    .await?;
     driver.initialize(Default::default()).await?;
     let storage = open(&driver).await?;
     faults.panic_remove.store(true, Ordering::SeqCst);

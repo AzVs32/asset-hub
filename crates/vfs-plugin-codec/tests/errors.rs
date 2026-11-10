@@ -110,7 +110,7 @@ fn response_paths_keep_their_validation_cause_instead_of_becoming_request_errors
     .ok_or("invalid response path accepted")?;
     assert_eq!(
         error.failure(),
-        Failure::Contract(ContractViolation::InvalidResponse)
+        Failure::Contract(ContractViolation::InvalidEntry)
     );
     assert!(
         error
@@ -122,7 +122,7 @@ fn response_paths_keep_their_validation_cause_instead_of_becoming_request_errors
     let error = vfs_plugin_codec::response_error(Operation::Write, true, error);
     assert_eq!(
         error.failure(),
-        Failure::Contract(ContractViolation::InvalidResponse)
+        Failure::Contract(ContractViolation::InvalidEntry)
     );
     assert_eq!(error.outcome(), ah_vfs_storage::MutationOutcome::Unknown);
     let violation = error
@@ -131,7 +131,7 @@ fn response_paths_keep_their_validation_cause_instead_of_becoming_request_errors
         .ok_or("violation cause")?;
     assert_eq!(
         violation.failure(),
-        Failure::Contract(ContractViolation::InvalidResponse)
+        Failure::Contract(ContractViolation::InvalidEntry)
     );
     assert!(
         violation

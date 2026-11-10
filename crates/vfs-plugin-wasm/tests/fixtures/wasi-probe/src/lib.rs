@@ -1,9 +1,13 @@
 //! Real Rust component for host authorization and execution integration tests.
-use vfs_plugin_protocol::{self as p, Operation as Op, Value};
-wit_bindgen::generate!({
-    path: "../../../../vfs-plugin-protocol/wit",
-    world: "plugin",
-});
+use ah_vfs_storage::{
+    Capabilities, Entry, EntryType, Failure, IntermediateSymlinks, Operation, Rejection,
+    StatRequest, StoragePath,
+};
+use std::num::NonZeroUsize;
+use vfs_plugin_guest::api::{self, Description, Guest, GuestStorage};
+use vfs_plugin_protocol as p;
+
+vfs_plugin_guest::export_plugin!(Probe, "../../../../vfs-plugin-protocol/wit");
 struct Probe;
 fn denied<T>(_error: T) -> p::Failure {
     p::Failure::new(p::FailureCode::LifecycleAccessDenied)
@@ -114,55 +118,68 @@ fn run(fields: &p::JsonObject) -> Result<String, p::Failure> {
         _ => return Err(p::Failure::new(p::FailureCode::InvalidRequest)),
     })
 }
-impl exports::assethub::vfs::driver::Guest for Probe {
-    fn call(request: Vec<u8>) -> Vec<u8> {
-        let reply = (|| {
-            let (_, op, _) = p::decode_request(&request)
-                .map_err(|_| p::Failure::new(p::FailureCode::InvalidRequest))?;
-            let result = match op {
-                Op::Describe(_) => Value::Description(
-                    p::Description {
-                        major: p::PROTOCOL_MAJOR,
-                        minor: p::PROTOCOL_MINOR,
-                        instance_schema_profile: p::INSTANCE_SCHEMA_PROFILE.into(),
-                        key: "wasi.probe".into(),
-                        name: "WASI integration probe".into(),
-                        version: "1.0.0".into(),
-                        config_version: 1,
-                        capabilities: vec![p::Capability::Stat as i32],
-                        ..Default::default()
-                    }
-                    .into(),
-                ),
-                Op::Initialize(_) => Value::Unit(p::Empty {}),
-                Op::Prepare(p::Config {
-                    config: Some(config),
-                }) => {
-                    let result = run(&p::json_object(config.clone())?)?;
-                    Value::Prepared(p::Prepared {
-                        config: Some(config),
-                        details: Some(p::Object::from([("result".into(), result.into())])),
-                    })
-                }
-                Op::Open(_) => Value::Storage(p::Storage {
-                    handle: 1,
-                    info: Some(p::StorageInfo { chunk_size: 1024 }),
-                }),
-                Op::Storage(p::StorageCall {
-                    operation: Some(p::StorageOp::Stat(_)),
-                    ..
-                }) => Value::Entry(p::Entry {
-                    path: String::new(),
-                    kind: p::EntryKind::Dir as i32,
-                    size: None,
-                    modified: None,
-                }),
-                Op::Release(_) => Value::Unit(p::Empty {}),
-                _ => return Err(p::Failure::new(p::FailureCode::LifecycleUnsupported)),
-            };
-            Ok(p::Reply::new(result))
-        })();
-        p::encode_reply(reply).expect("encode reply")
+impl Guest for Probe {
+    fn describe() -> Description {
+        Description {
+            key: "wasi.probe".into(),
+            name: "WASI integration probe".into(),
+            version: "1.0.0".into(),
+            child_mounts: false,
+            capabilities: Capabilities::default().with_stat(true),
+            required_features: vec![],
+            required_host_capabilities: vec![],
+            settings_schema: None,
+            instance_schema: None,
+            config_version: 1,
+        }
+    }
+
+    fn initialize(_: p::Object) -> api::Result<()> {
+        Ok(())
+    }
+
+    fn prepare(config: p::Object) -> api::Result<p::Prepared> {
+        let result = run(&p::json_object(config.clone())?)?;
+        Ok(p::Prepared {
+            config: Some(config),
+            details: Some(p::Object::from([("result".into(), result.into())])),
+        })
+    }
+
+    fn migrate(_: u32, config: p::Object) -> api::Result<p::Object> {
+        Ok(config)
+    }
+
+    fn test_connection(_: p::Object) -> api::Result<()> {
+        Ok(())
+    }
+
+    fn open(_: String, _: p::Object) -> api::Result<api::Storage> {
+        Ok(api::Storage::new(Probe))
     }
 }
-export!(Probe);
+
+impl GuestStorage for Probe {
+    fn chunk_size(&self) -> NonZeroUsize {
+        NonZeroUsize::new(1024).unwrap_or(NonZeroUsize::MIN)
+    }
+
+    fn stat(
+        &self,
+        request: &StatRequest,
+        base: &StoragePath,
+        links: IntermediateSymlinks,
+    ) -> api::Result<Entry> {
+        api::direct_stat(request, base, links, |path| {
+            let context = api::ErrorContext::storage(Operation::Stat);
+            if !path.is_root() {
+                return Err(context.failure(Failure::Rejected(Rejection::NotFound)));
+            }
+            Entry::new(path.clone(), EntryType::Directory, None).map_err(|_| {
+                context.failure(Failure::Contract(
+                    ah_vfs_storage::ContractViolation::InvalidEntry,
+                ))
+            })
+        })
+    }
+}

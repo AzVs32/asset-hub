@@ -256,3 +256,41 @@ pub fn decode_rename(
         links,
     ))
 }
+
+pub fn encode_read_link(
+    request: &ah_vfs_storage::ReadLinkRequest,
+    base: &StoragePath,
+    links: IntermediateSymlinks,
+) -> super::ReadLink {
+    super::ReadLink {
+        lookup: Some(encode_lookup(request.path(), base, links)),
+    }
+}
+
+pub fn decode_read_link(
+    value: super::ReadLink,
+) -> Result<
+    (
+        ah_vfs_storage::ReadLinkRequest,
+        StoragePath,
+        IntermediateSymlinks,
+    ),
+    LookupValueError,
+> {
+    let (operand, base, links) = decode_lookup(value.lookup)?;
+    Ok((ah_vfs_storage::ReadLinkRequest::new(operand), base, links))
+}
+
+/// Encode the opaque link bytes without a second allocation.
+pub fn encode_link_target(
+    target: ah_vfs_storage::LinkTarget,
+) -> Result<super::Reply, ah_vfs_storage::Rejection> {
+    let data = target.into_bytes();
+    if data.len() > super::MAX_DATA_BYTES {
+        return Err(ah_vfs_storage::Rejection::LimitExceeded);
+    }
+    Ok(super::Reply {
+        result: Some(super::Value::Bytes(super::Empty {})),
+        data,
+    })
+}

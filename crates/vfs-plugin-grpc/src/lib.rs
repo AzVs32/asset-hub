@@ -17,7 +17,7 @@ use tonic::{
     transport::{Channel, Endpoint},
 };
 use vfs_plugin_codec as c;
-use vfs_plugin_host::{OpenFuture, OpenedStorage, Transport, TransportFuture};
+use vfs_plugin_host::{OpenFuture, OpenedStorage, SessionTransport, Transport, TransportFuture};
 use vfs_plugin_protocol::{self as p, Operation as Op, Value};
 
 pub use tonic::transport::{Certificate, ClientTlsConfig, Identity};
@@ -214,17 +214,8 @@ impl vfs_plugin_host::TransportFactory for GrpcTransport {
     }
 }
 impl Transport for GrpcTransport {
-    fn disconnected(&self) -> Option<Arc<AtomicBool>> {
-        Some(
-            self.connection
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .disconnected
-                .clone(),
-        )
-    }
-    fn open_session<'a>(&'a self, generation: &'a str, open: p::Open) -> Option<OpenFuture<'a>> {
-        Some(Box::pin(async move {
+    fn open_session(self: Arc<Self>, generation: &str, open: p::Open) -> OpenFuture<'_> {
+        Box::pin(async move {
             let operation = Op::Open(open);
             let request = Self::encode(generation, &operation, vec![])?;
             let (tx, rx) = mpsc::channel(1);
@@ -280,7 +271,7 @@ impl Transport for GrpcTransport {
                 peer,
                 self.timeout,
             ));
-            let transport = Arc::new(SessionTransport {
+            let transport = Arc::new(GrpcSession {
                 generation: generation.into(),
                 pending,
                 disconnected,
@@ -291,7 +282,18 @@ impl Transport for GrpcTransport {
                 storage,
                 generation: generation.into(),
             })
-        }))
+        })
+    }
+}
+impl SessionTransport for GrpcTransport {
+    fn disconnected(&self) -> Option<Arc<AtomicBool>> {
+        Some(
+            self.connection
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .disconnected
+                .clone(),
+        )
     }
     fn call<'a>(&'a self, generation: &'a str, op: Op, data: Vec<u8>) -> TransportFuture<'a> {
         Box::pin(async move {
@@ -364,13 +366,13 @@ struct Pending {
     operation: Op,
     reply: oneshot::Sender<Result<p::Reply, DriverError>>,
 }
-struct SessionTransport {
+struct GrpcSession {
     generation: String,
     pending: mpsc::Sender<Pending>,
     disconnected: Arc<AtomicBool>,
     task: tokio::task::JoinHandle<()>,
 }
-impl Drop for SessionTransport {
+impl Drop for GrpcSession {
     fn drop(&mut self) {
         self.disconnected.store(true, Ordering::Release);
         // Dropping the HTTP/2 response resets the stream immediately, including
@@ -378,7 +380,7 @@ impl Drop for SessionTransport {
         self.task.abort();
     }
 }
-impl Transport for SessionTransport {
+impl SessionTransport for GrpcSession {
     fn disconnected(&self) -> Option<Arc<AtomicBool>> {
         Some(self.disconnected.clone())
     }

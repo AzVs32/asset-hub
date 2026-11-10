@@ -130,6 +130,15 @@ async fn protobuf_reads_and_conditional_commits_bind_a_single_s3_version() -> Re
         for (expected, status, length, extra, body) in [
             ("head /fixture/ ", "200 OK", 0, "", vec![]),
             ("head /fixture/ ", "200 OK", 0, "", vec![]),
+            ("head /fixture/whole ", "200 OK", 4, "etag: \"whole\"\r\n", vec![]),
+            ("get /fixture/?", "200 OK", 19, "", b"<ListBucketResult/>".to_vec()),
+            ("head /fixture/whole ", "200 OK", 4, "etag: \"whole\"\r\n", vec![]),
+            ("get /fixture/?", "200 OK", 19, "", b"<ListBucketResult/>".to_vec()),
+            ("get /fixture/whole ", "206 Partial Content", 4,
+                "etag: \"whole\"\r\ncontent-range: bytes 0-3/4\r\n", vec![0, 255, 1, 0]),
+            ("head /fixture/empty ", "404 Not Found", 0, "", vec![]),
+            ("get /fixture/?", "200 OK", 19, "", b"<ListBucketResult/>".to_vec()),
+            ("put /fixture/empty ", "200 OK", 0, "", vec![]),
             (
                 "head /fixture/file ",
                 "200 OK",
@@ -202,6 +211,14 @@ async fn protobuf_reads_and_conditional_commits_bind_a_single_s3_version() -> Re
             assert!(request.starts_with(expected), "{request}");
             assert!(request.contains("authorization: aws4-hmac-sha256 "));
             assert!(request.contains("x-amz-date:"));
+            if expected == "get /fixture/whole " {
+                assert!(request.contains("if-match: \"whole\"\r\n"));
+                assert!(request.contains("range: bytes=0-3\r\n"));
+            }
+            if expected == "put /fixture/empty " {
+                assert!(request.contains("if-none-match: *\r\n"));
+                assert_eq!(content_length, 0);
+            }
             if expected == "get /fixture/file " {
                 assert!(request.contains("if-match: \"original\"\r\n"));
                 assert!(request.contains("signedheaders=host;if-match;range;"));
@@ -283,6 +300,43 @@ async fn protobuf_reads_and_conditional_commits_bind_a_single_s3_version() -> Re
         matches!(storage.list_entries(&request, Default::default()).await,
         Err(error) if error.failure() == Failure::Rejected(Rejection::Unsupported))
     );
+    let whole = StoragePath::parse("whole")?;
+    let entry = storage
+        .stat_entry(
+            ah_vfs_storage::StatRequest::new(
+                whole.to_rooted_expr(),
+                ah_vfs_storage::SymlinkAction::Preserve,
+            ),
+            Default::default(),
+        )
+        .await?;
+    assert_eq!(entry.path(), &whole);
+    assert_eq!(entry.entry_type(), ah_vfs_storage::EntryType::file(Some(4)));
+    let mut full = storage
+        .read_file(
+            ah_vfs_storage::ReadRequest::new(
+                whole.to_rooted_expr(),
+                ah_vfs_storage::ReadRange::FULL,
+            ),
+            Default::default(),
+        )
+        .await?;
+    assert_eq!(full.next_chunk().await?, Some(vec![0, 255, 1, 0]));
+    assert_eq!(full.next_chunk().await?, None);
+    let empty = StoragePath::parse("empty")?;
+    let mut create = storage
+        .write_file(
+            ah_vfs_storage::WriteRequest::new(
+                empty.to_rooted_expr(),
+                WriteMode::CreateNew,
+                ah_vfs_storage::Publication::Atomic,
+            ),
+            Default::default(),
+        )
+        .await?;
+    let entry = create.commit().await?;
+    assert_eq!(entry.path(), &empty);
+    assert_eq!(entry.entry_type(), ah_vfs_storage::EntryType::file(Some(0)));
     let mut reader = storage
         .read_file(
             ah_vfs_storage::ReadRequest::new(

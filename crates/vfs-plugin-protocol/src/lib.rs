@@ -16,9 +16,10 @@ pub use attributes::{
 pub use codec::*;
 pub use directory::*;
 pub use lookup::{
-    LookupValueError, decode_create_directory, decode_lookup, decode_read, decode_remove,
-    decode_rename, decode_stat, decode_write, encode_create_directory, encode_lookup, encode_read,
-    encode_remove, encode_rename, encode_stat, encode_write,
+    LookupValueError, decode_create_directory, decode_lookup, decode_read, decode_read_link,
+    decode_remove, decode_rename, decode_stat, decode_write, encode_create_directory,
+    encode_link_target, encode_lookup, encode_read, encode_read_link, encode_remove, encode_rename,
+    encode_stat, encode_write,
 };
 pub use values::{
     EntryValueError, decode_capabilities, decode_entry, decode_time, encode_capabilities,
@@ -39,6 +40,21 @@ pub const MAX_FRAME_BYTES: usize = MAX_CONTROL_BYTES + MAX_DATA_BYTES + 1024;
 pub const MAX_RESOURCES: usize = 1024;
 pub const INSTANCE_SCHEMA_PROFILE: &str = "assethub.config.annotations.v1";
 pub const PROTOCOL_FEATURES: &[&str] = &["streams.chunked.v1"];
+
+/// Wire metadata shared by all production descriptions.
+pub fn description_header(generation: String) -> Description {
+    Description {
+        major: PROTOCOL_MAJOR,
+        minor: PROTOCOL_MINOR,
+        features: PROTOCOL_FEATURES
+            .iter()
+            .map(|name| (*name).into())
+            .collect(),
+        instance_schema_profile: INSTANCE_SCHEMA_PROFILE.into(),
+        generation,
+        ..Default::default()
+    }
+}
 
 /// Selected backward-compatible protocol revision. Minor revisions may add
 /// optional data but cannot change existing operation meanings or encodings.

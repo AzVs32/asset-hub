@@ -10,8 +10,39 @@ pub mod api {
     pub use crate::error_context::ErrorContext;
     pub use crate::lookup::{direct_lookup, direct_stat, direct_write_destination};
     pub type Result<T> = std::result::Result<T, Failure>;
+    pub struct Description {
+        pub key: String,
+        pub name: String,
+        pub version: String,
+        pub child_mounts: bool,
+        pub capabilities: ah_vfs_storage::Capabilities,
+        pub required_features: Vec<String>,
+        pub required_host_capabilities: Vec<String>,
+        pub settings_schema: Option<p::Object>,
+        pub instance_schema: Option<p::Object>,
+        pub config_version: u32,
+    }
+
+    impl Description {
+        pub(crate) fn into_wire(self, generation: String) -> p::Description {
+            p::Description {
+                key: self.key,
+                name: self.name,
+                version: self.version,
+                child_mounts: self.child_mounts,
+                capabilities: p::encode_capabilities(self.capabilities),
+                required_features: self.required_features,
+                required_host_capabilities: self.required_host_capabilities,
+                settings_schema: self.settings_schema,
+                instance_schema: self.instance_schema,
+                config_version: self.config_version,
+                ..p::description_header(generation)
+            }
+        }
+    }
+
     pub trait Guest {
-        fn describe() -> p::Description;
+        fn describe() -> Description;
         /// Called once per control/Storage Store; independent Stores may run concurrently.
         /// Instance records and decrypted opening parameters are supplied by the host.
         fn initialize(settings: p::Object) -> Result<()>;
@@ -37,11 +68,34 @@ pub mod api {
         ) -> Result<ah_vfs_storage::AttributeResult>;
     }
     pub trait GuestStorage {
-        fn info(&self) -> p::StorageInfo;
+        fn chunk_size(&self) -> std::num::NonZeroUsize;
         fn attributes(&self) -> Option<&dyn GuestAttributes> {
             None
         }
-        fn call(&self, request: p::StorageOp, data: Vec<u8>) -> Result<p::Reply>;
+        fn stat(
+            &self,
+            _request: &ah_vfs_storage::StatRequest,
+            _base: &ah_vfs_storage::StoragePath,
+            _links: ah_vfs_storage::IntermediateSymlinks,
+        ) -> Result<ah_vfs_storage::Entry> {
+            Err(
+                ErrorContext::storage(ah_vfs_storage::Operation::Stat).failure(
+                    ah_vfs_storage::Failure::Rejected(ah_vfs_storage::Rejection::Unsupported),
+                ),
+            )
+        }
+        fn read_link(
+            &self,
+            _request: &ah_vfs_storage::ReadLinkRequest,
+            _base: &ah_vfs_storage::StoragePath,
+            _links: ah_vfs_storage::IntermediateSymlinks,
+        ) -> Result<ah_vfs_storage::LinkTarget> {
+            Err(
+                ErrorContext::storage(ah_vfs_storage::Operation::ReadLink).failure(
+                    ah_vfs_storage::Failure::Rejected(ah_vfs_storage::Rejection::Unsupported),
+                ),
+            )
+        }
         fn remove(
             &self,
             _request: &ah_vfs_storage::RemoveRequest,
@@ -102,23 +156,35 @@ pub mod api {
         }
         fn read(
             &self,
-            request: ah_vfs_storage::ReadRequest,
-            working_directory: ah_vfs_storage::StoragePath,
-            intermediate_symlinks: ah_vfs_storage::IntermediateSymlinks,
-        ) -> Result<Reader>;
+            _request: ah_vfs_storage::ReadRequest,
+            _working_directory: ah_vfs_storage::StoragePath,
+            _intermediate_symlinks: ah_vfs_storage::IntermediateSymlinks,
+        ) -> Result<Reader> {
+            Err(
+                ErrorContext::storage(ah_vfs_storage::Operation::Read).failure(
+                    ah_vfs_storage::Failure::Rejected(ah_vfs_storage::Rejection::Unsupported),
+                ),
+            )
+        }
         fn write(
             &self,
-            request: ah_vfs_storage::WriteRequest,
-            working_directory: ah_vfs_storage::StoragePath,
-            intermediate_symlinks: ah_vfs_storage::IntermediateSymlinks,
-        ) -> Result<Writer>;
+            _request: ah_vfs_storage::WriteRequest,
+            _working_directory: ah_vfs_storage::StoragePath,
+            _intermediate_symlinks: ah_vfs_storage::IntermediateSymlinks,
+        ) -> Result<Writer> {
+            Err(
+                ErrorContext::storage(ah_vfs_storage::Operation::Write).failure(
+                    ah_vfs_storage::Failure::Rejected(ah_vfs_storage::Rejection::Unsupported),
+                ),
+            )
+        }
     }
     pub trait GuestReader {
         fn next(&self) -> Result<Option<Vec<u8>>>;
     }
     pub trait GuestWriter {
         fn write(&self, data: Vec<u8>) -> Result<()>;
-        fn commit(&self) -> Result<p::Entry>;
+        fn commit(&self) -> Result<ah_vfs_storage::Entry>;
         fn abort(&self) -> Result<()>;
     }
     pub struct Storage(pub(crate) Box<dyn GuestStorage>);
@@ -155,7 +221,7 @@ impl Resource {
     }
 }
 pub struct Dispatcher<D> {
-    generation: Option<String>,
+    declaration: Option<(p::Description, ah_vfs_storage::Capabilities)>,
     settings: Option<p::Object>,
     resources: BTreeMap<u64, Resource>,
     next: u64,
@@ -169,7 +235,7 @@ impl<D: api::Guest> Default for Dispatcher<D> {
 impl<D: api::Guest> Dispatcher<D> {
     pub fn new() -> Self {
         Self {
-            generation: None,
+            declaration: None,
             settings: None,
             resources: BTreeMap::new(),
             next: 0,
@@ -256,25 +322,46 @@ impl<D: api::Guest> Dispatcher<D> {
         if generation.is_empty() {
             return Err(p::Failure::new(p::FailureCode::InvalidRequest).into());
         }
-        if let Some(expected) = &self.generation {
-            if expected != generation {
-                return Err(context.failure(ah_vfs_storage::Failure::Backend(
-                    ah_vfs_storage::BackendFailure::Stale,
-                )));
-            }
-        } else if matches!(operation, Op::Describe(p::Empty {})) {
-            self.generation = Some(generation.into());
-        } else {
+        if self
+            .declaration
+            .as_ref()
+            .is_some_and(|(description, _)| description.generation != generation)
+        {
             return Err(context.failure(ah_vfs_storage::Failure::Backend(
-                ah_vfs_storage::BackendFailure::Unavailable,
+                ah_vfs_storage::BackendFailure::Stale,
             )));
         }
+        if matches!(operation, Op::Describe(_)) {
+            let (description, _) = self.declaration.get_or_insert_with(|| {
+                let description = D::describe();
+                let capabilities = description.capabilities;
+                (description.into_wire(generation.to_owned()), capabilities)
+            });
+            return Ok(p::Reply::new(Value::Description(
+                description.clone().into(),
+            )));
+        }
+        let (_, capabilities) = self.declaration.as_ref().ok_or_else(|| {
+            context.failure(ah_vfs_storage::Failure::Backend(
+                ah_vfs_storage::BackendFailure::Unavailable,
+            ))
+        })?;
+        let capabilities = *capabilities;
+        if let Op::Storage(p::StorageCall {
+            operation: Some(request),
+            ..
+        }) = &operation
+            && self.settings.is_some()
+            && !capabilities.supports(request.storage_operation())
+        {
+            return Err(ah_vfs_storage::StorageError::without_effects(
+                request.storage_operation(),
+                ah_vfs_storage::Failure::Rejected(ah_vfs_storage::Rejection::Unsupported),
+                None,
+            )
+            .into());
+        }
         let value = match operation {
-            Op::Describe(p::Empty {}) => {
-                let mut description = D::describe();
-                description.generation = generation.into();
-                Value::Description(description.into())
-            }
             Op::Initialize(p::Initialize {
                 settings: Some(settings),
             }) => {
@@ -317,12 +404,12 @@ impl<D: api::Guest> Dispatcher<D> {
                 id,
                 config: Some(config),
             }) => {
-                self.capacity(&context)?;
+                if self.next != 0 {
+                    return Err(p::Failure::new(p::FailureCode::InvalidRequest).into());
+                }
                 let storage = D::open(id, config)?;
                 use ah_vfs_storage::{AttributeSupport, ContractViolation, Failure};
-                let caps = p::decode_capabilities(&D::describe().capabilities)
-                    .map_err(|reason| context.failure(Failure::Contract(reason)))?;
-                let declared = match (caps.permissions(), caps.xattrs()) {
+                let declared = match (capabilities.permissions(), capabilities.xattrs()) {
                     (AttributeSupport::None, AttributeSupport::None) => None,
                     support => Some(support),
                 };
@@ -331,11 +418,19 @@ impl<D: api::Guest> Dispatcher<D> {
                         context.failure(Failure::Contract(ContractViolation::InvalidDeclaration))
                     );
                 }
-                let info = storage.0.info();
+                let chunk_size = storage.0.chunk_size().get();
+                if chunk_size > p::MAX_DATA_BYTES {
+                    return Err(
+                        context.failure(Failure::Contract(ContractViolation::InvalidDeclaration))
+                    );
+                }
+                let chunk_size = u32::try_from(chunk_size).map_err(|_| {
+                    context.failure(Failure::Contract(ContractViolation::InvalidDeclaration))
+                })?;
                 let handle = self.insert(Resource::Storage(storage));
                 Value::Storage(p::Storage {
                     handle,
-                    info: Some(info),
+                    info: Some(p::StorageInfo { chunk_size }),
                 })
             }
             Op::Storage(p::StorageCall {
@@ -350,15 +445,10 @@ impl<D: api::Guest> Dispatcher<D> {
                         | p::StorageOp::RemoveXattr(_)),
                     ),
             }) => {
-                use ah_vfs_storage::{ContractViolation, Failure, Rejection, StorageError};
+                use ah_vfs_storage::{ContractViolation, Failure, StorageError};
                 let (request, base, links) = p::decode_attribute(attribute, data)
                     .map_err(|_| p::Failure::new(p::FailureCode::InvalidRequest))?;
                 let operation = request.operation();
-                let capabilities = p::decode_capabilities(&D::describe().capabilities)
-                    .map_err(|reason| context.failure(Failure::Contract(reason)))?;
-                if !capabilities.supports(operation) {
-                    return Err(context.failure(Failure::Rejected(Rejection::Unsupported)));
-                }
                 let attributes = self
                     .storage(&context, handle)?
                     .attributes()
@@ -375,14 +465,8 @@ impl<D: api::Guest> Dispatcher<D> {
                 handle,
                 operation: Some(p::StorageOp::Remove(wire)),
             }) => {
-                use ah_vfs_storage::{Failure, Rejection};
                 let (request, base, links) = p::decode_remove(wire)
                     .map_err(|_| p::Failure::new(p::FailureCode::InvalidRequest))?;
-                let capabilities = p::decode_capabilities(&D::describe().capabilities)
-                    .map_err(|reason| context.failure(Failure::Contract(reason)))?;
-                if !capabilities.remove() {
-                    return Err(context.failure(Failure::Rejected(Rejection::Unsupported)));
-                }
                 self.storage(&context, handle)?
                     .remove(&request, &base, links)?;
                 Value::Unit(p::Empty {})
@@ -391,47 +475,27 @@ impl<D: api::Guest> Dispatcher<D> {
                 handle,
                 operation: Some(p::StorageOp::Rename(wire)),
             }) => {
-                use ah_vfs_storage::{ContractViolation, Failure, Operation, Rejection};
+                use ah_vfs_storage::{Failure, Rejection};
                 let (request, base, links) = p::decode_rename(wire)
                     .map_err(|_| p::Failure::new(p::FailureCode::InvalidRequest))?;
-                let capabilities = p::decode_capabilities(&D::describe().capabilities)
-                    .map_err(|reason| context.failure(Failure::Contract(reason)))?;
                 if !capabilities.rename().supports(request.mode()) {
                     return Err(context.failure(Failure::Rejected(Rejection::Unsupported)));
                 }
                 let entry = self
                     .storage(&context, handle)?
                     .rename(&request, &base, links)?;
-                Value::Entry(p::encode_entry(&entry).map_err(|_| {
-                    ah_vfs_storage::StorageError::after_dispatch(
-                        Operation::Rename,
-                        Failure::Contract(ContractViolation::InvalidEntry),
-                        None,
-                    )
-                })?)
+                Value::Entry(encode_entry(&context, &entry)?)
             }
             Op::Storage(p::StorageCall {
                 handle,
                 operation: Some(p::StorageOp::CreateDirectory(wire)),
             }) => {
-                use ah_vfs_storage::{ContractViolation, Failure, Operation, Rejection};
                 let (request, base, links) = p::decode_create_directory(wire)
                     .map_err(|_| p::Failure::new(p::FailureCode::InvalidRequest))?;
-                let capabilities = p::decode_capabilities(&D::describe().capabilities)
-                    .map_err(|reason| context.failure(Failure::Contract(reason)))?;
-                if !capabilities.directories().can_create() {
-                    return Err(context.failure(Failure::Rejected(Rejection::Unsupported)));
-                }
                 let entry = self
                     .storage(&context, handle)?
                     .create_dir(&request, &base, links)?;
-                Value::Entry(p::encode_entry(&entry).map_err(|_| {
-                    ah_vfs_storage::StorageError::after_dispatch(
-                        Operation::CreateDirectory,
-                        Failure::Contract(ContractViolation::InvalidEntry),
-                        None,
-                    )
-                })?)
+                Value::Entry(encode_entry(&context, &entry)?)
             }
             Op::Storage(p::StorageCall {
                 handle,
@@ -469,14 +533,32 @@ impl<D: api::Guest> Dispatcher<D> {
             }
             Op::Storage(p::StorageCall {
                 handle,
-                operation: Some(request),
-            }) => return self.storage(&context, handle)?.call(request, data),
+                operation: Some(p::StorageOp::Stat(wire)),
+            }) => {
+                let (request, base, links) = p::decode_stat(wire)
+                    .map_err(|_| p::Failure::new(p::FailureCode::InvalidRequest))?;
+                let entry = self
+                    .storage(&context, handle)?
+                    .stat(&request, &base, links)?;
+                Value::Entry(encode_entry(&context, &entry)?)
+            }
+            Op::Storage(p::StorageCall {
+                handle,
+                operation: Some(p::StorageOp::ReadLink(wire)),
+            }) => {
+                let (request, base, links) = p::decode_read_link(wire)
+                    .map_err(|_| p::Failure::new(p::FailureCode::InvalidRequest))?;
+                let target = self
+                    .storage(&context, handle)?
+                    .read_link(&request, &base, links)?;
+                return p::encode_link_target(target)
+                    .map_err(|reason| context.failure(ah_vfs_storage::Failure::Rejected(reason)));
+            }
             Op::Read(read) => {
                 let handle = read.handle;
                 let (request, base, links) = p::decode_read(read)
                     .map_err(|_| p::Failure::new(p::FailureCode::InvalidRequest))?;
-                p::decode_capabilities(&D::describe().capabilities)
-                    .map_err(|cause| context.failure(ah_vfs_storage::Failure::Contract(cause)))?
+                capabilities
                     .require_read(&request)
                     .map_err(|reason| context.failure(ah_vfs_storage::Failure::Rejected(reason)))?;
                 self.capacity(&context)?;
@@ -489,8 +571,7 @@ impl<D: api::Guest> Dispatcher<D> {
                 let handle = write.handle;
                 let (request, base, links) = p::decode_write(write)
                     .map_err(|_| p::Failure::new(p::FailureCode::InvalidRequest))?;
-                p::decode_capabilities(&D::describe().capabilities)
-                    .map_err(|cause| context.failure(ah_vfs_storage::Failure::Contract(cause)))?
+                capabilities
                     .require_write(&request)
                     .map_err(|reason| context.failure(ah_vfs_storage::Failure::Rejected(reason)))?;
                 self.capacity(&context)?;
@@ -557,7 +638,7 @@ impl<D: api::Guest> Dispatcher<D> {
                     )));
                 };
                 if matches!(op, Op::Commit(_)) {
-                    Value::Entry(writer.0.commit()?)
+                    Value::Entry(encode_entry(&context, &writer.0.commit()?)?)
                 } else {
                     writer.0.abort()?;
                     Value::Unit(p::Empty {})
@@ -578,6 +659,17 @@ impl<D: api::Guest> Dispatcher<D> {
         };
         Ok(p::Reply::new(value))
     }
+}
+
+fn encode_entry(
+    context: &api::ErrorContext,
+    entry: &ah_vfs_storage::Entry,
+) -> api::Result<p::Entry> {
+    p::encode_entry(entry).map_err(|_| {
+        context.failure(ah_vfs_storage::Failure::Contract(
+            ah_vfs_storage::ContractViolation::InvalidEntry,
+        ))
+    })
 }
 
 /// Bind the small WIT transport and host-service imports in the guest crate.

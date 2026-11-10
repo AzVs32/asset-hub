@@ -1,8 +1,7 @@
 //! A single host-linked configuration declaration covers every external plugin.
 //! Adding a backend changes entries and artifacts, never this Rust type.
 use serde::{Deserialize, Serialize};
-use std::{fmt, path::PathBuf};
-use vfs_plugin_protocol::JsonObject;
+use std::{collections::BTreeMap, fmt, path::PathBuf};
 use vfs_plugin_wasm::HostGrants;
 
 /// Parent namespace for the host's plugin bootstrap configuration.
@@ -28,7 +27,7 @@ pub struct PluginSpec {
     pub source: PluginSource,
     /// Plugin-defined values, validated by initialize using its described schema.
     #[serde(default)]
-    pub settings: JsonObject,
+    pub settings: BTreeMap<String, serde_json::Value>,
 }
 impl fmt::Debug for PluginSpec {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

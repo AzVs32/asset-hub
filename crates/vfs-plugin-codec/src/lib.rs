@@ -205,9 +205,6 @@ pub fn driver_error(error: p::Failure, instance: Option<&str>) -> DriverError {
         _ => protocol_violation(),
     }
 }
-pub fn capabilities(value: Capabilities) -> Vec<i32> {
-    p::encode_capabilities(value)
-}
 pub fn decode_capabilities(names: &[i32]) -> Result<Capabilities, DriverError> {
     p::decode_capabilities(names).map_err(|cause| {
         LifecycleError::with_source(LifecycleFailure::InvalidDeclaration, cause).into()
@@ -216,25 +213,16 @@ pub fn decode_capabilities(names: &[i32]) -> Result<Capabilities, DriverError> {
 pub fn describe(driver: &dyn Driver, generation: String) -> p::Description {
     let info = driver.info();
     p::Description {
-        major: p::PROTOCOL_MAJOR,
-        minor: p::PROTOCOL_MINOR,
-        required_features: vec![],
-        features: p::PROTOCOL_FEATURES
-            .iter()
-            .map(|feature| (*feature).into())
-            .collect(),
-        required_host_capabilities: vec![],
-        instance_schema_profile: p::INSTANCE_SCHEMA_PROFILE.into(),
-        generation,
         key: info.key().as_str().into(),
         name: info.name().clone(),
         version: info.version().to_string(),
         child_mounts: info.child_mount_policy() == ChildMountPolicy::Allow,
-        capabilities: capabilities(info.capabilities()),
+        capabilities: p::encode_capabilities(info.capabilities()),
 
         settings_schema: info.settings_schema().cloned().map(Into::into),
         instance_schema: info.instance_config_schema().cloned().map(Into::into),
         config_version: info.instance_config_version().get(),
+        ..p::description_header(generation)
     }
 }
 pub fn driver_info(d: &p::Description) -> Result<DriverInfo, DriverError> {
@@ -277,15 +265,25 @@ pub fn driver_info(d: &p::Description) -> Result<DriverInfo, DriverError> {
         .build())
 }
 pub fn entry(operation: Operation, entry: Entry) -> Result<p::Entry, StorageError> {
-    p::encode_entry(&entry)
-        .map_err(|cause| storage_protocol_violation_with_source(operation, cause))
+    p::encode_entry(&entry).map_err(|cause| invalid_entry(operation, cause))
 }
+
 pub fn decode_entry(operation: Operation, entry: p::Entry) -> Result<Entry, StorageError> {
-    p::decode_entry(entry).map_err(|error| match error {
-        p::EntryValueError::Path(cause) => storage_protocol_violation_with_source(operation, cause),
-        cause => storage_protocol_violation_with_source(operation, cause),
-    })
+    p::decode_entry(entry).map_err(|cause| invalid_entry(operation, cause))
 }
+
+fn invalid_entry(operation: Operation, cause: p::EntryValueError) -> StorageError {
+    let source: Box<dyn std::error::Error + Send + Sync> = match cause {
+        p::EntryValueError::Path(cause) => Box::new(cause),
+        cause => Box::new(cause),
+    };
+    StorageError::after_dispatch(
+        operation,
+        Failure::Contract(ContractViolation::InvalidEntry),
+        Some(source),
+    )
+}
+
 /// An unexpected control-plane failure during storage execution is a contract bug.
 /// Valid storage failures retain their independent cause and outcome.
 pub fn storage_error(operation: Operation, may_publish: bool, error: DriverError) -> StorageError {

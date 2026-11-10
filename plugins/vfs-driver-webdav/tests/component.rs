@@ -356,6 +356,17 @@ async fn protobuf_component_opens_writes_commits_reads_and_lists() -> Result {
     let entry = writer.commit().await?;
     assert_eq!(entry.entry_type(), ah_vfs_storage::EntryType::file(Some(4)));
     assert_eq!(entry.path(), &file);
+    let observed = storage
+        .stat_entry(
+            ah_vfs_storage::StatRequest::new(
+                file.to_rooted_expr(),
+                ah_vfs_storage::SymlinkAction::Preserve,
+            ),
+            Default::default(),
+        )
+        .await?;
+    assert_eq!(observed.path(), &file);
+    assert_eq!(observed.entry_type(), EntryType::file(Some(4)));
     let mut reader = storage
         .read_file(
             ah_vfs_storage::ReadRequest::new(

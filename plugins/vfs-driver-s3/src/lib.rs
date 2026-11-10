@@ -6,14 +6,15 @@
 //! collisions are rejected rather than silently selecting one interpretation.
 use ah_vfs_storage::{BackendFailure, ContractViolation, EntryType, Failure, Operation, Rejection};
 mod s3;
+use std::num::NonZeroUsize;
 use std::{
     cell::{Cell, RefCell},
     collections::BTreeMap,
 };
-use vfs_plugin_protocol::{self as p, Value};
+use vfs_plugin_protocol as p;
 
 vfs_plugin_guest::export_plugin!(S3Driver, "../../crates/vfs-plugin-protocol/wit");
-use vfs_plugin_guest::api::{self, Guest, GuestReader, GuestStorage, GuestWriter};
+use vfs_plugin_guest::api::{self, Description, Guest, GuestReader, GuestStorage, GuestWriter};
 type Result<T> = std::result::Result<T, api::Failure>;
 fn invalid(field: &str, kind: p::ConfigErrorKind) -> api::Failure {
     p::Failure {
@@ -29,20 +30,18 @@ fn path(context: &api::ErrorContext, path: &str) -> Result<()> {
         .map(|_| ())
         .map_err(|_| context.failure(Failure::Rejected(Rejection::UnsupportedName)))
 }
-fn caps() -> Vec<i32> {
+fn caps() -> ah_vfs_storage::Capabilities {
     use ah_vfs_storage::{Capabilities, DirectorySupport, ReadSupport, WriteModes, WriteSupport};
-    p::encode_capabilities(
-        Capabilities::default()
-            .with_stat(true)
-            .with_read(ReadSupport::Range)
-            .with_write(WriteSupport::staged(WriteModes::Both, true))
-            .with_directories(DirectorySupport::prefix(false, false))
-            .with_remove(true),
-    )
+    Capabilities::default()
+        .with_stat(true)
+        .with_read(ReadSupport::Range)
+        .with_write(WriteSupport::staged(WriteModes::Both, true))
+        .with_directories(DirectorySupport::prefix(false, false))
+        .with_remove(true)
 }
 struct S3Driver;
 impl Guest for S3Driver {
-    fn describe() -> p::Description {
+    fn describe() -> Description {
         let mut properties = serde_json::Map::new();
         for key in ["endpoint", "bucket", "region", "access_key", "secret_key"] {
             let secret = matches!(key, "access_key" | "secret_key");
@@ -60,17 +59,9 @@ impl Guest for S3Driver {
             ),
             ("additionalProperties".into(), false.into()),
         ]);
-        p::Description {
-            major: p::PROTOCOL_MAJOR,
-            minor: p::PROTOCOL_MINOR,
+        Description {
             required_features: vec![],
-            features: p::PROTOCOL_FEATURES
-                .iter()
-                .map(|feature| (*feature).into())
-                .collect(),
             required_host_capabilities: vec!["http".into()],
-            instance_schema_profile: p::INSTANCE_SCHEMA_PROFILE.into(),
-            generation: String::new(),
             key: "s3".into(),
             name: "S3 object storage".into(),
             version: env!("CARGO_PKG_VERSION").into(),
@@ -128,26 +119,20 @@ struct S3Storage {
     client: s3::Client,
 }
 impl GuestStorage for S3Storage {
-    fn info(&self) -> p::StorageInfo {
-        p::StorageInfo {
-            chunk_size: 64 * 1024,
-        }
+    fn chunk_size(&self) -> NonZeroUsize {
+        NonZeroUsize::new(64 * 1024).unwrap_or(NonZeroUsize::MIN)
     }
-    fn call(&self, request: p::StorageOp, data: Vec<u8>) -> Result<p::Reply> {
-        let client = self.client.for_operation(request.storage_operation());
-        let context = client.context.clone();
-        if !data.is_empty() {
-            return Err(context.failure(Failure::Rejected(Rejection::Conflict)));
-        }
-        let value = match request {
-            p::StorageOp::Stat(request) => {
-                let entry = api::direct_stat(request, |path| client.stat(path.as_str()))?;
-                Value::Entry(encode_entry(&context, &entry)?)
-            }
-            _ => return Err(context.failure(Failure::Rejected(Rejection::Unsupported))),
-        };
-        Ok(p::Reply::new(value))
+
+    fn stat(
+        &self,
+        request: &ah_vfs_storage::StatRequest,
+        base: &ah_vfs_storage::StoragePath,
+        links: ah_vfs_storage::IntermediateSymlinks,
+    ) -> Result<ah_vfs_storage::Entry> {
+        let client = self.client.for_operation(Operation::Stat);
+        api::direct_stat(request, base, links, |path| client.stat(path.as_str()))
     }
+
     fn remove(
         &self,
         request: &ah_vfs_storage::RemoveRequest,
@@ -366,7 +351,7 @@ impl GuestWriter for S3Writer {
         *self.session.borrow_mut() = Some(session);
         Ok(())
     }
-    fn commit(&self) -> Result<p::Entry> {
+    fn commit(&self) -> Result<ah_vfs_storage::Entry> {
         let context = api::ErrorContext::storage(Operation::Write);
         let mut session = self
             .session
@@ -379,7 +364,6 @@ impl GuestWriter for S3Writer {
             None,
         )
         .map_err(|_| context.failure(Failure::Contract(ContractViolation::InvalidEntry)))?;
-        let entry = encode_entry(&context, &entry)?;
         if session.size == 0 {
             session.client.request(
                 "PUT",
@@ -415,9 +399,4 @@ impl GuestWriter for S3Writer {
             .ok_or_else(|| context.failure(Failure::Backend(BackendFailure::Closed)))?
             .abort()
     }
-}
-
-fn encode_entry(context: &api::ErrorContext, entry: &ah_vfs_storage::Entry) -> Result<p::Entry> {
-    p::encode_entry(entry)
-        .map_err(|_| context.failure(Failure::Contract(ContractViolation::InvalidResponse)))
 }
