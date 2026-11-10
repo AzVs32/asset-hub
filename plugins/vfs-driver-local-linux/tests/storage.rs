@@ -743,52 +743,85 @@ async fn rename_uses_the_actual_slot_and_concurrent_arrivals_cannot_overwrite() 
 }
 
 #[tokio::test]
-async fn staging_names_are_hidden_and_cannot_be_accessed() -> TestResult {
+async fn anonymous_staging_reserves_no_entry_names() -> TestResult {
+    use ah_vfs_storage::{
+        ListRequest, ListTarget, Publication, StatRequest, SymlinkAction, WriteRequest,
+    };
+
     let f = fixture().await?;
-    let _writer = f
+    let name = ".asset-hub-write-report";
+    let target = path(name)?.to_rooted_expr();
+    let listing = ListRequest::new(
+        ListTarget::Path(path("")?.to_rooted_expr()),
+        Default::default(),
+    );
+    let mut writer = f
         .storage
         .write_file(
-            ah_vfs_storage::WriteRequest::new(
-                path("pending")?.to_rooted_expr(),
-                ah_vfs_storage::WriteMode::CreateNew,
-                ah_vfs_storage::Publication::Staged,
-            ),
+            WriteRequest::new(target.clone(), WriteMode::CreateNew, Publication::Atomic),
             Default::default(),
         )
         .await?;
+    writer.write_chunk(b"report").await?;
     assert_eq!(std::fs::read_dir(&f.root)?.count(), 0);
-    let name = ".asset-hub-write-reserved";
     assert!(
         f.storage
-            .list_entries(
-                &ah_vfs_storage::ListRequest::new(
-                    ah_vfs_storage::ListTarget::Path(path("")?.to_rooted_expr()),
-                    Default::default()
-                ),
-                Default::default()
-            )
+            .list_entries(&listing, Default::default())
             .await?
             .entries()
             .is_empty()
     );
-    assert!(matches!(
-        f.storage
-            .stat_entry(ah_vfs_storage::StatRequest::new(path(name)?.to_rooted_expr(), ah_vfs_storage::SymlinkAction::Preserve), Default::default())
-            .await,
-        Err(error) if error.failure() == Failure::Rejected(Rejection::AccessDenied)
-    ));
-    assert!(matches!(
-        f.storage
-            .remove_entry(RemoveRequest::new((path(name)?).to_rooted_expr(), RemoveKind::NonDirectory)?, Default::default())
-            .await,
-        Err(error) if error.failure() == Failure::Rejected(Rejection::AccessDenied)
-    ));
-    assert!(matches!(
-        f.storage
-            .create_dir(ah_vfs_storage::CreateDirectoryRequest::new(path(".asset-hub-write-reserved")?.to_rooted_expr(), ah_vfs_storage::CreateDirectoryMode::Recursive), Default::default())
-            .await,
-        Err(error) if error.failure() == Failure::Rejected(Rejection::AccessDenied)
-    ));
+
+    writer.commit().await?;
+    let entry = f
+        .storage
+        .stat_entry(
+            StatRequest::new(target.clone(), SymlinkAction::Preserve),
+            Default::default(),
+        )
+        .await?;
+    assert_eq!(entry.path().as_str(), name);
+    assert_eq!(std::fs::read(f.root.join(name))?, b"report");
+    let page = f.storage.list_entries(&listing, Default::default()).await?;
+    assert_eq!(page.entries().len(), 1);
+    assert_eq!(page.entries()[0].path(), entry.path());
+    f.storage
+        .remove_entry(
+            RemoveRequest::new(target, RemoveKind::NonDirectory)?,
+            Default::default(),
+        )
+        .await?;
+    assert_eq!(std::fs::read_dir(&f.root)?.count(), 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn listing_reports_a_child_address_beyond_the_logical_limit() -> TestResult {
+    use ah_vfs_storage::{ListRequest, ListTarget, MAX_PATH_BYTES};
+    use cap_std::{ambient_authority, fs::Dir};
+
+    let f = fixture().await?;
+    let mut dir = Dir::open_ambient_dir(&f.root, ambient_authority())?;
+    let component = "x".repeat(254);
+    let mut segments = Vec::new();
+    while (segments.len() + 1) * (component.len() + 1) < MAX_PATH_BYTES {
+        dir.create_dir(&component)?;
+        dir = dir.open_dir(&component)?;
+        segments.push(component.as_str());
+    }
+    dir.write(
+        "valid-child-name-that-overflows-the-logical-address",
+        b"data",
+    )?;
+    let target = path(&segments.join("/"))?.to_rooted_expr();
+    let list = ListRequest::new(ListTarget::Path(target), Default::default());
+    let error = f
+        .storage
+        .list_entries(&list, Default::default())
+        .await
+        .err()
+        .ok_or("overlong child address was accepted")?;
+    assert_eq!(error.failure(), Failure::Rejected(Rejection::PathTooLong));
     Ok(())
 }
 

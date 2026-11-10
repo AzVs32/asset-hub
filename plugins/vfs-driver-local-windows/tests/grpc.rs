@@ -1,7 +1,10 @@
 #![cfg(target_os = "windows")]
 //! End-to-end checks use the actual native plugin executable and a TCP channel.
 use ah_vfs::application::driver_error::LifecycleFailure;
-use ah_vfs_storage::{BackendFailure, Failure, MutationOutcome, Operation};
+use ah_vfs_storage::{
+    BackendFailure, Failure, MutationOutcome, Operation, Publication, Rejection, RenameMode,
+    RenameRequest, WriteMode, WriteRequest,
+};
 mod common;
 use ah_vfs::application::driver_catalog::DriverCatalog;
 use ah_vfs::application::dto::*;
@@ -102,6 +105,45 @@ async fn native_process_passes_shared_storage_contracts_over_grpc() -> Result {
     .await?;
     let root = tempfile::tempdir()?;
     let storage = storage(driver.as_ref(), root.path(), records.clone()).await?;
+    let existing = root.path().join("existing");
+    std::fs::write(&existing, b"original")?;
+    for publication in [Publication::Staged, Publication::Atomic] {
+        let replace = WriteRequest::new(
+            StoragePath::parse("existing")?.to_rooted_expr(),
+            WriteMode::Replace,
+            publication,
+        );
+        assert_eq!(
+            driver.info().capabilities().require_write(&replace),
+            Err(Rejection::Unsupported)
+        );
+        let error = storage
+            .write_file(replace, Default::default())
+            .await
+            .err()
+            .ok_or("replacement staged without an identity guarantee")?;
+        assert_eq!(error.failure(), Failure::Rejected(Rejection::Unsupported));
+        assert_eq!(error.outcome(), MutationOutcome::Unchanged);
+    }
+    assert_eq!(std::fs::read(&existing)?, b"original");
+    assert_eq!(std::fs::read_dir(root.path())?.count(), 1);
+    let source = root.path().join("source");
+    std::fs::write(&source, b"source")?;
+    let rename = RenameRequest::new(
+        StoragePath::parse("source")?.to_rooted_expr(),
+        StoragePath::parse("existing")?.to_rooted_expr(),
+        RenameMode::Replace,
+    )?;
+    let error = storage
+        .move_entry(rename, Default::default())
+        .await
+        .err()
+        .ok_or("rename replaced a distinct occupied slot without an identity guarantee")?;
+    assert_eq!(error.failure(), Failure::Rejected(Rejection::Unsupported));
+    assert_eq!(error.outcome(), MutationOutcome::Unchanged);
+    assert_eq!(std::fs::read(&source)?, b"source");
+    assert_eq!(std::fs::read(&existing)?, b"original");
+
     let mut writer = storage
         .write_file(
             ah_vfs_storage::WriteRequest::new(

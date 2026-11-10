@@ -101,7 +101,7 @@ pub(super) fn entry(
     .map_err(|cause| {
         StorageError::without_effects(
             operation,
-            Failure::Contract(ContractViolation::InvalidResponse),
+            Failure::Contract(ContractViolation::InvalidEntry),
             Some(Box::new(cause)),
         )
     })
@@ -133,7 +133,7 @@ pub(super) fn regular_file(operation: Operation, metadata: &Metadata) -> Result<
 fn list_path_error(operation: Operation, cause: ah_vfs_storage::PathError) -> StorageError {
     StorageError::without_effects(
         operation,
-        Failure::Rejected(Rejection::UnsupportedName),
+        Failure::Rejected(Rejection::PathTooLong),
         Some(Box::new(cause)),
     )
 }

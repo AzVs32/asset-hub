@@ -2,6 +2,8 @@
 
 插件必须是 WebAssembly Component，保留同步的 `assethub:vfs/driver@2.0.0.call` 导出，控制消息采用 protobuf。宿主提供标准 WASIp2 CLI、时钟、随机数、文件系统、socket 和 HTTP 接口，使用异步 WASI 链接和异步宿主调用。核心模块不接受，也不自动适配。当前 Wasmtime 为 50.0.1，p3 支持暂缓。
 
+`ah-vfs-storage` 定义实例内的路径、请求、能力、元数据和错误。应用负责虚拟路径与挂载解析。gRPC 和 Wasm 共用 `assethub.vfs.v11` Protobuf 定义，Rust guest SDK 接收领域请求，在传输边界完成编解码。每次打开存储实例都建立独立会话，读写流绑定该会话的实例代次。
+
 ## 默认权限
 
 默认没有 HTTP 来源、TCP 目标、预开放目录或环境变量；没有命令行参数，stdin 为 EOF，stdout/stderr 丢弃输出。标准时钟和随机数可用。每个控制连接和 Storage 分别拥有 WasiCtx、资源表和 Store。

@@ -22,8 +22,6 @@ mod fs;
 mod lookup;
 
 const CHUNK_SIZE: usize = 64 * 1024;
-// This namespace is inaccessible through Storage and omitted from listings.
-const TEMP_PREFIX: &str = ".asset-hub-write-";
 
 async fn blocking<T: Send + 'static>(
     context: Operation,

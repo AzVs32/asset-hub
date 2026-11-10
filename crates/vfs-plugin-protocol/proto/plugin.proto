@@ -182,7 +182,7 @@ message StorageCall {
 message Read { uint64 handle = 1; Lookup lookup = 2; uint64 offset = 3; optional uint64 length = 4; }
 // Writes stage a whole file until Commit. Unsupported atomic/mode requests fail
 // before staging. Commit and Abort are terminal, including errors/cancellation;
-// uncertain mutation results are OUTCOME_UNKNOWN and must never be replayed.
+// uncertain mutation results are MUTATION_OUTCOME_UNKNOWN and must never be replayed.
 enum WriteMode { WRITE_MODE_UNSPECIFIED = 0; CREATE_NEW = 1; REPLACE = 2; }
 enum Publication { PUBLICATION_UNSPECIFIED = 0; STAGED = 1; ATOMIC = 2; }
 message Write { uint64 handle = 1; Lookup lookup = 2; WriteMode mode = 3; Publication publication = 4; }

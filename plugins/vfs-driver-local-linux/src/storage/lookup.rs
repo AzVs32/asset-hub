@@ -422,7 +422,6 @@ impl<'a, 'r> Walk<'a, 'r> {
         path: StoragePath,
         name: &str,
     ) -> Result<Selected, StorageError> {
-        fs::validate(self.op, &path)?;
         let fd = openat2(
             parent.file.as_ref(),
             name,
@@ -703,7 +702,6 @@ pub(super) fn write_destination(
         .path()
         .join(name)
         .map_err(|_| rejected(op, Rejection::PathTooLong))?;
-    fs::validate(op, &path)?;
     let dir = Dir::from_std_file(
         parent
             .file

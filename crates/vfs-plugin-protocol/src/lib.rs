@@ -125,7 +125,7 @@ pub fn negotiate_protocol(
     }
     Ok(NegotiatedProtocol {
         major: PROTOCOL_MAJOR,
-        // The initial v2 revision is zero, so every peer minor negotiates to zero.
+        // This major defines only minor revision zero.
         minor: PROTOCOL_MINOR,
         features: description
             .features

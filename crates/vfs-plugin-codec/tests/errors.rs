@@ -207,16 +207,20 @@ fn dispatch_evidence_round_trips_independently_of_the_failure_cause() -> Result 
         for cause in [
             Failure::Backend(BackendFailure::TimedOut),
             Failure::Rejected(Rejection::AccessDenied),
+            Failure::Rejected(Rejection::Conflict),
             Failure::Contract(ContractViolation::InvalidEntry),
         ] {
             for dispatched in [false, true] {
+                let source =
+                    Some(Box::new(std::io::Error::other("private backend diagnostics")) as _);
                 let error = if dispatched {
-                    StorageError::after_dispatch(operation, cause, None)
+                    StorageError::after_dispatch(operation, cause, source)
                 } else {
-                    StorageError::without_effects(operation, cause, None)
+                    StorageError::without_effects(operation, cause, source)
                 };
                 let decoded = round_trip(error.into(), None)?;
                 let storage = decoded.storage_error().ok_or("storage failure")?;
+                assert!(storage.source().is_none());
                 assert_eq!(storage.operation(), operation);
                 assert_eq!(storage.failure(), cause);
                 assert_eq!(
@@ -240,14 +244,15 @@ fn unknown_failure_tags_and_read_mutation_outcomes_are_rejected() -> Result {
         None,
     );
     let encoded = failure(error.into());
-    for mutate in [0, 1, 2, 3] {
+    for mutate in [0, 1, 2, 3, 4] {
         let mut wire = encoded.clone();
         let storage = wire.storage.as_mut().ok_or("storage")?;
         match mutate {
             0 => storage.operation = "unknown".into(),
             1 => storage.reason = "unknown".into(),
             2 => storage.family = "unknown".into(),
-            _ => storage.outcome = p::MutationOutcome::Unknown.into(),
+            3 => storage.outcome = p::MutationOutcome::Unknown.into(),
+            _ => storage.outcome = p::MutationOutcome::Unspecified.into(),
         }
         let error = driver_error(wire, None);
         assert!(error.storage_error().is_none());

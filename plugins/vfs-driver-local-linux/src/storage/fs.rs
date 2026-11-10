@@ -1,6 +1,5 @@
 //! Relative directory traversal and backend-neutral error/metadata conversion.
 
-use super::TEMP_PREFIX;
 use ah_vfs_storage::{
     BackendFailure, ContractViolation, Failure, Operation, Rejection, StorageError,
 };
@@ -15,20 +14,6 @@ pub(super) fn error(operation: Operation, error: io::Error) -> StorageError {
         crate::error::io_failure(&error),
         Some(Box::new(error)),
     )
-}
-
-pub(super) fn validate(operation: Operation, path: &StoragePath) -> Result<(), StorageError> {
-    if path
-        .entry_names()
-        .any(|name| name.as_str().starts_with(TEMP_PREFIX))
-    {
-        return Err(StorageError::without_effects(
-            operation,
-            Failure::Rejected(Rejection::AccessDenied),
-            None,
-        ));
-    }
-    Ok(())
 }
 
 pub(super) fn entry(
@@ -53,7 +38,7 @@ pub(super) fn entry(
     .map_err(|cause| {
         StorageError::without_effects(
             operation,
-            Failure::Contract(ContractViolation::InvalidResponse),
+            Failure::Contract(ContractViolation::InvalidEntry),
             Some(Box::new(cause)),
         )
     })
@@ -62,7 +47,7 @@ pub(super) fn entry(
 fn list_path_error(operation: Operation, cause: ah_vfs_storage::PathError) -> StorageError {
     StorageError::without_effects(
         operation,
-        Failure::Rejected(Rejection::UnsupportedName),
+        Failure::Rejected(Rejection::PathTooLong),
         Some(Box::new(cause)),
     )
 }
@@ -86,9 +71,6 @@ pub(super) fn list_entries(
                     None,
                 )
             })?;
-        if name.starts_with(TEMP_PREFIX) {
-            continue;
-        }
         let name = EntryName::parse(&name).map_err(|cause| {
             StorageError::without_effects(
                 operation,

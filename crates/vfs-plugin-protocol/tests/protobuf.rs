@@ -390,6 +390,25 @@ fn read_rejects_an_overflowing_range_before_dispatch() -> Result {
 }
 
 #[test]
+fn read_preserves_absent_and_explicit_lengths() -> Result {
+    use ah_vfs_storage as d;
+
+    let path = d::PathExpr::parse("../file/")?;
+    let base = d::StoragePath::parse("docs")?;
+    let links = d::IntermediateSymlinks::Reject;
+    for length in [None, Some(0), Some(42)] {
+        let request = d::ReadRequest::new(path.clone(), d::ReadRange::new(3, length)?);
+        let operation = Op::Read(p::encode_read(1, &request, &base, links));
+        let bytes = p::encode_request("g", &operation, vec![])?;
+        let (_, Op::Read(read), _) = p::decode_request(&bytes)? else {
+            return Err("missing read request".into());
+        };
+        assert_eq!(p::decode_read(read)?, (request, base.clone(), links));
+    }
+    Ok(())
+}
+
+#[test]
 fn write_round_trips_binding_and_rejects_implicit_modes() -> Result {
     use ah_vfs_storage as d;
     let request = d::WriteRequest::new(
@@ -601,7 +620,7 @@ fn attribute_replies_apply_limits_before_decoding_and_preserve_empty_values() ->
     use std::num::NonZeroUsize;
     let limit = NonZeroUsize::new(20).ok_or("limit")?;
     let names = XattrList::new(
-        vec![XattrName::parse("user.a")?, XattrName::parse("user.b")?],
+        vec![XattrName::parse("user.a")?, XattrName::parse("user.é")?],
         limit,
     )?;
     let reply = p::encode_attribute_result(E::Names(limit), R::Names(names.clone()))?;
@@ -699,5 +718,150 @@ fn listing_validates_limits_and_cursor_before_enumeration() -> Result {
         p::decode_page(&bound, page, &[]),
         Err(d::ContractViolation::InvalidPage)
     );
+    Ok(())
+}
+
+#[test]
+fn entry_timestamps_preserve_absence_epoch_and_signed_subseconds() -> Result {
+    use ah_vfs_storage as d;
+    use std::time::{Duration, UNIX_EPOCH};
+
+    for modified in [
+        None,
+        Some(p::Timestamp {
+            seconds: 0,
+            nanos: 0,
+        }),
+        Some(p::Timestamp {
+            seconds: -1,
+            nanos: 500_000_000,
+        }),
+        Some(p::Timestamp {
+            seconds: 42,
+            nanos: 123_456_700,
+        }),
+    ] {
+        let wire = p::Entry {
+            path: "file".into(),
+            kind: p::EntryKind::File.into(),
+            size: Some(0),
+            modified,
+        };
+        let reply = p::Reply {
+            result: Some(p::Value::Entry(wire.clone())),
+            data: vec![],
+        };
+        let bytes = p::encode_reply(Ok(reply))?;
+        let Some(p::Value::Entry(received)) = p::decode_reply(&bytes)??.result else {
+            return Err("missing entry reply".into());
+        };
+        let entry = p::decode_entry(received)?;
+        assert_eq!(entry.entry_type(), d::EntryType::file(Some(0)));
+        assert_eq!(p::encode_entry(&entry)?, wire);
+    }
+
+    assert!(matches!(
+        p::decode_time(0, 1_000_000_000),
+        Err(p::EntryValueError::Timestamp)
+    ));
+    for ((seconds, nanos), host_time) in [
+        (
+            (i64::MIN, 0),
+            UNIX_EPOCH.checked_sub(Duration::from_secs(1 << 63)),
+        ),
+        (
+            (i64::MAX, 0),
+            UNIX_EPOCH.checked_add(Duration::from_secs((1 << 63) - 1)),
+        ),
+        ((0, 1), UNIX_EPOCH.checked_add(Duration::from_nanos(1))),
+    ] {
+        let expected = host_time
+            .filter(|time| matches!(p::encode_time(*time), Ok(wire) if wire == (seconds, nanos)));
+        match expected {
+            Some(time) => assert_eq!(p::decode_time(seconds, nanos)?, time),
+            None => assert!(matches!(
+                p::decode_time(seconds, nanos),
+                Err(p::EntryValueError::Timestamp)
+            )),
+        }
+    }
+    if let Some(time) = UNIX_EPOCH.checked_add(Duration::from_secs(1 << 63)) {
+        assert!(matches!(
+            p::encode_time(time),
+            Err(p::EntryValueError::Timestamp)
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn page_replies_require_the_selected_directory_and_explicit_completion() -> Result {
+    use ah_vfs_storage as d;
+    use p::page::Completion;
+
+    let request = d::ListRequest::new(
+        d::ListTarget::Path(d::PathExpr::parse("/alias/")?),
+        d::PageSize::new(1)?,
+    );
+    let bound = request.bind_selection(d::DirectorySelection::from_lookup(
+        d::StoragePath::parse("docs")?,
+        d::DirectoryIdentity::from_bytes([7; 16]),
+    ))?;
+    let entry = d::Entry::new(
+        d::StoragePath::parse("docs/a")?,
+        d::EntryType::Directory,
+        None,
+    )?;
+    let original = d::DirectoryPage::new(&bound, vec![entry], true)?;
+    let bytes = p::encode_reply(Ok(p::encode_page(original.clone())?))?;
+    let reply = p::decode_reply(&bytes)??;
+    let Some(p::Value::Page(page)) = reply.result else {
+        return Err("missing page reply".into());
+    };
+    assert_eq!(p::decode_page(&bound, page.clone(), &reply.data)?, original);
+
+    let empty = p::Page {
+        completion: Some(Completion::End(p::Empty {})),
+        ..page.clone()
+    };
+    assert!(
+        p::decode_page(&bound, empty.clone(), &[])?
+            .entries()
+            .is_empty()
+    );
+    let invalid = Err(d::ContractViolation::InvalidPage);
+    for (address, identity) in [
+        ("alias", vec![7; 16]),
+        ("docs", vec![8; 16]),
+        ("docs", vec![7; 15]),
+    ] {
+        let forged = p::Page {
+            reported: Some(p::DirectorySelection {
+                address: address.into(),
+                identity,
+            }),
+            ..empty.clone()
+        };
+        assert_eq!(p::decode_page(&bound, forged, &[]), invalid);
+    }
+    for completion in [None, Some(Completion::After("b".into()))] {
+        let malformed = p::Page {
+            completion,
+            ..page.clone()
+        };
+        assert_eq!(p::decode_page(&bound, malformed, &reply.data), invalid);
+    }
+    assert_eq!(
+        p::decode_page(&bound, page.clone(), &reply.data.repeat(2)),
+        invalid
+    );
+    let unrelated = p::Entry {
+        path: "elsewhere/a".into(),
+        kind: p::EntryKind::Dir.into(),
+        ..Default::default()
+    };
+    let mut data = Vec::new();
+    unrelated.encode_length_delimited(&mut data)?;
+    assert_eq!(p::decode_page(&bound, page, &data), invalid);
     Ok(())
 }

@@ -1,9 +1,8 @@
-//! Pure VFS identities, namespace rules and backend-independent storage contracts.
+//! VFS identities and virtual namespace rules.
 //!
 //! [`namespace`] maps virtual mount points to shared [`DriverInstance`] identities.
-//! [`storage`] defines instance-local addresses, values, operations and guarantees.
-//! Namespace resolution may validate a routed suffix as a storage address; storage
-//! semantics do not depend on virtual paths or mounts.
+//! [`ah_vfs_storage`] defines instance-local addresses, values, operations and
+//! guarantees. Namespace resolution maps a routed suffix to a storage address.
 //!
 //! Driver identities and lifecycle errors are shared by host instance management
 //! and mounting. Application services, asynchronous ports, persistence and plugin
