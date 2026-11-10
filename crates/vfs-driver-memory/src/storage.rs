@@ -1,7 +1,6 @@
 use crate::Capacity;
 use ah_vfs::application::port::LookupContext;
 use ah_vfs::application::port::{Storage, StorageFileReader, StorageFileWriter, StorageFuture};
-use ah_vfs::domain::storage::{StorageMoveEntryRequest, StorageRemoveEntryRequest};
 use ah_vfs_storage::{
     BackendFailure, ContractViolation, Failure, Operation, Rejection, StorageError,
 };
@@ -182,42 +181,6 @@ fn children<'a>(
     })
 }
 
-fn require_dir<'a>(
-    operation: Operation,
-    entries: &'a BTreeMap<String, MemoryEntry>,
-    path: &str,
-) -> Result<&'a Arc<ah_vfs_storage::DirectoryIdentity>, StorageError> {
-    match &entries
-        .get(path)
-        .ok_or_else(|| error(operation, Failure::Rejected(Rejection::NotFound)))?
-        .data
-    {
-        EntryData::Dir(identity) => Ok(identity),
-        EntryData::File(_) | EntryData::Link(_) => {
-            Err(error(operation, Failure::Rejected(Rejection::NotDirectory)))
-        }
-    }
-}
-
-fn require_parents(
-    operation: Operation,
-    entries: &BTreeMap<String, MemoryEntry>,
-    path: &StoragePath,
-) -> Result<(), StorageError> {
-    let mut current = StoragePath::root();
-    let mut segments = path.entry_names().peekable();
-    while let Some(segment) = segments.next() {
-        if segments.peek().is_none() {
-            break;
-        }
-        current = current
-            .join(&segment)
-            .map_err(|cause| path_error(operation, cause))?;
-        require_dir(operation, entries, current.as_str())?;
-    }
-    Ok(())
-}
-
 /// Hierarchical volatile storage. Namespace mutations and publication are atomic
 /// under one instance lock. Readers retain immutable versions of opened files.
 ///
@@ -314,114 +277,19 @@ impl Storage for MemoryStorage {
         Box::pin(async move { self.create_directory(&request, context) })
     }
 
-    fn remove_entry(&self, request: StorageRemoveEntryRequest) -> StorageFuture<'_, ()> {
-        Box::pin(async move {
-            let operation = Operation::Remove;
-            if request.path.is_root() {
-                return Err(error(
-                    operation,
-                    Failure::Rejected(Rejection::RootProtected),
-                ));
-            }
-            let mut entries = self.shared.lock(operation)?;
-            require_parents(operation, &entries, &request.path)?;
-            let entry = entries
-                .get(request.path.as_str())
-                .ok_or_else(|| error(operation, Failure::Rejected(Rejection::NotFound)))?;
-            if matches!(entry.data, EntryData::Dir(_))
-                && entries
-                    .keys()
-                    .any(|path| descendant(path, request.path.as_str()))
-            {
-                return Err(error(
-                    operation,
-                    Failure::Rejected(Rejection::DirectoryNotEmpty),
-                ));
-            }
-            entries.remove(request.path.as_str());
-            Ok(())
-        })
+    fn remove_entry(
+        &self,
+        request: ah_vfs_storage::RemoveRequest,
+        context: LookupContext,
+    ) -> StorageFuture<'_, ()> {
+        Box::pin(async move { self.remove(&request, context) })
     }
 
-    fn move_entry(&self, request: StorageMoveEntryRequest) -> StorageFuture<'_, Entry> {
-        Box::pin(async move {
-            let operation = Operation::Rename;
-            if request.source.is_root() || request.destination.is_root() {
-                return Err(error(
-                    operation,
-                    Failure::Rejected(Rejection::RootProtected),
-                ));
-            }
-            let mut entries = self.shared.lock(operation)?;
-            require_parents(operation, &entries, &request.source)?;
-            require_parents(operation, &entries, &request.destination)?;
-            let source = entries
-                .get(request.source.as_str())
-                .ok_or_else(|| error(operation, Failure::Rejected(Rejection::NotFound)))?
-                .clone();
-            if request.source == request.destination {
-                if !request.replace {
-                    return Err(error(
-                        operation,
-                        Failure::Rejected(Rejection::AlreadyExists),
-                    ));
-                }
-                return source
-                    .metadata(request.destination)
-                    .map_err(|cause| metadata_error(operation, cause));
-            }
-            if descendant(request.destination.as_str(), request.source.as_str()) {
-                return Err(error(operation, Failure::Rejected(Rejection::Conflict)));
-            }
-            if let Some(target) = entries.get(request.destination.as_str()) {
-                if !request.replace {
-                    return Err(error(
-                        operation,
-                        Failure::Rejected(Rejection::AlreadyExists),
-                    ));
-                }
-                match (&source.data, &target.data) {
-                    (EntryData::Dir(_), EntryData::File(_) | EntryData::Link(_)) => {
-                        return Err(error(operation, Failure::Rejected(Rejection::NotDirectory)));
-                    }
-                    (EntryData::File(_) | EntryData::Link(_), EntryData::Dir(_)) => {
-                        return Err(error(operation, Failure::Rejected(Rejection::IsDirectory)));
-                    }
-                    (EntryData::Dir(_), EntryData::Dir(_))
-                        if entries
-                            .keys()
-                            .any(|path| descendant(path, request.destination.as_str())) =>
-                    {
-                        return Err(error(
-                            operation,
-                            Failure::Rejected(Rejection::DirectoryNotEmpty),
-                        ));
-                    }
-                    _ => {}
-                }
-            }
-            // Validate every resulting address before changing the namespace.
-            let mut moved = Vec::new();
-            for (path, entry) in entries.iter() {
-                if path == request.source.as_str() || descendant(path, request.source.as_str()) {
-                    let suffix = &path[request.source.as_str().len()..];
-                    let destination =
-                        StoragePath::parse(&format!("{}{suffix}", request.destination))
-                            .map_err(|cause| path_error(operation, cause))?;
-                    moved.push((path.clone(), destination.as_str().to_owned(), entry.clone()));
-                }
-            }
-            let result = source
-                .metadata(request.destination.clone())
-                .map_err(|cause| metadata_error(operation, cause))?;
-            for (old, _, _) in &moved {
-                entries.remove(old);
-            }
-            entries.remove(request.destination.as_str());
-            for (_, new, entry) in moved {
-                entries.insert(new, entry);
-            }
-            Ok(result)
-        })
+    fn move_entry(
+        &self,
+        request: ah_vfs_storage::RenameRequest,
+        context: LookupContext,
+    ) -> StorageFuture<'_, Entry> {
+        Box::pin(async move { self.rename(&request, context) })
     }
 }

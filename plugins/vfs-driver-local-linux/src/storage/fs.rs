@@ -1,7 +1,6 @@
 //! Relative directory traversal and backend-neutral error/metadata conversion.
 
 use super::TEMP_PREFIX;
-use ah_vfs::domain::storage::StorageMoveEntryRequest;
 use ah_vfs_storage::{
     BackendFailure, ContractViolation, Failure, Operation, Rejection, StorageError,
 };
@@ -197,72 +196,6 @@ pub(super) fn list_entries(
             Some(Box::new(cause)),
         )
     })
-}
-
-pub(super) fn remove_entry(root: &Dir, path: StoragePath) -> Result<(), StorageError> {
-    let operation = Operation::Remove;
-    let (parent, name) = parent(operation, root, &path)?;
-    let metadata = parent
-        .symlink_metadata(&name)
-        .map_err(|cause| error(operation, cause))?;
-    if metadata.is_dir() {
-        parent
-            .remove_dir(name)
-            .map_err(|cause| dispatched_error(operation, cause))
-    } else {
-        parent
-            .remove_file_or_symlink(name)
-            .map_err(|cause| dispatched_error(operation, cause))
-    }
-}
-
-pub(super) fn move_entry(
-    root: &Dir,
-    request: StorageMoveEntryRequest,
-) -> Result<Entry, StorageError> {
-    let operation = Operation::Rename;
-    let (source_parent, source) = parent(operation, root, &request.source)?;
-    let (destination_parent, destination) = parent(operation, root, &request.destination)?;
-    let metadata = source_parent
-        .symlink_metadata(&source)
-        .map_err(|cause| error(operation, cause))?;
-    if request.source == request.destination {
-        if !request.replace {
-            return Err(StorageError::without_effects(
-                operation,
-                Failure::Rejected(Rejection::AlreadyExists),
-                None,
-            ));
-        }
-        return entry(operation, request.destination, metadata);
-    }
-    if request.replace {
-        source_parent
-            .rename(source, &destination_parent, destination)
-            .map_err(|cause| dispatched_error(operation, cause))?;
-    } else {
-        rename_noreplace(&source_parent, &source, &destination_parent, &destination)?;
-    }
-    entry(operation, request.destination, metadata).map_err(|error| {
-        StorageError::after_dispatch(operation, error.failure(), Some(Box::new(error)))
-    })
-}
-
-fn rename_noreplace(
-    source: &Dir,
-    name: &str,
-    destination: &Dir,
-    target: &str,
-) -> Result<(), StorageError> {
-    let operation = Operation::Rename;
-    rustix::fs::renameat_with(
-        source,
-        name,
-        destination,
-        target,
-        rustix::fs::RenameFlags::NOREPLACE,
-    )
-    .map_err(|cause| dispatched_error(operation, cause.into()))
 }
 
 pub(super) fn dispatched_error(operation: Operation, source: io::Error) -> StorageError {

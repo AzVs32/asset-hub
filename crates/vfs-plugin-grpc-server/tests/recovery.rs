@@ -2,11 +2,11 @@ use ah_vfs::application::driver_info::DriverInfo;
 use ah_vfs::application::dto::*;
 use ah_vfs::application::port::*;
 use ah_vfs::domain::InstanceId;
-use ah_vfs::domain::storage::StorageRemoveEntryRequest;
 use ah_vfs_storage::{
     BackendFailure, ContractViolation, Failure, Operation, Rejection, StorageError,
 };
 use ah_vfs_storage::{Entry, EntryType, StoragePath};
+use ah_vfs_storage::{RemoveKind, RemoveRequest};
 use std::{
     num::NonZeroUsize,
     sync::{
@@ -198,7 +198,11 @@ impl Storage for BackendStorage {
         )
     }
     #[allow(clippy::panic)]
-    fn remove_entry(&self, _: StorageRemoveEntryRequest) -> StorageFuture<'_, ()> {
+    fn remove_entry(
+        &self,
+        _: RemoveRequest,
+        _: ah_vfs::application::port::LookupContext,
+    ) -> StorageFuture<'_, ()> {
         Box::pin(async move {
             self.faults.removes.fetch_add(1, Ordering::SeqCst);
             if self.faults.panic_remove.swap(false, Ordering::SeqCst) {
@@ -362,9 +366,13 @@ async fn panic_recovery_uses_a_fresh_backend_and_never_replays_the_mutation() ->
     let mut reader = read(old.as_ref()).await?;
     faults.panic_remove.store(true, Ordering::SeqCst);
     let error = old
-        .remove_entry(StorageRemoveEntryRequest {
-            path: StoragePath::parse("file")?,
-        })
+        .remove_entry(
+            RemoveRequest::new(
+                (StoragePath::parse("file")?).to_rooted_expr(),
+                RemoveKind::NonDirectory,
+            )?,
+            Default::default(),
+        )
         .await
         .err()
         .ok_or("panic result")?;
@@ -1367,9 +1375,13 @@ async fn shutdown_cannot_be_undone_by_an_inflight_backend_recovery() -> Result {
     faults.panic_remove.store(true, Ordering::SeqCst);
     assert!(
         storage
-            .remove_entry(StorageRemoveEntryRequest {
-                path: StoragePath::parse("file")?
-            })
+            .remove_entry(
+                RemoveRequest::new(
+                    (StoragePath::parse("file")?).to_rooted_expr(),
+                    RemoveKind::NonDirectory
+                )?,
+                Default::default()
+            )
             .await
             .is_err()
     );

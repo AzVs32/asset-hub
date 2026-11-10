@@ -1,6 +1,4 @@
-//! An authenticated, bounded memory-storage session using the new domain contract.
-//! The service is independent of plugin registration and binds one configured
-//! instance.
+//! An authenticated, bounded session for experimental attribute operations.
 use crate::{ServerLimits, limits, security::AuthToken};
 use ah_vfs::application::driver_error::DriverError;
 use ah_vfs_storage as d;
@@ -8,18 +6,15 @@ use std::{pin::Pin, sync::Arc};
 use tokio::sync::mpsc;
 use tokio_stream::{Stream, wrappers::ReceiverStream};
 use tonic::{Request, Response, Status};
-use vfs_driver_memory::MemoryStorage;
 pub use vfs_plugin_grpc_wire::storage_contract as wire;
 use wire::{command::Action, reply::Result as Reply};
 
 pub fn service(
-    storage: Arc<MemoryStorage>,
     token: &str,
     limits: ServerLimits,
 ) -> Result<wire::storage_contract_server::StorageContractServer<ContractService>, DriverError> {
     Ok(
         wire::storage_contract_server::StorageContractServer::new(ContractService {
-            storage,
             token: AuthToken::new(token)?,
             admission: Arc::new(limits::Admission::new(limits)?),
         })
@@ -29,7 +24,6 @@ pub fn service(
 }
 
 pub struct ContractService {
-    storage: Arc<MemoryStorage>,
     token: AuthToken,
     admission: Arc<limits::Admission>,
 }
@@ -48,9 +42,7 @@ impl wire::storage_contract_server::StorageContract for ContractService {
         }
         let mut incoming = request.into_inner();
         let (tx, rx) = mpsc::channel(1);
-        let mut session = Session {
-            storage: self.storage.clone(),
-        };
+        let mut session = Session;
         let admission = self.admission.clone();
         let task_permit = permit.clone();
         tokio::spawn(async move {
@@ -125,9 +117,7 @@ async fn send(
     )
 }
 
-struct Session {
-    storage: Arc<MemoryStorage>,
-}
+struct Session;
 
 enum CallError {
     Input(Status),
@@ -162,24 +152,7 @@ impl Session {
     }
 
     fn execute(&mut self, frame: wire::Command) -> Result<Reply, CallError> {
-        let links = if frame.reject_intermediate_links {
-            d::IntermediateSymlinks::Reject
-        } else {
-            d::IntermediateSymlinks::FollowWithinInstance
-        };
-        let unit = || Reply::Unit(wire::Unit {});
         match frame.action.ok_or_else(invalid_request)? {
-            Action::Remove(request) => {
-                let kind = match wire::RemoveKind::try_from(request.kind) {
-                    Ok(wire::RemoveKind::NonDirectory) => d::RemoveKind::NonDirectory,
-                    Ok(wire::RemoveKind::EmptyDirectory) => d::RemoveKind::EmptyDirectory,
-                    _ => return Err(invalid_request().into()),
-                };
-                let request = d::RemoveRequest::new(path(&request.path)?, kind)
-                    .map_err(|_| invalid_request())?;
-                self.storage.remove(&request, links)?;
-                Ok(unit())
-            }
             Action::GetPermissions(request) => {
                 let request = d::AttributeRequest::new(
                     path(&request.path)?,

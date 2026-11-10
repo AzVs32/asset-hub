@@ -1,7 +1,9 @@
 //! Staged Windows writes, published by handle and disposed by handle on abort.
 use super::{TEMP_PREFIX, blocking, fs, lookup, native};
 use ah_vfs::application::port::{LookupContext, StorageFileWriter, StorageFuture};
-use ah_vfs_storage::{BackendFailure, Failure, MutationOutcome, Operation, Rejection, StorageError};
+use ah_vfs_storage::{
+    BackendFailure, Failure, MutationOutcome, Operation, Rejection, StorageError,
+};
 use ah_vfs_storage::{Entry, StoragePath};
 use ah_vfs_storage::{WriteMode, WriteRequest};
 use cap_std::fs::{Dir, File, OpenOptions, OpenOptionsExt};
@@ -93,7 +95,7 @@ impl FileWriteSession {
         // After dispatch the handle may refer to the published file. Deleting
         // through it is safe only if the rename is known to have failed.
         self.cleanup_stage = false;
-        if let Err(error) = native::rename(operation, file, &self.parent, &self.target, false) {
+        if let Err(error) = native::rename(operation, file, &self.parent, &self.target) {
             if error.failure() == Failure::Rejected(Rejection::AlreadyExists) {
                 self.cleanup_stage = true;
                 return Err(StorageError::without_effects(
@@ -121,7 +123,9 @@ impl FileWriteSession {
 impl Drop for FileWriteSession {
     fn drop(&mut self) {
         let operation = Operation::Write;
-        if self.cleanup_stage && let Some(file) = self.file.take() {
+        if self.cleanup_stage
+            && let Some(file) = self.file.take()
+        {
             let _ = native::delete(operation, &file);
         }
     }

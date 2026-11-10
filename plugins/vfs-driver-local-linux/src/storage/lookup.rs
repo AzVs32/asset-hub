@@ -23,6 +23,7 @@ fn stale(operation: Operation) -> StorageError {
     failure(operation, Failure::Backend(BackendFailure::Stale))
 }
 
+#[derive(Clone)]
 struct Selected {
     entry: Entry,
     file: Arc<File>,
@@ -90,6 +91,186 @@ pub(super) fn create_dir(
     })
 }
 
+struct Slot {
+    parent: Selected,
+    path: StoragePath,
+    name: String,
+}
+
+pub(super) fn remove(
+    root: &Dir,
+    request: &ah_vfs_storage::RemoveRequest,
+    context: LookupContext,
+) -> Result<(), StorageError> {
+    use ah_vfs_storage::RemoveKind;
+    use rustix::fs::{AtFlags, unlinkat};
+    let op = Operation::Remove;
+    let lookup = request.lookup();
+    let mut walk = Walk::new(root, lookup, &context, op);
+    let base = walk.start(
+        &context,
+        lookup.path().start() == LookupStart::BaseDirectory,
+    )?;
+    let slot = walk.mutation_slot(base)?;
+    let selected = walk.child(&slot.parent, slot.path.clone(), &slot.name)?;
+    lookup
+        .check_existing_target(&slot.path, selected.entry.entry_type())
+        .map_err(|reason| rejected(op, reason))?;
+    walk.verify_bound()?;
+    // The kernel checks the actual entry kind and emptiness in the unlink operation.
+    let flags = match request.kind() {
+        RemoveKind::NonDirectory => AtFlags::empty(),
+        RemoveKind::EmptyDirectory => AtFlags::REMOVEDIR,
+    };
+    unlinkat(slot.parent.file.as_ref(), slot.name.as_str(), flags)
+        .map_err(|cause| mutation_error(op, cause))
+}
+
+pub(super) fn rename(
+    root: &Dir,
+    request: &ah_vfs_storage::RenameRequest,
+    context: LookupContext,
+) -> Result<Entry, StorageError> {
+    use ah_vfs_storage::{RenameDecision, RenameDestination, RenameMode};
+    use rustix::fs::{RenameFlags, renameat_with};
+    let op = Operation::Rename;
+    let (source_lookup, destination_lookup) = request.lookups();
+    let mut walk = Walk::new(root, source_lookup, &context, op);
+    let relative = |lookup: PathLookup<'_>| lookup.path().start() == LookupStart::BaseDirectory;
+    let base = walk.start(
+        &context,
+        relative(source_lookup) || relative(destination_lookup),
+    )?;
+    let source = walk.mutation_slot(base.clone())?;
+    let selected = walk.child(&source.parent, source.path.clone(), &source.name)?;
+    let kind = selected.entry.entry_type();
+    source_lookup
+        .check_existing_target(&source.path, kind)
+        .map_err(|reason| rejected(op, reason))?;
+
+    walk.lookup = destination_lookup;
+    let destination = walk.mutation_slot(base)?;
+    let observed = if source.name == destination.name
+        && identity(op, &source.parent.file)? == identity(op, &destination.parent.file)?
+    {
+        RenameDestination::SameSlot
+    } else {
+        match walk.child(
+            &destination.parent,
+            destination.path.clone(),
+            &destination.name,
+        ) {
+            Ok(target)
+                if target.entry.entry_type() == EntryType::Directory
+                    && request.mode() == RenameMode::Replace
+                    && kind == EntryType::Directory
+                    && !empty_directory(&target.file)? =>
+            {
+                RenameDestination::NonEmptyDirectory
+            }
+            Ok(target) => RenameDestination::Occupied(target.entry.entry_type()),
+            Err(error) if error.failure() == Failure::Rejected(Rejection::NotFound) => {
+                RenameDestination::Missing
+            }
+            Err(error) => return Err(error),
+        }
+    };
+    let decision = request
+        .decide_destination(&destination.path, kind, observed)
+        .map_err(|reason| rejected(op, reason))?;
+    walk.verify_bound()?;
+    let result =
+        Entry::new(destination.path.clone(), kind, selected.entry.modified()).map_err(|cause| {
+            StorageError::without_effects(
+                op,
+                Failure::Contract(ah_vfs_storage::ContractViolation::InvalidEntry),
+                Some(Box::new(cause)),
+            )
+        })?;
+    if decision == RenameDecision::Unchanged {
+        return Ok(result);
+    }
+    if observed != RenameDestination::Missing {
+        // renameat2 has no compare-and-replace condition for an occupied slot.
+        return Err(rejected(op, Rejection::Unsupported));
+    }
+    let source_name =
+        if source_lookup.requires_directory() || destination_lookup.requires_directory() {
+            format!("{}/", source.name)
+        } else {
+            source.name
+        };
+    renameat_with(
+        source.parent.file.as_ref(),
+        source_name.as_str(),
+        destination.parent.file.as_ref(),
+        destination.name.as_str(),
+        RenameFlags::NOREPLACE,
+    )
+    .map_err(|cause| {
+        if cause == Errno::EXIST && request.mode() == RenameMode::Replace {
+            rejected(op, Rejection::Conflict)
+        } else {
+            mutation_error(op, cause)
+        }
+    })?;
+    // Check that the published entry is the source inode selected by this walk.
+    let published = walk
+        .child(&destination.parent, destination.path, &destination.name)
+        .and_then(|target| {
+            if identity(op, &selected.file)? == identity(op, &target.file)? {
+                Ok(())
+            } else {
+                Err(stale(op))
+            }
+        });
+    published.map_err(|error| {
+        StorageError::after_dispatch(op, error.failure(), Some(Box::new(error)))
+    })?;
+    Ok(result)
+}
+
+fn empty_directory(file: &File) -> Result<bool, StorageError> {
+    let op = Operation::Rename;
+    let fd = openat2(
+        file,
+        ".",
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
+        Mode::empty(),
+        ResolveFlags::BENEATH,
+    )
+    .map_err(|cause| fs::error(op, cause.into()))?;
+    let dir = Dir::from_std_file(fd.into());
+    Ok(dir
+        .entries()
+        .map_err(|cause| fs::error(op, cause))?
+        .next()
+        .transpose()
+        .map_err(|cause| fs::error(op, cause))?
+        .is_none())
+}
+
+fn mutation_error(op: Operation, cause: Errno) -> StorageError {
+    match cause {
+        Errno::NOSYS | Errno::OPNOTSUPP => rejected(op, Rejection::Unsupported),
+        Errno::INVAL if op == Operation::Rename => rejected(op, Rejection::Conflict),
+        Errno::ACCESS
+        | Errno::PERM
+        | Errno::EXIST
+        | Errno::NOENT
+        | Errno::NOTDIR
+        | Errno::ISDIR
+        | Errno::NOTEMPTY
+        | Errno::XDEV
+        | Errno::ROFS
+        | Errno::BUSY
+        | Errno::NAMETOOLONG
+        | Errno::NOSPC
+        | Errno::DQUOT => fs::error(op, cause.into()),
+        _ => fs::dispatched_error(op, cause.into()),
+    }
+}
+
 fn link_bytes(op: Operation, file: &File) -> Result<LinkTarget, StorageError> {
     // Linux accepts an empty path for an O_PATH descriptor of the link itself.
     // Reading by descriptor keeps the bytes and the classified type on one object.
@@ -133,16 +314,36 @@ impl<'a, 'r> Walk<'a, 'r> {
     fn resolve(&mut self, context: &LookupContext) -> Result<Selected, StorageError> {
         let op = self.op;
         let lookup = self.lookup;
-        let walk = self;
         let mut directories =
-            vec![walk.selected(StoragePath::root(), walk.open_file(&StoragePath::root())?)?];
-        if lookup.path().start() == LookupStart::BaseDirectory {
+            self.start(context, lookup.path().start() == LookupStart::BaseDirectory)?;
+        let walk = self;
+        let selected = walk.segment(lookup.path(), &mut directories, &[], false)?;
+        // Single can create only the final component. Its successful creation
+        // has already satisfied the absent-target policy.
+        if !walk.created || lookup.final_symlink() != SymlinkAction::Preserve {
+            lookup
+                .check_existing_target(selected.entry.path(), selected.entry.entry_type())
+                .map_err(|reason| rejected(op, reason))?;
+        }
+        walk.verify_bound()?;
+        Ok(selected)
+    }
+
+    fn start(
+        &mut self,
+        context: &LookupContext,
+        relative: bool,
+    ) -> Result<Vec<Selected>, StorageError> {
+        let op = self.op;
+        let mut directories =
+            vec![self.selected(StoragePath::root(), self.open_file(&StoragePath::root())?)?];
+        if relative {
             let mut base = StoragePath::root();
             for name in context.working_directory.entry_names() {
                 base = base.join(&name).map_err(|_| stale(op))?;
                 let parent = directories.last().ok_or_else(|| stale(op))?;
                 let selected =
-                    walk.child(parent, base.clone(), name.as_str())
+                    self.child(parent, base.clone(), name.as_str())
                         .map_err(|error| match error.failure() {
                             Failure::Rejected(
                                 Rejection::NotFound
@@ -157,16 +358,31 @@ impl<'a, 'r> Walk<'a, 'r> {
                 directories.push(selected);
             }
         }
-        let selected = walk.segment(lookup.path(), &mut directories, &[], false)?;
-        // Single can create only the final component. Its successful creation
-        // has already satisfied the absent-target policy.
-        if !walk.created || lookup.final_symlink() != SymlinkAction::Preserve {
-            lookup
-                .check_existing_target(selected.entry.path(), selected.entry.entry_type())
-                .map_err(|reason| rejected(op, reason))?;
-        }
-        walk.verify_bound()?;
-        Ok(selected)
+        Ok(directories)
+    }
+
+    fn mutation_slot(&mut self, mut directories: Vec<Selected>) -> Result<Slot, StorageError> {
+        let (operand, name) = self
+            .lookup
+            .path()
+            .split_final_name()
+            .ok_or_else(|| rejected(self.op, Rejection::RootProtected))?;
+        let parent = self.segment(
+            &operand,
+            &mut directories,
+            &[PathComponent::Name(name.clone())],
+            false,
+        )?;
+        let path = parent
+            .entry
+            .path()
+            .join(name)
+            .map_err(|_| rejected(self.op, Rejection::PathTooLong))?;
+        Ok(Slot {
+            parent,
+            path,
+            name: name.as_str().to_owned(),
+        })
     }
 
     fn open_file(&self, path: &StoragePath) -> Result<File, StorageError> {
@@ -384,6 +600,37 @@ fn identity(op: Operation, file: &File) -> Result<impl Eq, StorageError> {
 mod tests {
     use super::*;
     use ah_vfs_storage::StatRequest;
+
+    #[test]
+    fn cross_device_rename_leaves_both_slots_unchanged() -> Result<(), Box<dyn std::error::Error>> {
+        use ah_vfs_storage::{MutationOutcome, RenameMode, RenameRequest};
+        use std::os::unix::fs::MetadataExt;
+
+        let source = tempfile::tempdir()?;
+        let Ok(destination) = tempfile::tempdir_in("/dev/shm") else {
+            return Ok(());
+        };
+        if source.path().metadata()?.dev() == destination.path().metadata()?.dev() {
+            return Ok(());
+        }
+        let from = source.path().join("file");
+        let to = destination.path().join("file");
+        std::fs::write(&from, b"original")?;
+        let root = Dir::open_ambient_dir("/", cap_std::ambient_authority())?;
+        let request = RenameRequest::new(
+            PathExpr::parse(from.to_str().ok_or("source")?)?,
+            PathExpr::parse(to.to_str().ok_or("destination")?)?,
+            RenameMode::NoReplace,
+        )?;
+        let error = rename(&root, &request, LookupContext::default())
+            .err()
+            .ok_or("cross-device rename succeeded")?;
+        assert_eq!(error.failure(), Failure::Rejected(Rejection::CrossDevice));
+        assert_eq!(error.outcome(), MutationOutcome::Unchanged);
+        assert_eq!(std::fs::read(from)?, b"original");
+        assert!(!to.exists());
+        Ok(())
+    }
 
     #[test]
     fn replacing_a_bound_link_cannot_supply_new_bytes() -> Result<(), Box<dyn std::error::Error>> {

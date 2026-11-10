@@ -266,22 +266,83 @@ async fn same_instance_can_be_mounted_twice_but_moves_cannot_cross_mount_boundar
     assert_eq!(read(&f.entries, "/alias/file").await?, b"shared");
     assert!(matches!(
         f.entries
-            .move_entry(MoveEntryRequest {
-                source: virtual_path("/file")?,
-                destination: virtual_path("/alias/new")?,
-                replace: false
-            })
+            .move_entry(MoveEntryRequest::new(
+                "/file",
+                "/alias/new",
+                ah_vfs_storage::RenameMode::NoReplace
+            )?)
             .await,
         Err(EntryError::CrossMountMove)
     ));
     assert!(matches!(
         f.entries
-            .remove_entry(RemoveEntryRequest {
-                path: virtual_path("/alias")?
-            })
+            .remove_entry(RemoveEntryRequest::new(
+                "/alias",
+                ah_vfs_storage::RemoveKind::EmptyDirectory
+            )?)
             .await,
         Err(EntryError::MountBoundary(_))
     ));
+    Ok(())
+}
+
+#[tokio::test]
+async fn remove_and_rename_use_explicit_kinds_and_keep_vfs_namespace_owned_entries() -> TestResult {
+    use ah_vfs_storage::{CreateDirectoryMode, RemoveKind, RenameMode};
+
+    let f = fixture().await?;
+    f.mounts
+        .mount(MountRequest {
+            virtual_path: virtual_path("/virtual/mount")?,
+            driver_instance: reference(&f.root.id)?,
+        })
+        .await?;
+    write(&f.entries, "/file", b"retained").await?;
+    for path in ["/", "/virtual", "/virtual/mount"] {
+        assert!(matches!(
+            f.entries
+                .remove_entry(RemoveEntryRequest::new(path, RemoveKind::EmptyDirectory)?)
+                .await,
+            Err(EntryError::MountBoundary(_))
+        ));
+        assert!(matches!(
+            f.entries
+                .move_entry(MoveEntryRequest::new("/file", path, RenameMode::Replace)?)
+                .await,
+            Err(EntryError::MountBoundary(_))
+        ));
+    }
+    assert!(
+        matches!(f.entries.remove_entry(RemoveEntryRequest::new("/file/", RemoveKind::NonDirectory)?).await,
+        Err(error) if error.storage_error().is_some_and(|error| error.failure() == Failure::Rejected(Rejection::NotDirectory)))
+    );
+    assert!(
+        matches!(f.entries.move_entry(MoveEntryRequest::new("/file", "/target/", RenameMode::NoReplace)?).await,
+        Err(error) if error.storage_error().is_some_and(|error| error.failure() == Failure::Rejected(Rejection::NotDirectory)))
+    );
+    assert_eq!(read(&f.entries, "/file").await?, b"retained");
+    f.entries
+        .create_dir(CreateDirRequest::new(
+            "/directory",
+            CreateDirectoryMode::Single,
+        )?)
+        .await?;
+    f.entries
+        .move_entry(MoveEntryRequest::new(
+            "/directory/",
+            "/target/",
+            RenameMode::NoReplace,
+        )?)
+        .await?;
+    f.entries
+        .remove_entry(RemoveEntryRequest::new(
+            "/target/",
+            RemoveKind::EmptyDirectory,
+        )?)
+        .await?;
+    f.entries
+        .remove_entry(RemoveEntryRequest::new("/file", RemoveKind::NonDirectory)?)
+        .await?;
     Ok(())
 }
 

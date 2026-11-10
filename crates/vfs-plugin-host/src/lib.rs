@@ -9,7 +9,6 @@ use ah_vfs::application::driver_error::{DriverError, LifecycleError, LifecycleFa
 use ah_vfs::application::driver_info::DriverInfo;
 use ah_vfs::application::dto::*;
 use ah_vfs::application::port::*;
-use ah_vfs::domain::storage::{StorageMoveEntryRequest, StorageRemoveEntryRequest};
 use ah_vfs_storage::{
     BoundListRequest, DirectoryPage, DirectorySelection, Entry, ListRequest, Permissions,
     StoragePath, XattrName, XattrWriteMode,
@@ -512,26 +511,6 @@ impl RemoteStorage {
             .await
             .map_err(|error| convert::storage_error(operation, operation.may_mutate(), error))
     }
-    async fn entry(&self, request: p::StorageOp, path: StoragePath) -> Result<Entry, StorageError> {
-        let operation = request.storage_operation();
-
-        let r = self.call(request, vec![]).await?;
-        match r
-            .result
-            .ok_or_else(|| bad_response(operation, operation.may_mutate()))?
-        {
-            Value::Entry(entry) if r.data.is_empty() => {
-                let entry = convert::decode_entry(operation, entry).map_err(|source| {
-                    convert::response_error(operation, operation.may_mutate(), source)
-                })?;
-                if entry.path() != &path {
-                    return Err(bad_response(operation, operation.may_mutate()));
-                }
-                Ok(entry)
-            }
-            _ => Err(bad_response(operation, operation.may_mutate())),
-        }
-    }
     async fn unit(&self, request: p::StorageOp, data: Vec<u8>) -> Result<(), StorageError> {
         let operation = request.storage_operation();
         let r = self.call(request, data).await?;
@@ -716,25 +695,72 @@ impl Storage for RemoteStorage {
             Ok(entry)
         })
     }
-    fn move_entry(&self, r: StorageMoveEntryRequest) -> StorageFuture<'_, Entry> {
+    fn move_entry(
+        &self,
+        request: ah_vfs_storage::RenameRequest,
+        context: LookupContext,
+    ) -> StorageFuture<'_, Entry> {
         Box::pin(async move {
-            self.entry(
-                p::StorageOp::Move(p::Move {
-                    source: r.source.as_str().into(),
-                    destination: r.destination.as_str().into(),
-                    replace: r.replace,
-                }),
-                r.destination,
-            )
-            .await
+            if !self
+                .driver_info
+                .capabilities()
+                .rename()
+                .supports(request.mode())
+            {
+                return Err(StorageError::without_effects(
+                    Operation::Rename,
+                    Failure::Rejected(Rejection::Unsupported),
+                    None,
+                ));
+            }
+            let op = Operation::Rename;
+            let reply = self
+                .call(
+                    p::StorageOp::Rename(p::encode_rename(
+                        &request,
+                        &context.working_directory,
+                        context.intermediate_symlinks,
+                    )),
+                    vec![],
+                )
+                .await?;
+            let Some(Value::Entry(entry)) = reply.result else {
+                return Err(bad_response(op, true));
+            };
+            let entry = convert::decode_entry(op, entry)
+                .map_err(|error| convert::response_error(op, true, error))?;
+            if !reply.data.is_empty()
+                || entry.path().is_root()
+                || expected_lookup_address(request.lookups().1, &context)
+                    .is_some_and(|path| entry.path() != &path)
+                || (request.source().requires_directory()
+                    || request.destination().requires_directory())
+                    && entry.entry_type() != ah_vfs_storage::EntryType::Directory
+            {
+                return Err(bad_response(op, true));
+            }
+            Ok(entry)
         })
     }
-    fn remove_entry(&self, r: StorageRemoveEntryRequest) -> StorageFuture<'_, ()> {
+    fn remove_entry(
+        &self,
+        request: ah_vfs_storage::RemoveRequest,
+        context: LookupContext,
+    ) -> StorageFuture<'_, ()> {
         Box::pin(async move {
+            if !self.driver_info.capabilities().remove() {
+                return Err(StorageError::without_effects(
+                    Operation::Remove,
+                    Failure::Rejected(Rejection::Unsupported),
+                    None,
+                ));
+            }
             self.unit(
-                p::StorageOp::Remove(p::Path {
-                    path: r.path.as_str().into(),
-                }),
+                p::StorageOp::Remove(p::encode_remove(
+                    &request,
+                    &context.working_directory,
+                    context.intermediate_symlinks,
+                )),
                 vec![],
             )
             .await

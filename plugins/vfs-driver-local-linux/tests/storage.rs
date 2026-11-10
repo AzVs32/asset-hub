@@ -1,9 +1,9 @@
 #![cfg(target_os = "linux")]
 use ah_vfs_storage::{BackendFailure, Failure, Rejection};
+use ah_vfs_storage::{RemoveKind, RemoveRequest, RenameMode, RenameRequest};
 mod common;
 
 use ah_vfs::application::port::{Driver, Storage, StorageFileReader};
-use ah_vfs::domain::storage::{StorageMoveEntryRequest, StorageRemoveEntryRequest};
 use ah_vfs_storage::WriteMode;
 use ah_vfs_storage::{EntryType, StoragePath};
 
@@ -195,21 +195,31 @@ async fn dir_creation_and_removal_preserve_root_and_nonempty_dirs() -> TestResul
     ));
     assert!(matches!(
         f.storage
-            .remove_entry(StorageRemoveEntryRequest { path: path("a")? })
+            .remove_entry(RemoveRequest::new((path("a")?).to_rooted_expr(), RemoveKind::EmptyDirectory)?, Default::default())
             .await,
         Err(error) if error.failure() == Failure::Rejected(Rejection::DirectoryNotEmpty)
     ));
     std::fs::write(f.root.join("a/b/file"), b"x")?;
     f.storage
-        .remove_entry(StorageRemoveEntryRequest {
-            path: path("a/b/file")?,
-        })
+        .remove_entry(
+            RemoveRequest::new(
+                (path("a/b/file")?).to_rooted_expr(),
+                RemoveKind::NonDirectory,
+            )?,
+            Default::default(),
+        )
         .await?;
     f.storage
-        .remove_entry(StorageRemoveEntryRequest { path: path("a/b")? })
+        .remove_entry(
+            RemoveRequest::new((path("a/b")?).to_rooted_expr(), RemoveKind::EmptyDirectory)?,
+            Default::default(),
+        )
         .await?;
     f.storage
-        .remove_entry(StorageRemoveEntryRequest { path: path("a")? })
+        .remove_entry(
+            RemoveRequest::new((path("a")?).to_rooted_expr(), RemoveKind::EmptyDirectory)?,
+            Default::default(),
+        )
         .await?;
     assert!(!f.root.join("a").exists());
     let root = f
@@ -230,12 +240,13 @@ async fn dir_creation_and_removal_preserve_root_and_nonempty_dirs() -> TestResul
             .await,
         Err(error) if error.failure() == Failure::Rejected(Rejection::AlreadyExists)
     ));
-    assert!(matches!(
-        f.storage
-            .remove_entry(StorageRemoveEntryRequest { path: path("")? })
-            .await,
-        Err(error) if error.failure() == Failure::Rejected(Rejection::RootProtected)
-    ));
+    assert!(
+        RemoveRequest::new(
+            StoragePath::root().to_rooted_expr(),
+            RemoveKind::EmptyDirectory
+        )
+        .is_err()
+    );
     Ok(())
 }
 
@@ -593,76 +604,141 @@ async fn rename_handles_files_dirs_conflicts_and_replacement() -> TestResult {
     std::fs::write(f.root.join("b"), b"b")?;
     assert!(matches!(
         f.storage
-            .move_entry(StorageMoveEntryRequest {
-                source: path("a")?,
-                destination: path("b")?,
-                replace: false,
-            })
+            .move_entry(RenameRequest::new((path("a")?).to_rooted_expr(), (path("b")?).to_rooted_expr(), RenameMode::NoReplace)?, Default::default())
             .await,
         Err(error) if error.failure() == Failure::Rejected(Rejection::AlreadyExists)
     ));
     assert_eq!(std::fs::read(f.root.join("a"))?, b"a");
     assert_eq!(std::fs::read(f.root.join("b"))?, b"b");
-    let entry = f
+    let error = f
         .storage
-        .move_entry(StorageMoveEntryRequest {
-            source: path("a")?,
-            destination: path("b")?,
-            replace: true,
-        })
-        .await?;
-    assert_eq!(entry.path(), &path("b")?);
-    assert!(!f.root.join("a").exists());
-    assert_eq!(std::fs::read(f.root.join("b"))?, b"a");
+        .move_entry(
+            RenameRequest::new(
+                path("a")?.to_rooted_expr(),
+                path("b")?.to_rooted_expr(),
+                RenameMode::Replace,
+            )?,
+            Default::default(),
+        )
+        .await
+        .err()
+        .ok_or("unsafe replacement was accepted")?;
+    assert_eq!(error.failure(), Failure::Rejected(Rejection::Unsupported));
+    assert_eq!(error.outcome(), ah_vfs_storage::MutationOutcome::Unchanged);
+    assert_eq!(std::fs::read(f.root.join("a"))?, b"a");
+    assert_eq!(std::fs::read(f.root.join("b"))?, b"b");
     f.storage
-        .move_entry(StorageMoveEntryRequest {
-            source: path("b")?,
-            destination: path("c")?,
-            replace: false,
-        })
+        .move_entry(
+            RenameRequest::new(
+                path("a")?.to_rooted_expr(),
+                path("c")?.to_rooted_expr(),
+                RenameMode::Replace,
+            )?,
+            Default::default(),
+        )
         .await?;
+    assert!(!f.root.join("a").exists());
+    assert_eq!(std::fs::read(f.root.join("c"))?, b"a");
     std::fs::create_dir(f.root.join("old"))?;
     std::fs::write(f.root.join("old/child"), b"child")?;
     let entry = f
         .storage
-        .move_entry(StorageMoveEntryRequest {
-            source: path("old")?,
-            destination: path("new")?,
-            replace: false,
-        })
+        .move_entry(
+            RenameRequest::new(
+                (path("old")?).to_rooted_expr(),
+                (path("new")?).to_rooted_expr(),
+                RenameMode::NoReplace,
+            )?,
+            Default::default(),
+        )
         .await?;
     assert_eq!(entry.entry_type(), EntryType::Directory);
     assert_eq!(std::fs::read(f.root.join("new/child"))?, b"child");
     assert!(
         f.storage
-            .move_entry(StorageMoveEntryRequest {
-                source: path("new")?,
-                destination: path("new/child/sub")?,
-                replace: false,
-            })
+            .move_entry(
+                RenameRequest::new(
+                    (path("new")?).to_rooted_expr(),
+                    (path("new/child/sub")?).to_rooted_expr(),
+                    RenameMode::NoReplace
+                )?,
+                Default::default()
+            )
             .await
             .is_err()
     );
-    assert!(matches!(
-        f.storage
-            .move_entry(StorageMoveEntryRequest {
-                source: path("")?,
-                destination: path("root")?,
-                replace: false,
-            })
-            .await,
-        Err(error) if error.failure() == Failure::Rejected(Rejection::RootProtected)
-    ));
-    assert!(matches!(
-        f.storage
-            .move_entry(StorageMoveEntryRequest {
-                source: path("c")?,
-                destination: path("")?,
-                replace: true,
-            })
-            .await,
-        Err(error) if error.failure() == Failure::Rejected(Rejection::RootProtected)
-    ));
+    Ok(())
+}
+
+#[tokio::test]
+async fn rename_uses_the_actual_slot_and_concurrent_arrivals_cannot_overwrite() -> TestResult {
+    use ah_vfs::application::port::LookupContext;
+    use ah_vfs_storage::{MutationOutcome, PathExpr};
+    use std::os::unix::fs::symlink;
+
+    let f = fixture().await?;
+    std::fs::create_dir_all(f.root.join("work/directory/child"))?;
+    symlink("/work", f.root.join("alias"))?;
+    for name in ["first", "second"] {
+        std::fs::write(f.root.join("work").join(name), name)?;
+    }
+    let rename = |source: &str, destination: &str, mode| -> TestResult<_> {
+        Ok(f.storage.move_entry(
+            RenameRequest::new(
+                PathExpr::parse(source)?,
+                PathExpr::parse(destination)?,
+                mode,
+            )?,
+            LookupContext {
+                working_directory: path("work")?,
+                ..Default::default()
+            },
+        ))
+    };
+    let same = rename("directory/", "/alias/directory/", RenameMode::Replace)?.await?;
+    assert_eq!(same.path(), &path("work/directory")?);
+    assert!(f.root.join("work/directory/child").is_dir());
+    let error = rename("directory", "/alias/directory", RenameMode::NoReplace)?
+        .await
+        .err()
+        .ok_or("same slot allowed with NoReplace")?;
+    assert_eq!(error.failure(), Failure::Rejected(Rejection::AlreadyExists));
+    let error = rename("first", "new/", RenameMode::NoReplace)?
+        .await
+        .err()
+        .ok_or("file moved to a directory operand")?;
+    assert_eq!(error.failure(), Failure::Rejected(Rejection::NotDirectory));
+    std::fs::create_dir(f.root.join("work/empty"))?;
+    assert!(
+        matches!(rename("empty", "directory", RenameMode::Replace)?.await,
+        Err(error) if error.failure() == Failure::Rejected(Rejection::DirectoryNotEmpty))
+    );
+    assert!(
+        matches!(rename("directory", "empty", RenameMode::Replace)?.await,
+        Err(error) if error.failure() == Failure::Rejected(Rejection::Unsupported))
+    );
+    assert!(f.root.join("work/directory/child").is_dir());
+    assert!(f.root.join("work/empty").is_dir());
+
+    let (first, second) = tokio::join!(
+        rename("first", "winner", RenameMode::NoReplace)?,
+        rename("second", "winner", RenameMode::NoReplace)?,
+    );
+    let loser = match (first, second) {
+        (Ok(_), Err(error)) => {
+            assert_eq!(std::fs::read(f.root.join("work/winner"))?, b"first");
+            assert_eq!(std::fs::read(f.root.join("work/second"))?, b"second");
+            error
+        }
+        (Err(error), Ok(_)) => {
+            assert_eq!(std::fs::read(f.root.join("work/winner"))?, b"second");
+            assert_eq!(std::fs::read(f.root.join("work/first"))?, b"first");
+            error
+        }
+        _ => return Err("expected exactly one publication".into()),
+    };
+    assert_eq!(loser.failure(), Failure::Rejected(Rejection::AlreadyExists));
+    assert_eq!(loser.outcome(), MutationOutcome::Unchanged);
     Ok(())
 }
 
@@ -703,7 +779,7 @@ async fn staging_names_are_hidden_and_cannot_be_accessed() -> TestResult {
     ));
     assert!(matches!(
         f.storage
-            .remove_entry(StorageRemoveEntryRequest { path: path(name)? })
+            .remove_entry(RemoveRequest::new((path(name)?).to_rooted_expr(), RemoveKind::NonDirectory)?, Default::default())
             .await,
         Err(error) if error.failure() == Failure::Rejected(Rejection::AccessDenied)
     ));
@@ -853,28 +929,38 @@ async fn lookup_policy_controls_links_without_escaping_the_instance() -> TestRes
     );
     assert!(
         f.storage
-            .remove_entry(StorageRemoveEntryRequest {
-                path: path("linked/file")?
-            })
+            .remove_entry(
+                RemoveRequest::new(
+                    (path("linked/file")?).to_rooted_expr(),
+                    RemoveKind::NonDirectory
+                )?,
+                Default::default()
+            )
             .await
             .is_err()
     );
     assert!(
         f.storage
-            .move_entry(StorageMoveEntryRequest {
-                source: path("linked/file")?,
-                destination: path("moved")?,
-                replace: true,
-            })
+            .move_entry(
+                RenameRequest::new(
+                    (path("linked/file")?).to_rooted_expr(),
+                    (path("moved")?).to_rooted_expr(),
+                    RenameMode::Replace
+                )?,
+                Default::default()
+            )
             .await
             .is_err()
     );
     f.storage
-        .move_entry(StorageMoveEntryRequest {
-            source: path("leaf")?,
-            destination: path("moved-link")?,
-            replace: true,
-        })
+        .move_entry(
+            RenameRequest::new(
+                (path("leaf")?).to_rooted_expr(),
+                (path("moved-link")?).to_rooted_expr(),
+                RenameMode::Replace,
+            )?,
+            Default::default(),
+        )
         .await?;
     assert!(
         std::fs::symlink_metadata(f.root.join("moved-link"))?
@@ -882,19 +968,28 @@ async fn lookup_policy_controls_links_without_escaping_the_instance() -> TestRes
             .is_symlink()
     );
     f.storage
-        .remove_entry(StorageRemoveEntryRequest {
-            path: path("moved-link")?,
-        })
+        .remove_entry(
+            RemoveRequest::new(
+                (path("moved-link")?).to_rooted_expr(),
+                RemoveKind::NonDirectory,
+            )?,
+            Default::default(),
+        )
         .await?;
     f.storage
-        .remove_entry(StorageRemoveEntryRequest {
-            path: path("linked")?,
-        })
+        .remove_entry(
+            RemoveRequest::new((path("linked")?).to_rooted_expr(), RemoveKind::NonDirectory)?,
+            Default::default(),
+        )
         .await?;
     f.storage
-        .remove_entry(StorageRemoveEntryRequest {
-            path: path("dangling")?,
-        })
+        .remove_entry(
+            RemoveRequest::new(
+                (path("dangling")?).to_rooted_expr(),
+                RemoveKind::NonDirectory,
+            )?,
+            Default::default(),
+        )
         .await?;
     assert_eq!(std::fs::read(outside.path().join("file"))?, b"outside");
     assert!(!outside.path().join("new").exists());
@@ -976,17 +1071,6 @@ async fn recursive_creation_failure_preserves_cause_operation_and_parent_effects
     assert!(f.root.join("created").is_dir());
     assert_eq!(std::fs::read_dir(f.root.join("created"))?.count(), 0);
 
-    let error = f
-        .storage
-        .remove_entry(StorageRemoveEntryRequest {
-            path: StoragePath::root(),
-        })
-        .await
-        .err()
-        .ok_or("root removed")?;
-    assert_eq!(error.operation(), Operation::Remove);
-    assert_eq!(error.failure(), Failure::Rejected(Rejection::RootProtected));
-    assert_eq!(error.outcome(), MutationOutcome::Unchanged);
     Ok(())
 }
 

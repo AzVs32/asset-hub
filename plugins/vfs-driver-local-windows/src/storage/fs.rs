@@ -1,17 +1,12 @@
 //! Windows names, reparse-point policy and directory-relative filesystem I/O.
 use super::{TEMP_PREFIX, native};
-use ah_vfs::domain::storage::StorageMoveEntryRequest;
 use ah_vfs_storage::{
     BackendFailure, ContractViolation, Failure, Operation, Rejection, StorageError,
 };
 use ah_vfs_storage::{Entry, EntryName, EntryType, StoragePath};
-use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt};
-use cap_std::fs::{Dir, Metadata, MetadataExt, OpenOptions, OpenOptionsExt};
+use cap_std::fs::{Dir, Metadata, MetadataExt};
 use std::io;
-use windows_sys::Win32::Storage::FileSystem::{
-    FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
-    FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES, FILE_SHARE_READ, FILE_SHARE_WRITE, SYNCHRONIZE,
-};
+use windows_sys::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_REPARSE_POINT, FILE_READ_ATTRIBUTES};
 
 pub(super) fn error(operation: Operation, error: io::Error) -> StorageError {
     StorageError::without_effects(
@@ -69,12 +64,6 @@ pub(super) fn validate_name(operation: Operation, name: &str) -> Result<(), Stor
     }
     Ok(())
 }
-fn validate(operation: Operation, path: &StoragePath) -> Result<(), StorageError> {
-    for name in path.entry_names() {
-        validate_name(operation, name.as_str())?;
-    }
-    Ok(())
-}
 pub(super) fn reparse(metadata: &Metadata) -> bool {
     metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
 }
@@ -87,66 +76,6 @@ pub(super) fn checked_metadata(
     native::open_public(operation, parent, name, FILE_READ_ATTRIBUTES)?
         .metadata()
         .map_err(|cause| error(operation, cause))
-}
-fn dir(operation: Operation, root: &Dir, path: &StoragePath) -> Result<Dir, StorageError> {
-    validate(operation, path)?;
-    let mut current = root.try_clone().map_err(|cause| error(operation, cause))?;
-    for name in path.entry_names() {
-        let name = name.as_str();
-        // Keep directory handles unshareable for deletion. Traversal opens the
-        // reparse point itself and rejects it, including junctions and mount points.
-        let mut options = OpenOptions::new();
-        options
-            .read(true)
-            .access_mode(FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | SYNCHRONIZE)
-            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
-            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
-            .follow(FollowSymlinks::No);
-        let file = current
-            .open_with(name, &options)
-            .map_err(|cause| error(operation, cause))?;
-        native::public_handle(operation, &file)?;
-        let metadata = file.metadata().map_err(|cause| error(operation, cause))?;
-        if reparse(&metadata) {
-            return Err(StorageError::without_effects(
-                operation,
-                Failure::Rejected(Rejection::Unsupported),
-                None,
-            ));
-        }
-        if !metadata.is_dir() {
-            return Err(StorageError::without_effects(
-                operation,
-                Failure::Rejected(Rejection::NotDirectory),
-                None,
-            ));
-        }
-        current = Dir::from_std_file(file.into_std());
-    }
-    Ok(current)
-}
-
-pub(super) fn parent(
-    operation: Operation,
-    root: &Dir,
-    path: &StoragePath,
-) -> Result<(Dir, String), StorageError> {
-    validate(operation, path)?;
-    let parent = path.parent().ok_or_else(|| {
-        StorageError::without_effects(operation, Failure::Rejected(Rejection::RootProtected), None)
-    })?;
-    let name = path
-        .name()
-        .ok_or_else(|| {
-            StorageError::without_effects(
-                operation,
-                Failure::Rejected(Rejection::RootProtected),
-                None,
-            )
-        })?
-        .as_str()
-        .to_owned();
-    Ok((dir(operation, root, &parent)?, name))
 }
 pub(super) fn entry(
     operation: Operation,
@@ -277,55 +206,6 @@ pub(super) fn list_entries(
         )
     })
 }
-pub(super) fn remove_entry(root: &Dir, path: StoragePath) -> Result<(), StorageError> {
-    let operation = Operation::Remove;
-    let (parent, name) = parent(operation, root, &path)?;
-    let file = native::mutation_handle(operation, &parent, &name)?;
-    if reparse(&file.metadata().map_err(|cause| error(operation, cause))?) {
-        return Err(StorageError::without_effects(
-            operation,
-            Failure::Rejected(Rejection::Unsupported),
-            None,
-        ));
-    }
-    native::delete(operation, &file)
-}
-pub(super) fn move_entry(
-    root: &Dir,
-    request: StorageMoveEntryRequest,
-) -> Result<Entry, StorageError> {
-    let operation = Operation::Rename;
-    let (source_parent, source) = parent(operation, root, &request.source)?;
-    let (destination_parent, destination) = parent(operation, root, &request.destination)?;
-    let file = native::mutation_handle(operation, &source_parent, &source)?;
-    let metadata = file.metadata().map_err(|cause| error(operation, cause))?;
-    if reparse(&metadata) {
-        return Err(StorageError::without_effects(
-            operation,
-            Failure::Rejected(Rejection::Unsupported),
-            None,
-        ));
-    }
-    if request.source == request.destination {
-        if !request.replace {
-            return Err(StorageError::without_effects(
-                operation,
-                Failure::Rejected(Rejection::AlreadyExists),
-                None,
-            ));
-        }
-        return entry(operation, request.destination, metadata);
-    }
-    native::rename(
-        operation,
-        &file,
-        &destination_parent,
-        &destination,
-        request.replace,
-    )?;
-    entry(operation, request.destination, metadata)
-}
-
 pub(super) fn dispatched_error(operation: Operation, source: io::Error) -> StorageError {
     StorageError::after_dispatch(
         operation,

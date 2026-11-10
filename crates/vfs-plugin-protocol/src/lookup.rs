@@ -21,6 +21,10 @@ pub enum LookupValueError {
     WritePolicy,
     #[error("invalid directory creation mode")]
     CreateDirectoryMode,
+    #[error("invalid removal kind or rename mode")]
+    MutationMode,
+    #[error("mutation operand must end in an entry name")]
+    MutationOperand(#[from] ah_vfs_storage::RequestPathError),
 }
 
 pub fn encode_lookup(
@@ -173,4 +177,82 @@ pub fn decode_create_directory(
     };
     let (operand, base, links) = decode_lookup(value.lookup)?;
     Ok((CreateDirectoryRequest::new(operand, mode), base, links))
+}
+
+pub fn encode_remove(
+    request: &ah_vfs_storage::RemoveRequest,
+    base: &StoragePath,
+    links: IntermediateSymlinks,
+) -> super::Remove {
+    let kind = match request.kind() {
+        ah_vfs_storage::RemoveKind::NonDirectory => super::remove::Kind::NonDirectory,
+        ah_vfs_storage::RemoveKind::EmptyDirectory => super::remove::Kind::EmptyDirectory,
+    };
+    super::Remove {
+        lookup: Some(encode_lookup(request.path(), base, links)),
+        kind: kind.into(),
+    }
+}
+
+pub fn decode_remove(
+    value: super::Remove,
+) -> Result<
+    (
+        ah_vfs_storage::RemoveRequest,
+        StoragePath,
+        IntermediateSymlinks,
+    ),
+    LookupValueError,
+> {
+    let kind = match super::remove::Kind::try_from(value.kind) {
+        Ok(super::remove::Kind::NonDirectory) => ah_vfs_storage::RemoveKind::NonDirectory,
+        Ok(super::remove::Kind::EmptyDirectory) => ah_vfs_storage::RemoveKind::EmptyDirectory,
+        _ => return Err(LookupValueError::MutationMode),
+    };
+    let (operand, base, links) = decode_lookup(value.lookup)?;
+    Ok((
+        ah_vfs_storage::RemoveRequest::new(operand, kind)?,
+        base,
+        links,
+    ))
+}
+
+pub fn encode_rename(
+    request: &ah_vfs_storage::RenameRequest,
+    base: &StoragePath,
+    links: IntermediateSymlinks,
+) -> super::Rename {
+    let mode = match request.mode() {
+        ah_vfs_storage::RenameMode::NoReplace => super::rename::Mode::NoReplace,
+        ah_vfs_storage::RenameMode::Replace => super::rename::Mode::Replace,
+    };
+    super::Rename {
+        source: Some(encode_lookup(request.source(), base, links)),
+        destination: request.destination().to_string(),
+        mode: mode.into(),
+    }
+}
+
+pub fn decode_rename(
+    value: super::Rename,
+) -> Result<
+    (
+        ah_vfs_storage::RenameRequest,
+        StoragePath,
+        IntermediateSymlinks,
+    ),
+    LookupValueError,
+> {
+    let mode = match super::rename::Mode::try_from(value.mode) {
+        Ok(super::rename::Mode::NoReplace) => ah_vfs_storage::RenameMode::NoReplace,
+        Ok(super::rename::Mode::Replace) => ah_vfs_storage::RenameMode::Replace,
+        _ => return Err(LookupValueError::MutationMode),
+    };
+    let (source, base, links) = decode_lookup(value.source)?;
+    let destination = PathExpr::parse(&value.destination)?;
+    Ok((
+        ah_vfs_storage::RenameRequest::new(source, destination, mode)?,
+        base,
+        links,
+    ))
 }

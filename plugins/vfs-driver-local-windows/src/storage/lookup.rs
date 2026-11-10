@@ -61,6 +61,204 @@ pub(super) fn open_reader(
     Ok(file)
 }
 
+struct Slot {
+    parent: Dir,
+    path: StoragePath,
+    name: String,
+    _ancestors: Vec<(StoragePath, Dir)>,
+}
+
+fn mutation_slot(
+    root: &Dir,
+    lookup: PathLookup<'_>,
+    context: &LookupContext,
+    op: Operation,
+) -> Result<Slot, StorageError> {
+    use ah_vfs_storage::{EntryType, StatRequest};
+    let (operand, name) = lookup
+        .path()
+        .split_final_name()
+        .ok_or_else(|| rejected(op, Rejection::RootProtected))?;
+    let action = match context.intermediate_symlinks {
+        IntermediateSymlinks::FollowWithinInstance => SymlinkAction::FollowWithinInstance,
+        IntermediateSymlinks::Reject => SymlinkAction::Preserve,
+    };
+    let (entry, file, mut ancestors) = select(
+        root,
+        StatRequest::new(operand, action).lookup(),
+        context.clone(),
+        op,
+    )?;
+    match entry.entry_type() {
+        EntryType::Directory => {}
+        EntryType::Symlink => return Err(rejected(op, Rejection::SymlinkNotAllowed)),
+        _ => return Err(rejected(op, Rejection::NotDirectory)),
+    }
+    let parent = match file {
+        Some(file) => Dir::from_std_file(file.into_std()),
+        None => ancestors.pop().ok_or_else(|| stale(op))?.1,
+    };
+    let path = entry
+        .path()
+        .join(name)
+        .map_err(|_| rejected(op, Rejection::PathTooLong))?;
+    Ok(Slot {
+        parent,
+        path,
+        name: name.as_str().to_owned(),
+        _ancestors: ancestors,
+    })
+}
+
+pub(super) fn remove(
+    root: &Dir,
+    request: &ah_vfs_storage::RemoveRequest,
+    context: LookupContext,
+) -> Result<(), StorageError> {
+    let op = Operation::Remove;
+    let slot = mutation_slot(root, request.lookup(), &context, op)?;
+    let file = native::mutation_handle(op, &slot.parent, &slot.name)?;
+    let entry = fs::entry(
+        op,
+        slot.path,
+        file.metadata().map_err(|cause| fs::error(op, cause))?,
+    )?;
+    request
+        .lookup()
+        .check_existing_target(entry.path(), entry.entry_type())
+        .map_err(|reason| rejected(op, reason))?;
+    native::remove(&file)
+}
+
+pub(super) fn rename(
+    root: &Dir,
+    request: &ah_vfs_storage::RenameRequest,
+    context: LookupContext,
+) -> Result<Entry, StorageError> {
+    use ah_vfs_storage::{EntryType, RenameDecision, RenameDestination, RenameMode, StatRequest};
+    let op = Operation::Rename;
+    let (source_lookup, destination_lookup) = request.lookups();
+    // Keep the working directory and its ancestors open without delete sharing.
+    let _base = if [request.source(), request.destination()]
+        .iter()
+        .any(|path| path.start() == LookupStart::BaseDirectory)
+    {
+        let binding = select(
+            root,
+            StatRequest::new(
+                context.working_directory.to_rooted_expr(),
+                SymlinkAction::Preserve,
+            )
+            .lookup(),
+            LookupContext {
+                intermediate_symlinks: IntermediateSymlinks::Reject,
+                ..Default::default()
+            },
+            op,
+        )
+        .map_err(|error| match error.failure() {
+            Failure::Rejected(
+                Rejection::NotFound | Rejection::NotDirectory | Rejection::SymlinkNotAllowed,
+            ) => stale(op),
+            _ => error,
+        })?;
+        if binding.0.entry_type() != EntryType::Directory {
+            return Err(stale(op));
+        }
+        Some(binding)
+    } else {
+        None
+    };
+    let source = mutation_slot(root, source_lookup, &context, op)?;
+    let file = native::mutation_handle(op, &source.parent, &source.name)?;
+    let metadata = file.metadata().map_err(|cause| fs::error(op, cause))?;
+    let entry = fs::entry(op, source.path.clone(), metadata.clone())?;
+    let kind = entry.entry_type();
+    source_lookup
+        .check_existing_target(&source.path, kind)
+        .map_err(|reason| rejected(op, reason))?;
+    let destination = mutation_slot(root, destination_lookup, &context, op)?;
+    let observed =
+        if source.name == destination.name && same_dir(op, &source.parent, &destination.parent)? {
+            RenameDestination::SameSlot
+        } else {
+            match open_rename_destination(&destination.parent, &destination.name) {
+                Ok((target, metadata)) => {
+                    let kind_at_target =
+                        fs::entry(op, destination.path.clone(), metadata)?.entry_type();
+                    if kind_at_target == EntryType::Directory
+                        && kind == EntryType::Directory
+                        && request.mode() == RenameMode::Replace
+                        && !empty_directory(&target)?
+                    {
+                        RenameDestination::NonEmptyDirectory
+                    } else {
+                        RenameDestination::Occupied(kind_at_target)
+                    }
+                }
+                Err(error) if error.failure() == Failure::Rejected(Rejection::NotFound) => {
+                    RenameDestination::Missing
+                }
+                Err(error) => return Err(error),
+            }
+        };
+    let decision = request
+        .decide_destination(&destination.path, kind, observed)
+        .map_err(|reason| rejected(op, reason))?;
+    let result = fs::entry(op, destination.path, metadata)?;
+    if decision == RenameDecision::Unchanged {
+        return Ok(result);
+    }
+    if observed != RenameDestination::Missing {
+        // FileRenameInfo cannot conditionally replace an identified existing entry.
+        return Err(rejected(op, Rejection::Unsupported));
+    }
+    native::rename(op, &file, &destination.parent, &destination.name).map_err(|error| {
+        if error.failure() != Failure::Rejected(Rejection::AlreadyExists) {
+            return error;
+        }
+        if request.mode() == RenameMode::Replace
+            || matches!(open_rename_destination(&destination.parent, &destination.name),
+                Err(observed) if observed.failure() == Failure::Rejected(Rejection::Conflict))
+        {
+            rejected(op, Rejection::Conflict)
+        } else {
+            error
+        }
+    })?;
+    Ok(result)
+}
+
+fn empty_directory(file: &File) -> Result<bool, StorageError> {
+    use std::os::windows::io::{AsRawHandle, FromRawHandle};
+    use windows_sys::Win32::{
+        Foundation::INVALID_HANDLE_VALUE,
+        Storage::FileSystem::{FILE_LIST_DIRECTORY, ReOpenFile},
+    };
+    let op = Operation::Rename;
+    // SAFETY: the selected object remains owned by file; a successful call returns a new handle.
+    let handle = unsafe {
+        ReOpenFile(
+            file.as_raw_handle(),
+            FILE_LIST_DIRECTORY | SYNCHRONIZE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+        )
+    };
+    if handle == INVALID_HANDLE_VALUE {
+        return Err(fs::error(op, std::io::Error::last_os_error()));
+    }
+    // SAFETY: handle is the newly owned directory handle from ReOpenFile.
+    let dir = Dir::from_std_file(unsafe { std::fs::File::from_raw_handle(handle) });
+    Ok(dir
+        .entries()
+        .map_err(|cause| fs::error(op, cause))?
+        .next()
+        .transpose()
+        .map_err(|cause| fs::error(op, cause))?
+        .is_none())
+}
+
 fn select(
     root: &Dir,
     lookup: PathLookup<'_>,
@@ -232,6 +430,27 @@ fn create_child(
 }
 
 fn open(op: Operation, dir: &Dir, name: &str) -> Result<(File, Metadata), StorageError> {
+    let (file, metadata, actual) = open_named(op, dir, name)?;
+    if actual != name {
+        return Err(rejected(op, Rejection::NotFound));
+    }
+    Ok((file, metadata))
+}
+
+fn open_rename_destination(dir: &Dir, name: &str) -> Result<(File, Metadata), StorageError> {
+    let op = Operation::Rename;
+    let (file, metadata, actual) = open_named(op, dir, name)?;
+    if actual != name {
+        return Err(rejected(op, Rejection::Conflict));
+    }
+    Ok((file, metadata))
+}
+
+fn open_named(
+    op: Operation,
+    dir: &Dir,
+    name: &str,
+) -> Result<(File, Metadata, String), StorageError> {
     fs::validate_name(op, name)?;
     let mut options = OpenOptions::new();
     let share = if op == Operation::Write {
@@ -248,11 +467,9 @@ fn open(op: Operation, dir: &Dir, name: &str) -> Result<(File, Metadata), Storag
     let file = dir
         .open_with(name, &options)
         .map_err(|cause| fs::error(op, cause))?;
-    if native::actual_name(op, &file)? != name {
-        return Err(rejected(op, Rejection::NotFound));
-    }
+    let actual = native::actual_name(op, &file)?;
     let metadata = file.metadata().map_err(|cause| fs::error(op, cause))?;
-    Ok((file, metadata))
+    Ok((file, metadata, actual))
 }
 
 pub(super) struct WriteDestination {
@@ -350,6 +567,10 @@ pub(super) fn listing_directory(
 }
 
 pub(super) fn same_directory(left: &Dir, right: &Dir) -> Result<bool, StorageError> {
+    same_dir(Operation::List, left, right)
+}
+
+fn same_dir(op: Operation, left: &Dir, right: &Dir) -> Result<bool, StorageError> {
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::Storage::FileSystem::{
         FILE_ID_INFO, FileIdInfo, GetFileInformationByHandleEx,
@@ -366,7 +587,7 @@ pub(super) fn same_directory(left: &Dir, right: &Dir) -> Result<bool, StorageErr
             )
         } == 0
         {
-            return Err(fs::error(Operation::List, std::io::Error::last_os_error()));
+            return Err(fs::error(op, std::io::Error::last_os_error()));
         }
         let data = unsafe { data.assume_init() };
         Ok((data.VolumeSerialNumber, data.FileId.Identifier))

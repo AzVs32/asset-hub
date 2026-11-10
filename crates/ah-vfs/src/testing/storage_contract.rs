@@ -1,10 +1,10 @@
 //! Storage behavior shared by independent driver test suites.
 
 use crate::application::port::{Storage, StorageFileReader};
-use crate::domain::storage::StorageMoveEntryRequest;
 use ah_vfs_storage::RenameSupport;
 use ah_vfs_storage::{EntryType, StoragePath};
 use ah_vfs_storage::{Failure, Rejection};
+use ah_vfs_storage::{RenameMode, RenameRequest};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -332,13 +332,8 @@ pub async fn assert_same_path_rename_contract(
     mkdir(storage, "dir").await?;
     mkdir(storage, "dir/child").await?;
 
-    for replace in [false, true] {
-        let supported = if replace {
-            support.supports(ah_vfs_storage::RenameMode::Replace)
-        } else {
-            support.supports(ah_vfs_storage::RenameMode::NoReplace)
-        };
-        if !supported {
+    for mode in [RenameMode::NoReplace, RenameMode::Replace] {
+        if !support.supports(mode) {
             continue;
         }
         for name in ["file", "dir"] {
@@ -352,13 +347,16 @@ pub async fn assert_same_path_rename_contract(
                 )
                 .await?;
             let result = storage
-                .move_entry(StorageMoveEntryRequest {
-                    source: path(name)?,
-                    destination: path(name)?,
-                    replace,
-                })
+                .move_entry(
+                    RenameRequest::new(
+                        (path(name)?).to_rooted_expr(),
+                        (path(name)?).to_rooted_expr(),
+                        mode,
+                    )?,
+                    Default::default(),
+                )
                 .await;
-            if replace {
+            if mode == RenameMode::Replace {
                 let entry = result?;
                 assert_eq!(entry.path(), before.path());
                 assert_eq!(entry.entry_type(), before.entry_type());
@@ -389,27 +387,36 @@ pub async fn assert_same_path_rename_contract(
         }
 
         let error = storage
-            .move_entry(StorageMoveEntryRequest {
-                source: path("missing")?,
-                destination: path("missing")?,
-                replace,
-            })
+            .move_entry(
+                RenameRequest::new(
+                    (path("missing")?).to_rooted_expr(),
+                    (path("missing")?).to_rooted_expr(),
+                    mode,
+                )?,
+                Default::default(),
+            )
             .await
             .err()
             .ok_or("expected missing source")?;
         assert_eq!(error.failure(), Failure::Rejected(Rejection::NotFound));
         assert!(!exists(storage, "missing").await?);
 
-        let error = storage
-            .move_entry(StorageMoveEntryRequest {
-                source: path("")?,
-                destination: path("")?,
-                replace,
-            })
-            .await
-            .err()
-            .ok_or("expected protected root")?;
-        assert_eq!(error.failure(), Failure::Rejected(Rejection::RootProtected));
+        assert!(
+            RenameRequest::new(
+                StoragePath::root().to_rooted_expr(),
+                path("target")?.to_rooted_expr(),
+                mode
+            )
+            .is_err()
+        );
+        assert!(
+            RenameRequest::new(
+                path("source")?.to_rooted_expr(),
+                StoragePath::root().to_rooted_expr(),
+                mode
+            )
+            .is_err()
+        );
     }
     Ok(())
 }

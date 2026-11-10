@@ -144,20 +144,37 @@ impl GuestStorage for S3Storage {
                 let entry = api::direct_stat(request, |path| client.stat(path.as_str()))?;
                 Value::Entry(encode_entry(&context, &entry)?)
             }
-            p::StorageOp::Remove(p::Path { path }) => {
-                let entry = client.stat(&path)?;
-                if path.is_empty() {
-                    return Err(context.failure(Failure::Rejected(Rejection::RootProtected)));
-                }
-                if entry.entry_type() == EntryType::Directory {
-                    return Err(context.failure(Failure::Rejected(Rejection::Unsupported)));
-                }
-                client.request("DELETE", &path, vec![], vec![], vec![])?;
-                Value::Unit(p::Empty {})
-            }
             _ => return Err(context.failure(Failure::Rejected(Rejection::Unsupported))),
         };
         Ok(p::Reply::new(value))
+    }
+    fn remove(
+        &self,
+        request: &ah_vfs_storage::RemoveRequest,
+        base: &ah_vfs_storage::StoragePath,
+        links: ah_vfs_storage::IntermediateSymlinks,
+    ) -> Result<()> {
+        let client = self.client.for_operation(Operation::Remove);
+        let context = &client.context;
+        let (entry, etag) =
+            api::direct_lookup(request.lookup(), base, links, Operation::Remove, |path| {
+                client.stat_object(path.as_str())
+            })?;
+        let etag =
+            etag.ok_or_else(|| context.failure(Failure::Rejected(Rejection::Unsupported)))?;
+        let reply = client.request(
+            "DELETE",
+            entry.path().as_str(),
+            vec![],
+            vec![("if-match".into(), etag)],
+            vec![],
+        )?;
+        if reply.status().as_u16() != 204 || !reply.body().is_empty() {
+            return Err(context.failure(Failure::Contract(
+                ah_vfs_storage::ContractViolation::InvalidResponse,
+            )));
+        }
+        Ok(())
     }
     fn read(
         &self,

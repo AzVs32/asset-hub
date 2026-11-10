@@ -20,6 +20,7 @@ enum Fault {
     Version,
     Capabilities,
     Commit,
+    Rename,
     Reader,
     DirectoryPage { wrong_address: bool },
     Attributes(String),
@@ -27,6 +28,7 @@ enum Fault {
 struct Peer {
     fault: Fault,
     commits: AtomicUsize,
+    renames: AtomicUsize,
 }
 impl Peer {
     fn capabilities(&self) -> Vec<i32> {
@@ -43,6 +45,9 @@ impl Peer {
         }
         if matches!(self.fault, Fault::DirectoryPage { .. }) {
             capabilities.push(p::Capability::List as i32);
+        }
+        if matches!(self.fault, Fault::Rename) {
+            capabilities.push(p::Capability::RenameNew as i32);
         }
         capabilities
     }
@@ -115,6 +120,14 @@ impl Transport for Peer {
                             completion: Some(p::page::Completion::End(p::Empty {})),
                         })
                     }
+                    Some(p::StorageOp::Rename(_)) => {
+                        self.renames.fetch_add(1, Ordering::Relaxed);
+                        Value::Entry(p::Entry {
+                            path: "forged".into(),
+                            kind: p::EntryKind::Dir.into(),
+                            ..Default::default()
+                        })
+                    }
                     Some(p::StorageOp::GetPermissions(_)) => {
                         Value::Permissions(p::Permissions { mode: 0o100644 })
                     }
@@ -142,6 +155,7 @@ async fn peer(fault: Fault) -> Result<(PluginDriver, Arc<Peer>)> {
     let peer = Arc::new(Peer {
         fault,
         commits: AtomicUsize::new(0),
+        renames: AtomicUsize::new(0),
     });
     let driver = PluginDriver::connect(peer.clone()).await?;
     driver.initialize(Default::default()).await?;
@@ -173,6 +187,36 @@ async fn incompatible_versions_and_false_capabilities_are_rejected() -> Result {
     );
     Ok(())
 }
+#[tokio::test]
+async fn forged_rename_response_leaves_the_outcome_unknown_without_replay() -> Result {
+    use ah_vfs_storage::{MutationOutcome, PathExpr, RenameMode, RenameRequest};
+    let (driver, peer) = peer(Fault::Rename).await?;
+    let storage = driver
+        .open(OpenContext::new(
+            InstanceId::parse("instance")?,
+            Default::default(),
+        ))
+        .await?;
+    let request = RenameRequest::new(
+        PathExpr::parse("/source")?,
+        PathExpr::parse("/destination")?,
+        RenameMode::NoReplace,
+    )?;
+    let error = storage
+        .move_entry(request, LookupContext::default())
+        .await
+        .err()
+        .ok_or("forged rename response accepted")?;
+    assert_eq!(error.operation(), Operation::Rename);
+    assert_eq!(
+        error.failure(),
+        Failure::Contract(ContractViolation::InvalidResponse)
+    );
+    assert_eq!(error.outcome(), MutationOutcome::Unknown);
+    assert_eq!(peer.renames.load(Ordering::Relaxed), 1);
+    Ok(())
+}
+
 #[tokio::test]
 async fn malformed_commit_response_is_unknown_and_is_never_replayed() -> Result {
     let (driver, peer) = peer(Fault::Commit).await?;

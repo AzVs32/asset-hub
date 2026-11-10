@@ -2,7 +2,6 @@
 use ah_vfs::application::driver_error::{DriverError, LifecycleError, LifecycleFailure};
 use ah_vfs::application::port::*;
 use ah_vfs::domain::InstanceId;
-use ah_vfs::domain::storage::{StorageMoveEntryRequest, StorageRemoveEntryRequest};
 use ah_vfs_storage::{BackendFailure, Failure, Operation, Rejection, StorageError};
 use ah_vfs_storage::{Permissions, ReadLinkRequest, StoragePath, XattrName, XattrWriteMode};
 use futures_util::FutureExt;
@@ -793,24 +792,49 @@ impl Session {
                         .map_err(|error| c::response_error(operation, true, error))?,
                 )
             }
-            p::StorageOp::Remove(p::Path { path: raw }) => {
-                s.remove_entry(StorageRemoveEntryRequest { path: path(&raw)? })
-                    .await?;
+            p::StorageOp::Remove(wire) => {
+                let (request, working_directory, intermediate_symlinks) =
+                    p::decode_remove(wire).map_err(invalid_lookup)?;
+                if !self.generation.driver.info().capabilities().remove() {
+                    return Err(unsupported_mutation(operation).into());
+                }
+                s.remove_entry(
+                    request,
+                    LookupContext {
+                        working_directory,
+                        intermediate_symlinks,
+                    },
+                )
+                .await?;
                 Value::Unit(p::Empty {})
             }
-            p::StorageOp::Move(p::Move {
-                source,
-                destination,
-                replace,
-            }) => Value::Entry(c::entry(
-                operation,
-                s.move_entry(StorageMoveEntryRequest {
-                    source: path(&source)?,
-                    destination: path(&destination)?,
-                    replace,
-                })
-                .await?,
-            )?),
+            p::StorageOp::Rename(wire) => {
+                let (request, working_directory, intermediate_symlinks) =
+                    p::decode_rename(wire).map_err(invalid_lookup)?;
+                if !self
+                    .generation
+                    .driver
+                    .info()
+                    .capabilities()
+                    .rename()
+                    .supports(request.mode())
+                {
+                    return Err(unsupported_mutation(operation).into());
+                }
+                let entry = s
+                    .move_entry(
+                        request,
+                        LookupContext {
+                            working_directory,
+                            intermediate_symlinks,
+                        },
+                    )
+                    .await?;
+                Value::Entry(
+                    c::entry(operation, entry)
+                        .map_err(|error| c::response_error(operation, true, error))?,
+                )
+            }
             p::StorageOp::GetPermissions(p::Path { path: raw }) => {
                 Value::Permissions(p::Permissions {
                     mode: s
@@ -980,4 +1004,8 @@ mod attribute_validation_tests {
         assert_eq!(xattr_name("user.名字")?.as_str(), "user.名字");
         Ok(())
     }
+}
+
+fn unsupported_mutation(operation: Operation) -> StorageError {
+    StorageError::without_effects(operation, Failure::Rejected(Rejection::Unsupported), None)
 }

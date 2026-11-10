@@ -95,7 +95,6 @@ pub(super) fn rename(
     file: &File,
     destination: &Dir,
     name: &str,
-    replace: bool,
 ) -> Result<(), StorageError> {
     fs::validate_name(operation, name)?;
     let name: Vec<u16> = name.encode_utf16().collect();
@@ -130,7 +129,7 @@ pub(super) fn rename(
     // tail. Both handles remain owned by the caller. No terminating NUL is needed.
     let result = unsafe {
         ptr::addr_of_mut!((*info).Anonymous).write(FILE_RENAME_INFO_0 {
-            ReplaceIfExists: replace,
+            ReplaceIfExists: false,
         });
         ptr::addr_of_mut!((*info).RootDirectory).write(destination.as_raw_handle());
         ptr::addr_of_mut!((*info).FileNameLength).write(name_bytes as u32);
@@ -142,7 +141,7 @@ pub(super) fn rename(
         SetFileInformationByHandle(file.as_raw_handle(), FileRenameInfo, info.cast(), length32)
     };
     if result == 0 {
-        return Err(fs::dispatched_error(operation, io::Error::last_os_error()));
+        return Err(mutation_error(operation, io::Error::last_os_error()));
     }
     Ok(())
 }
@@ -160,11 +159,46 @@ pub(super) fn delete(operation: Operation, file: &File) -> Result<(), StorageErr
         )
     };
     if result == 0 {
-        return Err(if operation == Operation::Write {
-            fs::error(operation, io::Error::last_os_error())
-        } else {
-            fs::dispatched_error(operation, io::Error::last_os_error())
-        });
+        return Err(fs::error(operation, io::Error::last_os_error()));
+    }
+    Ok(())
+}
+
+pub(super) fn remove(file: &File) -> Result<(), StorageError> {
+    use windows_sys::Win32::{
+        Foundation::{ERROR_INVALID_FUNCTION, ERROR_INVALID_PARAMETER, ERROR_NOT_SUPPORTED},
+        Storage::FileSystem::{
+            FILE_DISPOSITION_FLAG_DELETE, FILE_DISPOSITION_FLAG_POSIX_SEMANTICS,
+            FILE_DISPOSITION_INFO_EX, FileDispositionInfoEx,
+        },
+    };
+    let op = Operation::Remove;
+    let info = FILE_DISPOSITION_INFO_EX {
+        Flags: FILE_DISPOSITION_FLAG_DELETE | FILE_DISPOSITION_FLAG_POSIX_SEMANTICS,
+    };
+    // SAFETY: the DELETE-capable handle and disposition data stay live for the call.
+    // Closing this handle removes the name even while read handles remain open.
+    if unsafe {
+        SetFileInformationByHandle(
+            file.as_raw_handle(),
+            FileDispositionInfoEx,
+            ptr::from_ref(&info).cast(),
+            size_of::<FILE_DISPOSITION_INFO_EX>() as u32,
+        )
+    } == 0
+    {
+        let cause = io::Error::last_os_error();
+        if matches!(
+            cause.raw_os_error().map(|code| code as u32),
+            Some(ERROR_INVALID_FUNCTION | ERROR_INVALID_PARAMETER | ERROR_NOT_SUPPORTED)
+        ) {
+            return Err(StorageError::without_effects(
+                op,
+                Failure::Rejected(Rejection::Unsupported),
+                Some(Box::new(cause)),
+            ));
+        }
+        return Err(mutation_error(op, cause));
     }
     Ok(())
 }
@@ -174,5 +208,45 @@ pub(super) fn mutation_handle(
     parent: &Dir,
     name: &str,
 ) -> Result<File, StorageError> {
-    open_public(operation, parent, name, DELETE)
+    fs::validate_name(operation, name)?;
+    let mut options = OpenOptions::new();
+    options
+        .read(true)
+        .access_mode(DELETE | FILE_READ_ATTRIBUTES | SYNCHRONIZE)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .follow(FollowSymlinks::No);
+    let file = parent
+        .open_with(name, &options)
+        .map_err(|cause| fs::error(operation, cause))?;
+    if actual_name(operation, &file)? != name {
+        return Err(StorageError::without_effects(
+            operation,
+            Failure::Rejected(Rejection::NotFound),
+            None,
+        ));
+    }
+    Ok(file)
+}
+
+fn mutation_error(operation: Operation, cause: io::Error) -> StorageError {
+    use windows_sys::Win32::Foundation::{
+        ERROR_ACCESS_DENIED, ERROR_ALREADY_EXISTS, ERROR_DIR_NOT_EMPTY, ERROR_FILE_EXISTS,
+        ERROR_FILE_NOT_FOUND, ERROR_NOT_SAME_DEVICE, ERROR_NOT_SUPPORTED, ERROR_PATH_NOT_FOUND,
+        ERROR_SHARING_VIOLATION,
+    };
+    match cause.raw_os_error().map(|code| code as u32) {
+        Some(
+            ERROR_ACCESS_DENIED
+            | ERROR_ALREADY_EXISTS
+            | ERROR_DIR_NOT_EMPTY
+            | ERROR_FILE_EXISTS
+            | ERROR_FILE_NOT_FOUND
+            | ERROR_NOT_SAME_DEVICE
+            | ERROR_NOT_SUPPORTED
+            | ERROR_PATH_NOT_FOUND
+            | ERROR_SHARING_VIOLATION,
+        ) => fs::error(operation, cause),
+        _ => fs::dispatched_error(operation, cause),
+    }
 }

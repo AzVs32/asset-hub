@@ -200,7 +200,7 @@ fn bounds_apply_to_control_data_and_nested_configuration() {
 fn exported_descriptor_contains_the_complete_language_independent_contract() -> Result {
     let descriptor = prost_types::FileDescriptorSet::decode(p::FILE_DESCRIPTOR_SET)?;
     let file = descriptor.file.first().ok_or("schema")?;
-    assert_eq!(file.package.as_deref(), Some("assethub.vfs.v9"));
+    assert_eq!(file.package.as_deref(), Some("assethub.vfs.v10"));
     let storage_info = file
         .message_type
         .iter()
@@ -239,11 +239,11 @@ fn exported_descriptor_contains_the_complete_language_independent_contract() -> 
     for method in &file.service.first().ok_or("Plugin")?.method {
         assert_eq!(
             method.input_type.as_deref(),
-            Some(".assethub.vfs.v9.Request")
+            Some(".assethub.vfs.v10.Request")
         );
         assert_eq!(
             method.output_type.as_deref(),
-            Some(".assethub.vfs.v9.Reply")
+            Some(".assethub.vfs.v10.Reply")
         );
     }
     Ok(())
@@ -445,6 +445,53 @@ fn create_directory_preserves_ordered_lookup_and_rejects_invalid_modes() -> Resu
         });
         assert!(matches!(
             p::encode_request("generation", &op, vec![]),
+            Err(p::CodecError::InvalidData)
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn mutations_round_trip_shared_bindings_and_reject_non_entry_operands() -> Result {
+    use ah_vfs_storage as d;
+    let base = d::StoragePath::parse("work/sub")?;
+    let links = d::IntermediateSymlinks::Reject;
+    let remove = d::RemoveRequest::new(
+        d::PathExpr::parse("../directory/")?,
+        d::RemoveKind::EmptyDirectory,
+    )?;
+    let wire = p::encode_remove(&remove, &base, links);
+    assert_eq!(
+        p::decode_remove(wire.clone())?,
+        (remove, base.clone(), links)
+    );
+    assert!(p::decode_remove(p::Remove { kind: 0, ..wire }).is_err());
+    let rename = d::RenameRequest::new(
+        d::PathExpr::parse("../source/")?,
+        d::PathExpr::parse("/target/")?,
+        d::RenameMode::Replace,
+    )?;
+    let wire = p::encode_rename(&rename, &base, links);
+    assert_eq!(p::decode_rename(wire.clone())?, (rename, base, links));
+    for invalid in [
+        p::Rename {
+            mode: 0,
+            ..wire.clone()
+        },
+        p::Rename {
+            destination: "/".into(),
+            ..wire
+        },
+    ] {
+        assert!(matches!(
+            p::encode_request(
+                "generation",
+                &Op::Storage(p::StorageCall {
+                    handle: 1,
+                    operation: Some(p::StorageOp::Rename(invalid)),
+                }),
+                vec![]
+            ),
             Err(p::CodecError::InvalidData)
         ));
     }

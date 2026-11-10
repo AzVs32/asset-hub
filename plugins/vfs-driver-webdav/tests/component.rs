@@ -1,12 +1,12 @@
 use ah_vfs::application::dto::*;
 use ah_vfs::application::port::*;
 use ah_vfs::domain::InstanceId;
-use ah_vfs::domain::storage::StorageRemoveEntryRequest;
 use ah_vfs_storage::{
     CreateDirectoryMode, CreateDirectoryRequest, EntryType, MutationOutcome, PathExpr, Publication,
     StoragePath, WriteMode, WriteRequest,
 };
 use ah_vfs_storage::{Failure, Rejection};
+use ah_vfs_storage::{RemoveKind, RemoveRequest};
 use std::{
     collections::BTreeMap,
     hash::{DefaultHasher, Hash, Hasher},
@@ -426,7 +426,10 @@ async fn protobuf_component_opens_writes_commits_reads_and_lists() -> Result {
     }
     assert_eq!(
         storage
-            .remove_entry(StorageRemoveEntryRequest { path: file })
+            .remove_entry(
+                RemoveRequest::new((file).to_rooted_expr(), RemoveKind::NonDirectory)?,
+                Default::default()
+            )
             .await
             .err()
             .ok_or("unsupported removal")?

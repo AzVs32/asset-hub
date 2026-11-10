@@ -10,7 +10,6 @@
 //! wire representations belong outside the domain.
 
 pub mod namespace;
-pub mod storage;
 
 mod driver_instance;
 mod driver_key;

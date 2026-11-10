@@ -122,7 +122,7 @@ impl Client {
         let publishes = (method == "DELETE" && !query.iter().any(|(key, _)| key == "uploadId"))
             || (method == "PUT" && !query.iter().any(|(key, _)| key == "uploadId"))
             || (method == "POST" && query.iter().any(|(key, _)| key == "uploadId"));
-        let guarded_write = publishes
+        let guarded_mutation = publishes
             && extra
                 .iter()
                 .any(|(header, _)| matches!(header.as_str(), "if-match" | "if-none-match"));
@@ -147,12 +147,18 @@ impl Client {
             vfs_plugin_guest::wasi_http::send(request).map_err(|cause| context.failure(cause))?;
         match response.status().as_u16() {
             200..=299 => Ok(response),
-            404 | 409 | 412 if guarded_write => Err(ah_vfs_storage::StorageError::without_effects(
-                Operation::Write,
-                Failure::Rejected(Rejection::Conflict),
-                None,
-            )
-            .into()),
+            404 | 409 | 412 if guarded_mutation => {
+                Err(ah_vfs_storage::StorageError::without_effects(
+                    if method == "DELETE" {
+                        Operation::Remove
+                    } else {
+                        Operation::Write
+                    },
+                    Failure::Rejected(Rejection::Conflict),
+                    None,
+                )
+                .into())
+            }
             403 => Err(context.failure(Failure::Rejected(Rejection::AccessDenied))),
             404 => Err(context.failure(Failure::Rejected(Rejection::NotFound))),
             409 => Err(context.failure(Failure::Rejected(Rejection::Conflict))),

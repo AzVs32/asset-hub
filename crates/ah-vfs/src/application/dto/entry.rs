@@ -99,12 +99,44 @@ impl CreateDirRequest {
     }
 }
 
+/// An instance-local removal routed by an absolute VFS path.
 pub struct RemoveEntryRequest {
-    pub path: VirtualPath,
+    pub(crate) path: VirtualPath,
+    pub(crate) kind: ah_vfs_storage::RemoveKind,
+    pub(crate) trailing_slash: bool,
 }
 
+impl RemoveEntryRequest {
+    pub fn new(path: &str, kind: ah_vfs_storage::RemoveKind) -> Result<Self, VirtualPathError> {
+        Ok(Self {
+            path: VirtualPath::parse(path)?,
+            kind,
+            trailing_slash: path.ends_with('/'),
+        })
+    }
+}
+
+/// A rename routed within a single VFS mount.
 pub struct MoveEntryRequest {
-    pub source: VirtualPath,
-    pub destination: VirtualPath,
-    pub replace: bool,
+    pub(crate) source: VirtualPath,
+    pub(crate) destination: VirtualPath,
+    pub(crate) mode: ah_vfs_storage::RenameMode,
+    pub(crate) source_slash: bool,
+    pub(crate) destination_slash: bool,
+}
+
+impl MoveEntryRequest {
+    pub fn new(
+        source: &str,
+        destination: &str,
+        mode: ah_vfs_storage::RenameMode,
+    ) -> Result<Self, VirtualPathError> {
+        Ok(Self {
+            source: VirtualPath::parse(source)?,
+            destination: VirtualPath::parse(destination)?,
+            mode,
+            source_slash: source.ends_with('/'),
+            destination_slash: destination.ends_with('/'),
+        })
+    }
 }

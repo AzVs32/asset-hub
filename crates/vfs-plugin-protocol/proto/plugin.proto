@@ -1,5 +1,5 @@
 syntax = "proto3";
-package assethub.vfs.v9;
+package assethub.vfs.v10;
 
 // The sole plugin message schema, shared by gRPC and the WASM call export.
 // Request/Reply control fields are limited to 1 MiB, data to 8 MiB. Missing
@@ -92,7 +92,7 @@ message Failure {
   StorageFailure storage = 4;
 }
 message Description {
-  uint32 major = 1; uint32 minor = 2; // This schema uses major 9, minor 0.
+  uint32 major = 1; uint32 minor = 2; // This schema uses major 10, minor 0.
   // Feature identifiers: streams.chunked.v1.
   // Unknown required identifiers reject loading; optional ones grant no support.
   repeated string required_features = 3;
@@ -153,7 +153,14 @@ message List {
 }
 enum CreateDirectoryMode { CREATE_DIRECTORY_MODE_UNSPECIFIED = 0; SINGLE = 1; RECURSIVE = 2; }
 message CreateDirectory { Lookup lookup = 1; CreateDirectoryMode mode = 2; }
-message Move { string source = 1; string destination = 2; bool replace = 3; }
+message Remove {
+  enum Kind { KIND_UNSPECIFIED = 0; NON_DIRECTORY = 1; EMPTY_DIRECTORY = 2; }
+  Lookup lookup = 1; Kind kind = 2;
+}
+message Rename {
+  enum Mode { MODE_UNSPECIFIED = 0; NO_REPLACE = 1; REPLACE = 2; }
+  Lookup source = 1; string destination = 2; Mode mode = 3;
+}
 message SetPermissions { string path = 1; uint32 mode = 2; }
 message ListXattrs { string path = 1; uint32 max_bytes = 2; }
 message GetXattr { string path = 1; string name = 2; uint32 max_bytes = 3; }
@@ -164,8 +171,8 @@ message StorageCall {
   oneof operation {
     Stat stat = 10;
     List list = 11; CreateDirectory create_directory = 12;
-    Path remove = 13; // File, link itself or empty dir only; preserve the root.
-    Move move = 14; // Atomic rename within the instance, never copy/delete.
+    Remove remove = 13;
+    Rename rename = 14; // Atomic rename within the instance.
     Path get_permissions = 15;
     SetPermissions set_permissions = 16; ListXattrs list_xattrs = 17;
     GetXattr get_xattr = 18; SetXattr set_xattr = 19; RemoveXattr remove_xattr = 20;

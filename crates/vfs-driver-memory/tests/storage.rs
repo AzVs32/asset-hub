@@ -1,8 +1,8 @@
 use ah_vfs_storage::{BackendFailure, Failure, Rejection};
+use ah_vfs_storage::{RemoveKind, RemoveRequest, RenameMode, RenameRequest};
 mod common;
 
 use ah_vfs::application::port::{Driver, Storage, validate_storage_extensions};
-use ah_vfs::domain::storage::{StorageMoveEntryRequest, StorageRemoveEntryRequest};
 use ah_vfs_storage::EntryType;
 use ah_vfs_storage::{AttributeSupport, WriteMode};
 use common::*;
@@ -276,9 +276,10 @@ async fn readers_pin_old_versions_and_their_capacity_until_released() -> TestRes
         )
         .await?;
     storage
-        .remove_entry(StorageRemoveEntryRequest {
-            path: path("file")?,
-        })
+        .remove_entry(
+            RemoveRequest::new((path("file")?).to_rooted_expr(), RemoveKind::NonDirectory)?,
+            Default::default(),
+        )
         .await?;
     assert_eq!(storage.used_bytes(), 6);
     drop(reader);
@@ -347,7 +348,10 @@ async fn directories_and_unicode_name_pagination_remain_hierarchical() -> TestRe
     assert_eq!(names, ["a", "nested", "z", "é", "文档"]);
     assert_eq!(
         storage
-            .remove_entry(StorageRemoveEntryRequest { path: path("dir")? })
+            .remove_entry(
+                RemoveRequest::new((path("dir")?).to_rooted_expr(), RemoveKind::EmptyDirectory)?,
+                Default::default()
+            )
             .await
             .err()
             .ok_or("not empty")?
@@ -442,15 +446,7 @@ async fn invalid_parents_types_and_root_mutations_have_domain_errors() -> TestRe
             .failure(),
         Failure::Rejected(Rejection::NotDirectory)
     );
-    assert_eq!(
-        storage
-            .remove_entry(StorageRemoveEntryRequest { path: path("")? })
-            .await
-            .err()
-            .ok_or("root")?
-            .failure(),
-        Failure::Rejected(Rejection::RootProtected)
-    );
+    assert!(RemoveRequest::new(path("")?.to_rooted_expr(), RemoveKind::EmptyDirectory).is_err());
     assert_eq!(
         storage
             .write_file(
@@ -493,11 +489,14 @@ async fn subtree_rename_and_atomic_replacement_preserve_contents() -> TestResult
     mkdir(&storage, "target").await?;
     put(&storage, "source/nested/file", b"data").await?;
     storage
-        .move_entry(StorageMoveEntryRequest {
-            source: path("source")?,
-            destination: path("target")?,
-            replace: true,
-        })
+        .move_entry(
+            RenameRequest::new(
+                (path("source")?).to_rooted_expr(),
+                (path("target")?).to_rooted_expr(),
+                RenameMode::Replace,
+            )?,
+            Default::default(),
+        )
         .await?;
     assert!(!exists(&storage, "source").await?);
     assert_eq!(get(&storage, "target/nested/file").await?, b"data");
@@ -505,11 +504,14 @@ async fn subtree_rename_and_atomic_replacement_preserve_contents() -> TestResult
     put(&storage, "new", b"new").await?;
     assert_eq!(
         storage
-            .move_entry(StorageMoveEntryRequest {
-                source: path("new")?,
-                destination: path("old")?,
-                replace: false
-            })
+            .move_entry(
+                RenameRequest::new(
+                    (path("new")?).to_rooted_expr(),
+                    (path("old")?).to_rooted_expr(),
+                    RenameMode::NoReplace
+                )?,
+                Default::default()
+            )
             .await
             .err()
             .ok_or("exists")?
@@ -517,15 +519,66 @@ async fn subtree_rename_and_atomic_replacement_preserve_contents() -> TestResult
         Failure::Rejected(Rejection::AlreadyExists)
     );
     storage
-        .move_entry(StorageMoveEntryRequest {
-            source: path("new")?,
-            destination: path("old")?,
-            replace: true,
-        })
+        .move_entry(
+            RenameRequest::new(
+                (path("new")?).to_rooted_expr(),
+                (path("old")?).to_rooted_expr(),
+                RenameMode::Replace,
+            )?,
+            Default::default(),
+        )
         .await?;
     assert_eq!(get(&storage, "old").await?, b"new");
     assert!(!exists(&storage, "new").await?);
     assert_eq!(storage.used_bytes(), 7);
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn directory_replacement_serializes_with_a_concurrent_insert() -> TestResult {
+    use ah_vfs_storage::{CreateDirectoryMode, CreateDirectoryRequest, MutationOutcome};
+
+    let storage = Arc::new(storage(64)?);
+    mkdir(storage.as_ref(), "source").await?;
+    mkdir(storage.as_ref(), "target").await?;
+    put(storage.as_ref(), "source/file", b"preserved").await?;
+    let rename = RenameRequest::new(
+        path("source")?.to_rooted_expr(),
+        path("target")?.to_rooted_expr(),
+        RenameMode::Replace,
+    )?;
+    let insert = CreateDirectoryRequest::new(
+        path("target/new")?.to_rooted_expr(),
+        CreateDirectoryMode::Single,
+    );
+    let start = Arc::new(tokio::sync::Barrier::new(2));
+    let task = tokio::spawn({
+        let storage = storage.clone();
+        let start = start.clone();
+        async move {
+            start.wait().await;
+            storage.create_dir(insert, Default::default()).await
+        }
+    });
+    start.wait().await;
+    let moved = storage.move_entry(rename, Default::default()).await;
+    task.await??;
+    assert!(exists(storage.as_ref(), "target/new").await?);
+    match moved {
+        Ok(_) => {
+            assert!(!exists(storage.as_ref(), "source").await?);
+            assert_eq!(get(storage.as_ref(), "target/file").await?, b"preserved");
+        }
+        Err(error) => {
+            assert_eq!(
+                error.failure(),
+                Failure::Rejected(Rejection::DirectoryNotEmpty)
+            );
+            assert_eq!(error.outcome(), MutationOutcome::Unchanged);
+            assert_eq!(get(storage.as_ref(), "source/file").await?, b"preserved");
+            assert!(!exists(storage.as_ref(), "target/file").await?);
+        }
+    }
     Ok(())
 }
 
@@ -544,17 +597,18 @@ async fn failed_renames_leave_every_entry_and_quota_unchanged() -> TestResult {
         ),
         ("dir", "file", Failure::Rejected(Rejection::NotDirectory)),
         ("file", "dir", Failure::Rejected(Rejection::IsDirectory)),
-        ("", "new", Failure::Rejected(Rejection::RootProtected)),
-        ("file", "", Failure::Rejected(Rejection::RootProtected)),
         ("missing", "new", Failure::Rejected(Rejection::NotFound)),
     ] {
         assert_eq!(
             storage
-                .move_entry(StorageMoveEntryRequest {
-                    source: path(source)?,
-                    destination: path(destination)?,
-                    replace: true
-                })
+                .move_entry(
+                    RenameRequest::new(
+                        (path(source)?).to_rooted_expr(),
+                        (path(destination)?).to_rooted_expr(),
+                        RenameMode::Replace
+                    )?,
+                    Default::default()
+                )
                 .await
                 .err()
                 .ok_or("expected failure")?
@@ -569,11 +623,14 @@ async fn failed_renames_leave_every_entry_and_quota_unchanged() -> TestResult {
     let long = "x".repeat(4094);
     assert_eq!(
         storage
-            .move_entry(StorageMoveEntryRequest {
-                source: path("dir")?,
-                destination: path(&long)?,
-                replace: false
-            })
+            .move_entry(
+                RenameRequest::new(
+                    (path("dir")?).to_rooted_expr(),
+                    (path(&long)?).to_rooted_expr(),
+                    RenameMode::NoReplace
+                )?,
+                Default::default()
+            )
             .await
             .err()
             .ok_or("too long")?
@@ -600,7 +657,10 @@ async fn changed_parent_rejects_publication_and_failed_commit_is_terminal() -> T
         .await?;
     writer.write_chunk(b"data").await?;
     storage
-        .remove_entry(StorageRemoveEntryRequest { path: path("dir")? })
+        .remove_entry(
+            RemoveRequest::new((path("dir")?).to_rooted_expr(), RemoveKind::EmptyDirectory)?,
+            Default::default(),
+        )
         .await?;
     mkdir(&storage, "dir").await?;
     assert_eq!(

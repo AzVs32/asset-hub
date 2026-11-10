@@ -4,7 +4,6 @@ use ah_vfs::application::port::{DirectoryBindings, LookupContext};
 use ah_vfs::application::port::{
     Storage, StorageFileReader, StorageFileWriter, StorageFuture, StoragePermissions, StorageXattrs,
 };
-use ah_vfs::domain::storage::{StorageMoveEntryRequest, StorageRemoveEntryRequest};
 use ah_vfs_storage::{
     BackendFailure, BoundListRequest, DirectoryPage, DirectorySelection, Failure, ListRequest,
     ListTarget, Operation, StorageError,
@@ -200,17 +199,25 @@ impl Storage for LinuxLocalStorage {
         }))
     }
 
-    fn remove_entry(&self, request: StorageRemoveEntryRequest) -> StorageFuture<'_, ()> {
+    fn remove_entry(
+        &self,
+        request: ah_vfs_storage::RemoveRequest,
+        context: LookupContext,
+    ) -> StorageFuture<'_, ()> {
         let dir = self.dir.clone();
         Box::pin(blocking(Operation::Remove, true, move || {
-            fs::remove_entry(&dir, request.path)
+            lookup::remove(&dir, &request, context)
         }))
     }
 
-    fn move_entry(&self, request: StorageMoveEntryRequest) -> StorageFuture<'_, Entry> {
+    fn move_entry(
+        &self,
+        request: ah_vfs_storage::RenameRequest,
+        context: LookupContext,
+    ) -> StorageFuture<'_, Entry> {
         let dir = self.dir.clone();
         Box::pin(blocking(Operation::Rename, true, move || {
-            fs::move_entry(&dir, request)
+            lookup::rename(&dir, &request, context)
         }))
     }
 }

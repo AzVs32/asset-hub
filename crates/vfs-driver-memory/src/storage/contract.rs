@@ -188,14 +188,14 @@ impl MemoryStorage {
         })
     }
 
-    pub fn remove(
+    pub(super) fn remove(
         &self,
         request: &RemoveRequest,
-        links: IntermediateSymlinks,
+        context: LookupContext,
     ) -> Result<(), StorageError> {
         let op = Operation::Remove;
         let mut nodes = self.lock(op)?;
-        let path = select(&mut nodes, request.lookup(), links, op)?;
+        let path = select_with_context(&mut nodes, request.lookup(), &context, op)?;
         if request.kind() == RemoveKind::EmptyDirectory
             && nodes.keys().any(|key| descendant(key, path.as_str()))
         {
@@ -203,6 +203,85 @@ impl MemoryStorage {
         }
         nodes.remove(path.as_str());
         Ok(())
+    }
+
+    pub(super) fn rename(
+        &self,
+        request: &ah_vfs_storage::RenameRequest,
+        context: LookupContext,
+    ) -> Result<Entry, StorageError> {
+        use ah_vfs_storage::{RenameDecision, RenameDestination};
+        let op = Operation::Rename;
+        let mut nodes = self.lock(op)?;
+        let (source_lookup, destination_lookup) = request.lookups();
+        let base = &context.working_directory;
+        if [source_lookup, destination_lookup]
+            .iter()
+            .any(|lookup| lookup.path().start() == LookupStart::BaseDirectory)
+            && directory(&nodes, base).is_none()
+        {
+            return Err(stale(op));
+        }
+        let mut walk = Walk::new(&mut nodes, source_lookup, context.intermediate_symlinks);
+        let failure = |cause| StorageError::without_effects(op, cause, None);
+        let source_path = walk.start_at(base).map_err(failure)?;
+        walk.lookup = destination_lookup;
+        let destination_path = walk
+            .segment(destination_lookup.path(), base, &[], false)
+            .map_err(failure)?;
+        let source = existing(&nodes, &source_path, op)?;
+        let slot = |address: &StoragePath| -> Result<_, StorageError> {
+            let parent = address
+                .parent()
+                .ok_or_else(|| rejected(op, Rejection::RootProtected))?;
+            directory(&nodes, &parent).ok_or_else(|| stale(op))
+        };
+        let destination = if source_path.name() == destination_path.name()
+            && Arc::ptr_eq(slot(&source_path)?, slot(&destination_path)?)
+        {
+            RenameDestination::SameSlot
+        } else if let Some(entry) = nodes.get(destination_path.as_str()) {
+            let kind = entry.entry_type();
+            if kind == EntryType::Directory
+                && nodes
+                    .keys()
+                    .any(|key| descendant(key, destination_path.as_str()))
+            {
+                RenameDestination::NonEmptyDirectory
+            } else {
+                RenameDestination::Occupied(kind)
+            }
+        } else {
+            RenameDestination::Missing
+        };
+        let decision = request
+            .decide_destination(&destination_path, source.entry_type(), destination)
+            .map_err(|reason| rejected(op, reason))?;
+        let result = metadata(destination_path.clone(), source, op)?;
+        if decision == RenameDecision::Unchanged {
+            return Ok(result);
+        }
+        if descendant(destination_path.as_str(), source_path.as_str()) {
+            return Err(rejected(op, Rejection::Conflict));
+        }
+        // Validate every resulting address under the lock before changing the namespace.
+        let mut moved = Vec::new();
+        for (path, entry) in nodes.iter() {
+            if path == source_path.as_str() || descendant(path, source_path.as_str()) {
+                let suffix = &path[source_path.as_str().len()..];
+                let destination = StoragePath::parse(&format!("{destination_path}{suffix}"))
+                    .map_err(|cause| super::path_error(op, cause))?;
+                moved.push((path.clone(), destination.as_str().to_owned(), entry.clone()));
+            }
+        }
+        for (old, _, _) in &moved {
+            nodes.remove(old);
+        }
+        nodes.remove(destination_path.as_str());
+        for (_, new, entry) in moved {
+            nodes.insert(new, entry);
+        }
+        Ok(result)
     }
 
     pub(super) fn open_writer(
@@ -290,17 +369,6 @@ fn metadata(path: StoragePath, entry: &MemoryEntry, op: Operation) -> Result<Ent
         .map_err(|cause| invalid(op, ContractViolation::InvalidEntry, cause))
 }
 
-fn select(
-    nodes: &mut Nodes,
-    lookup: PathLookup<'_>,
-    links: IntermediateSymlinks,
-    op: Operation,
-) -> Result<StoragePath, StorageError> {
-    Walk::new(nodes, lookup, links)
-        .start()
-        .map_err(|failure| StorageError::without_effects(op, failure, None))
-}
-
 fn select_with_context(
     nodes: &mut Nodes,
     lookup: PathLookup<'_>,
@@ -334,10 +402,6 @@ impl<'a, 'r> Walk<'a, 'r> {
             links: SymlinkTraversal::new(links),
             created: false,
         }
-    }
-
-    fn start(&mut self) -> Result<StoragePath, Failure> {
-        self.start_at(&StoragePath::root())
     }
 
     fn start_at(&mut self, base: &StoragePath) -> Result<StoragePath, Failure> {

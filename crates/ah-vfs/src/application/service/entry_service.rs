@@ -9,11 +9,10 @@ use crate::application::mount_runtime::MountRuntime;
 use crate::application::port::{LookupContext, Storage};
 use crate::application::session::{FileReadHandle, FileWriteHandle};
 use crate::domain::namespace::{Mount, MountTable, VirtualPath};
-use crate::domain::storage::{StorageMoveEntryRequest, StorageRemoveEntryRequest};
 use ah_vfs_storage::{BackendFailure, DirectoryCursor, ListRequest, ListTarget};
 use ah_vfs_storage::{
-    Capabilities, LinkTarget, ReadLinkRequest, ReadRequest, RenameMode, StatRequest, SymlinkAction,
-    WriteRequest,
+    Capabilities, LinkTarget, ReadLinkRequest, ReadRequest, RemoveRequest, RenameRequest,
+    StatRequest, SymlinkAction, WriteRequest,
 };
 use ah_vfs_storage::{EntryType, Permissions, StoragePath, XattrName, XattrWriteMode};
 use ah_vfs_storage::{Failure, Operation, Rejection, StorageError};
@@ -447,14 +446,17 @@ impl EntryService {
         Ok(EntryView::from_storage(request.path, entry))
     }
 
-    /// Remove a backend file, link or empty directory, preserving all mount boundaries.
+    /// Remove one backend entry while preserving VFS mount boundaries.
     pub async fn remove_entry(&self, request: RemoveEntryRequest) -> Result<(), EntryError> {
         let table = self.runtime.table().await?;
         Self::protect(&table, &request.path)?;
         let (relative, storage, capabilities) = self.open(&table, &request.path).await?;
         Self::require(Operation::Remove, capabilities.remove())?;
+        let operand = mutation_operand(relative, request.trailing_slash);
+        let remove = RemoveRequest::new(operand, request.kind)
+            .map_err(|_| protected_root(Operation::Remove))?;
         Ok(storage
-            .remove_entry(StorageRemoveEntryRequest { path: relative })
+            .remove_entry(remove, LookupContext::default())
             .await?)
     }
 
@@ -468,23 +470,19 @@ impl EntryService {
         if source.mount().id() != destination.mount().id() {
             return Err(EntryError::CrossMountMove);
         }
-        let destination = destination.storage_path()?;
+        let destination = mutation_operand(destination.storage_path()?, request.destination_slash);
         let (source, storage, capabilities) = self.open(&table, &request.source).await?;
-        let mode = if request.replace {
-            RenameMode::Replace
-        } else {
-            RenameMode::NoReplace
-        };
-        Self::require(Operation::Rename, capabilities.rename().supports(mode))?;
-        let entry = storage
-            .move_entry(StorageMoveEntryRequest {
-                source,
-                destination,
-                replace: request.replace,
-            })
-            .await?;
+        Self::require(
+            Operation::Rename,
+            capabilities.rename().supports(request.mode),
+        )?;
+        let source = mutation_operand(source, request.source_slash);
+        let rename = RenameRequest::new(source, destination, request.mode)
+            .map_err(|_| protected_root(Operation::Rename))?;
+        let entry = storage.move_entry(rename, LookupContext::default()).await?;
         Ok(EntryView::from_storage(request.destination, entry))
     }
+
     async fn attribute_storage(
         &self,
         path: &VirtualPath,
@@ -610,4 +608,17 @@ impl EntryService {
         ))?;
         Ok(extension.remove_xattr(relative, name).await?)
     }
+}
+
+fn mutation_operand(path: StoragePath, trailing_slash: bool) -> ah_vfs_storage::PathExpr {
+    let operand = path.to_rooted_expr();
+    if trailing_slash {
+        operand.with_trailing_slash()
+    } else {
+        operand
+    }
+}
+
+fn protected_root(operation: Operation) -> StorageError {
+    StorageError::without_effects(operation, Failure::Rejected(Rejection::RootProtected), None)
 }

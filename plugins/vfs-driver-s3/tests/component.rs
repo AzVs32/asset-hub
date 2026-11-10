@@ -1,6 +1,7 @@
 //! Build the guest with `cargo build --locked --release --target wasm32-wasip2`
 //! before running these tests. The multipart test uses the default host fuel budget.
 use ah_vfs_storage::{Failure, MutationOutcome, Rejection};
+use ah_vfs_storage::{RenameMode, RenameRequest};
 mod common;
 use ah_vfs::application::driver_catalog::DriverCatalog;
 use ah_vfs::application::dto::*;
@@ -8,7 +9,6 @@ use ah_vfs::application::mount_runtime::MountRuntime;
 use ah_vfs::application::port::*;
 use ah_vfs::application::service::{EntryService, InstanceService, MountService};
 use ah_vfs::domain::namespace::VirtualPath;
-use ah_vfs::domain::storage::StorageMoveEntryRequest;
 use ah_vfs::domain::{DriverInstance, InstanceId};
 use ah_vfs::infrastructure::instance_record_repository::SqliteInstanceRecordRepository;
 use ah_vfs::infrastructure::mount_repository::SqliteMountRepository;
@@ -169,6 +169,15 @@ async fn protobuf_reads_and_conditional_commits_bind_a_single_s3_version() -> Re
             ("put /fixture/file?partnumber=1&uploadid=mock", "200 OK", 0, "etag: \"part\"\r\n", vec![]),
             ("post /fixture/file?uploadid=mock", "412 Precondition Failed", 0, "", vec![]),
             ("delete /fixture/file?uploadid=mock", "204 No Content", 0, "", vec![]),
+            ("head /fixture/file ", "200 OK", 65540, "etag: \"original\"\r\n", vec![]),
+            ("get /fixture/?", "200 OK", 19, "", b"<ListBucketResult/>".to_vec()),
+            ("delete /fixture/file ", "412 Precondition Failed", 0, "", vec![]),
+            ("head /fixture/file ", "200 OK", 65540, "etag: \"original\"\r\n", vec![]),
+            ("get /fixture/?", "200 OK", 19, "", b"<ListBucketResult/>".to_vec()),
+            ("delete /fixture/file ", "204 No Content", 0, "", vec![]),
+            ("head /fixture/file ", "200 OK", 65540, "etag: \"original\"\r\n", vec![]),
+            ("get /fixture/?", "200 OK", 19, "", b"<ListBucketResult/>".to_vec()),
+            ("delete /fixture/file ", "", 0, "", vec![]),
         ] {
             let (mut stream, _) = listener.accept().await?;
             let mut request = Vec::new();
@@ -206,6 +215,15 @@ async fn protobuf_reads_and_conditional_commits_bind_a_single_s3_version() -> Re
             if expected == "post /fixture/file?uploadid=mock" {
                 assert!(request.contains("if-match: \"original\"\r\n"));
                 assert!(request.contains("signedheaders=content-type;host;if-match;"));
+            }
+            if expected == "delete /fixture/file " {
+                assert!(request.contains("if-match: \"original\"\r\n"));
+                assert!(request.contains("signedheaders=host;if-match;"));
+                if status.is_empty() {
+                    // Close after receiving the complete conditional mutation.
+                    stream.shutdown().await?;
+                    continue;
+                }
             }
             stream.write_all(format!(
                 "HTTP/1.1 {status}\r\nContent-Length: {length}\r\n{extra}Connection: close\r\n\r\n"
@@ -302,6 +320,28 @@ async fn protobuf_reads_and_conditional_commits_bind_a_single_s3_version() -> Re
     );
     assert!(matches!(writer.commit().await, Err(error)
         if error.failure() == Failure::Backend(ah_vfs_storage::BackendFailure::Closed)));
+    let remove = ah_vfs_storage::RemoveRequest::new(
+        StoragePath::parse("file")?.to_rooted_expr(),
+        ah_vfs_storage::RemoveKind::NonDirectory,
+    )?;
+    let conflict = storage
+        .remove_entry(remove.clone(), Default::default())
+        .await
+        .err()
+        .ok_or("expected conditional delete conflict")?;
+    assert_eq!(conflict.operation(), ah_vfs_storage::Operation::Remove);
+    assert_eq!(conflict.failure(), Failure::Rejected(Rejection::Conflict));
+    assert_eq!(conflict.outcome(), MutationOutcome::Unchanged);
+    storage
+        .remove_entry(remove.clone(), Default::default())
+        .await?;
+    let lost = storage
+        .remove_entry(remove, Default::default())
+        .await
+        .err()
+        .ok_or("expected uncertain delete")?;
+    assert_eq!(lost.operation(), ah_vfs_storage::Operation::Remove);
+    assert_eq!(lost.outcome(), MutationOutcome::Unknown);
     tokio::time::timeout(std::time::Duration::from_secs(5), server).await???;
     Ok(())
 }
@@ -542,11 +582,14 @@ async fn s3_component_runs_through_host_records_mounts_and_streams() -> Result {
             Failure::Rejected(Rejection::Conflict)
         );
         let error = storage
-            .move_entry(StorageMoveEntryRequest {
-                source: StoragePath::parse("empty")?,
-                destination: StoragePath::parse("other")?,
-                replace: true,
-            })
+            .move_entry(
+                RenameRequest::new(
+                    (StoragePath::parse("empty")?).to_rooted_expr(),
+                    (StoragePath::parse("other")?).to_rooted_expr(),
+                    RenameMode::Replace,
+                )?,
+                Default::default(),
+            )
             .await
             .err()
             .ok_or("unsupported rename")?;

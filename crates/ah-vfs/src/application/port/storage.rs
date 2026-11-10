@@ -1,7 +1,6 @@
 //! Storage entry operations and file byte streams, independent of plugin transport.
 
 use super::{StoragePermissions, StorageXattrs};
-use crate::domain::storage::{StorageMoveEntryRequest, StorageRemoveEntryRequest};
 use ah_vfs_storage::{
     BoundListRequest, Capabilities, DirectoryPage, DirectorySelection, ListRequest,
 };
@@ -132,13 +131,21 @@ pub trait Storage: Send + Sync {
         unsupported(Operation::CreateDirectory)
     }
 
-    /// Remove a file, link itself, or empty directory; preserve the instance root.
-    fn remove_entry(&self, _request: StorageRemoveEntryRequest) -> StorageFuture<'_, ()> {
+    /// Remove one entry of the requested kind, preserving the final link.
+    fn remove_entry(
+        &self,
+        _request: ah_vfs_storage::RemoveRequest,
+        _context: LookupContext,
+    ) -> StorageFuture<'_, ()> {
         unsupported(Operation::Remove)
     }
 
-    /// Rename an entry within this instance according to its replacement policy.
-    fn move_entry(&self, _request: StorageMoveEntryRequest) -> StorageFuture<'_, Entry> {
+    /// Resolve both operands in one instance and perform a single atomic rename.
+    fn move_entry(
+        &self,
+        _request: ah_vfs_storage::RenameRequest,
+        _context: LookupContext,
+    ) -> StorageFuture<'_, Entry> {
         unsupported(Operation::Rename)
     }
 }

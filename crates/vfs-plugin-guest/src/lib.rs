@@ -24,6 +24,30 @@ pub mod api {
     pub trait GuestStorage {
         fn info(&self) -> p::StorageInfo;
         fn call(&self, request: p::StorageOp, data: Vec<u8>) -> Result<p::Reply>;
+        fn remove(
+            &self,
+            _request: &ah_vfs_storage::RemoveRequest,
+            _base: &ah_vfs_storage::StoragePath,
+            _links: ah_vfs_storage::IntermediateSymlinks,
+        ) -> Result<()> {
+            Err(
+                ErrorContext::storage(ah_vfs_storage::Operation::Remove).failure(
+                    ah_vfs_storage::Failure::Rejected(ah_vfs_storage::Rejection::Unsupported),
+                ),
+            )
+        }
+        fn rename(
+            &self,
+            _request: &ah_vfs_storage::RenameRequest,
+            _base: &ah_vfs_storage::StoragePath,
+            _links: ah_vfs_storage::IntermediateSymlinks,
+        ) -> Result<ah_vfs_storage::Entry> {
+            Err(
+                ErrorContext::storage(ah_vfs_storage::Operation::Rename).failure(
+                    ah_vfs_storage::Failure::Rejected(ah_vfs_storage::Rejection::Unsupported),
+                ),
+            )
+        }
         fn create_dir(
             &self,
             _request: &ah_vfs_storage::CreateDirectoryRequest,
@@ -283,6 +307,45 @@ impl<D: api::Guest> Dispatcher<D> {
                     handle,
                     info: Some(info),
                 })
+            }
+            Op::Storage(p::StorageCall {
+                handle,
+                operation: Some(p::StorageOp::Remove(wire)),
+            }) => {
+                use ah_vfs_storage::{Failure, Rejection};
+                let (request, base, links) = p::decode_remove(wire)
+                    .map_err(|_| p::Failure::new(p::FailureCode::InvalidRequest))?;
+                let capabilities = p::decode_capabilities(&D::describe().capabilities)
+                    .map_err(|reason| context.failure(Failure::Contract(reason)))?;
+                if !capabilities.remove() {
+                    return Err(context.failure(Failure::Rejected(Rejection::Unsupported)));
+                }
+                self.storage(&context, handle)?
+                    .remove(&request, &base, links)?;
+                Value::Unit(p::Empty {})
+            }
+            Op::Storage(p::StorageCall {
+                handle,
+                operation: Some(p::StorageOp::Rename(wire)),
+            }) => {
+                use ah_vfs_storage::{ContractViolation, Failure, Operation, Rejection};
+                let (request, base, links) = p::decode_rename(wire)
+                    .map_err(|_| p::Failure::new(p::FailureCode::InvalidRequest))?;
+                let capabilities = p::decode_capabilities(&D::describe().capabilities)
+                    .map_err(|reason| context.failure(Failure::Contract(reason)))?;
+                if !capabilities.rename().supports(request.mode()) {
+                    return Err(context.failure(Failure::Rejected(Rejection::Unsupported)));
+                }
+                let entry = self
+                    .storage(&context, handle)?
+                    .rename(&request, &base, links)?;
+                Value::Entry(p::encode_entry(&entry).map_err(|_| {
+                    ah_vfs_storage::StorageError::after_dispatch(
+                        Operation::Rename,
+                        Failure::Contract(ContractViolation::InvalidEntry),
+                        None,
+                    )
+                })?)
             }
             Op::Storage(p::StorageCall {
                 handle,

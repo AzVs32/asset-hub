@@ -46,7 +46,7 @@ struct Fixture {
 }
 impl Fixture {
     async fn new(quota: u64) -> TestResult<Self> {
-        let links = [
+        let mut links = [
             ("alias", b"docs".as_slice()),
             ("opaque", b"\xff"),
             ("dangling", b"missing"),
@@ -61,11 +61,22 @@ impl Fixture {
         })
         .into_iter()
         .collect::<Result<Vec<_>, d::NameError>>()?;
+        for hop in 0..21 {
+            let target = if hop == 20 {
+                "docs".to_owned()
+            } else {
+                format!("step{}", hop + 1)
+            };
+            links.push((
+                d::EntryName::parse(&format!("step{hop}"))?,
+                d::LinkTarget::new(target.into_bytes()),
+            ));
+        }
         let storage = Arc::new(MemoryStorage::with_root_links(
             Capacity::new(quota, CapacityUnit::B)?,
             links,
         )?);
-        let service = service(storage.clone(), "storage-test", ServerLimits::default())?;
+        let service = service("storage-test", ServerLimits::default())?;
         let dispatcher = Arc::new(Dispatcher::new(Arc::new(BoundMemory {
             driver: MemoryDriver::new()?,
             storage: storage.clone(),
@@ -187,7 +198,6 @@ impl Session {
         self.tx
             .send(wire::Command {
                 action: Some(action),
-                reject_intermediate_links: false,
             })
             .await?;
         Ok(tokio::time::timeout(TIMEOUT, self.replies.message())
@@ -195,12 +205,6 @@ impl Session {
             .ok_or("session closed")?
             .result
             .ok_or("missing reply")?)
-    }
-    async fn unit(&mut self, action: Action) -> TestResult {
-        if !matches!(self.call(action).await?, Reply::Unit(_)) {
-            return Err("expected unit response".into());
-        }
-        Ok(())
     }
 }
 
@@ -211,6 +215,19 @@ struct FormalSession {
     writer: Option<u64>,
 }
 impl FormalSession {
+    async fn remove(&mut self, path: &str, kind: d::RemoveKind) -> TestResult {
+        let request = d::RemoveRequest::new(d::PathExpr::parse(path)?, kind)?;
+        let operation = p::StorageOp::Remove(p::encode_remove(
+            &request,
+            &d::StoragePath::root(),
+            d::IntermediateSymlinks::FollowWithinInstance,
+        ));
+        if !matches!(self.call(operation).await?.result, Some(p::Value::Unit(_))) {
+            return Err("expected removal success".into());
+        }
+        Ok(())
+    }
+
     async fn mkdir(&mut self, path: &str, mode: d::CreateDirectoryMode) -> TestResult<d::Entry> {
         let reply = self.call(mkdir(path, mode)?).await?;
         let Some(p::Value::Entry(entry)) = reply.result else {
@@ -385,12 +402,6 @@ fn mkdir(path: &str, mode: d::CreateDirectoryMode) -> TestResult<p::StorageOp> {
         &d::StoragePath::root(),
         d::IntermediateSymlinks::FollowWithinInstance,
     )))
-}
-fn rmdir(path: &str) -> Action {
-    Action::Remove(wire::Remove {
-        path: path.into(),
-        kind: wire::RemoveKind::EmptyDirectory.into(),
-    })
 }
 fn write(handle: u64, path: &str, mode: d::WriteMode) -> TestResult<p::Operation> {
     Ok(p::Operation::Write(p::encode_write(
@@ -678,10 +689,166 @@ async fn formal_lookup_preserves_policy_instance_and_link_bytes() -> TestResult 
 }
 
 #[tokio::test]
+async fn formal_remove_and_rename_share_bindings_and_apply_the_destination_matrix() -> TestResult {
+    use d::{
+        CreateDirectoryMode::Recursive, IntermediateSymlinks::FollowWithinInstance, RemoveKind,
+        RenameMode,
+    };
+    let fixture = Fixture::new(64).await?;
+    let mut formal = fixture.formal_session().await?;
+    formal.mkdir("/docs/source/child", Recursive).await?;
+    formal.mkdir("/docs/empty", Recursive).await?;
+    formal.mkdir("/docs/nonempty/child", Recursive).await?;
+    formal.begin("/docs/file", d::WriteMode::CreateNew).await?;
+    formal.stage(b"original").await?;
+    formal.commit().await?;
+    let base = d::StoragePath::parse("docs")?;
+    let rename = |source: &str, destination: &str, mode| -> TestResult<p::StorageOp> {
+        let request = d::RenameRequest::new(
+            d::PathExpr::parse(source)?,
+            d::PathExpr::parse(destination)?,
+            mode,
+        )?;
+        Ok(p::StorageOp::Rename(p::encode_rename(
+            &request,
+            &base,
+            FollowWithinInstance,
+        )))
+    };
+    for (source, destination, mode, reason) in [
+        (
+            "missing",
+            "file/child",
+            RenameMode::Replace,
+            d::Rejection::NotFound,
+        ),
+        (
+            "source",
+            "/alias/source",
+            RenameMode::NoReplace,
+            d::Rejection::AlreadyExists,
+        ),
+        (
+            "source",
+            "file",
+            RenameMode::Replace,
+            d::Rejection::NotDirectory,
+        ),
+        (
+            "file",
+            "empty",
+            RenameMode::Replace,
+            d::Rejection::IsDirectory,
+        ),
+        (
+            "source",
+            "nonempty",
+            RenameMode::Replace,
+            d::Rejection::DirectoryNotEmpty,
+        ),
+        (
+            "file",
+            "missing/",
+            RenameMode::Replace,
+            d::Rejection::NotDirectory,
+        ),
+        (
+            "/dangling/",
+            "/unused",
+            RenameMode::NoReplace,
+            d::Rejection::NotDirectory,
+        ),
+        (
+            "/step0/file",
+            "/step0/copy",
+            RenameMode::NoReplace,
+            d::Rejection::TooManySymlinks,
+        ),
+    ] {
+        formal_failure(
+            formal.call(rename(source, destination, mode)?).await?,
+            d::Operation::Rename,
+            d::Failure::Rejected(reason),
+        )?;
+    }
+    let reply = formal
+        .call(rename("source/", "/alias/source", RenameMode::Replace)?)
+        .await?;
+    assert!(matches!(reply.result, Some(p::Value::Entry(_))));
+    assert_eq!(
+        formal
+            .stat_entry(stat("/docs/source/child", false))
+            .await?
+            .entry_type(),
+        d::EntryType::Directory
+    );
+    let reply = formal
+        .call(rename("source", "/alias/empty/", RenameMode::Replace)?)
+        .await?;
+    assert!(matches!(reply.result, Some(p::Value::Entry(_))));
+    assert_eq!(
+        formal
+            .stat_entry(stat("/docs/empty/child", false))
+            .await?
+            .entry_type(),
+        d::EntryType::Directory
+    );
+    stat_failure(
+        formal.call(stat("/docs/source", false)).await?,
+        d::Failure::Rejected(d::Rejection::NotFound),
+    )?;
+
+    let reply = formal
+        .call(rename("/dangling", "/moved-link", RenameMode::NoReplace)?)
+        .await?;
+    assert!(matches!(reply.result, Some(p::Value::Entry(_))));
+    let remove = |path: &str, kind| -> TestResult<p::StorageOp> {
+        let request = d::RemoveRequest::new(d::PathExpr::parse(path)?, kind)?;
+        Ok(p::StorageOp::Remove(p::encode_remove(
+            &request,
+            &base,
+            FollowWithinInstance,
+        )))
+    };
+    for (path, kind, reason) in [
+        (
+            "/moved-link/",
+            RemoveKind::NonDirectory,
+            d::Rejection::NotDirectory,
+        ),
+        (
+            "/moved-link",
+            RemoveKind::EmptyDirectory,
+            d::Rejection::NotDirectory,
+        ),
+        ("empty", RemoveKind::NonDirectory, d::Rejection::IsDirectory),
+        (
+            "empty/",
+            RemoveKind::EmptyDirectory,
+            d::Rejection::DirectoryNotEmpty,
+        ),
+    ] {
+        formal_failure(
+            formal.call(remove(path, kind)?).await?,
+            d::Operation::Remove,
+            d::Failure::Rejected(reason),
+        )?;
+    }
+    formal
+        .remove("/moved-link", RemoveKind::NonDirectory)
+        .await?;
+    stat_failure(
+        formal.call(stat("/missing", false)).await?,
+        d::Failure::Rejected(d::Rejection::NotFound),
+    )?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn listing_checks_separate_binding_and_rejects_replaced_directory() -> TestResult {
     let fixture = Fixture::new(64).await?;
     let mut listing = fixture.formal_session().await?;
-    let mut other = fixture.session().await?;
+    let mut other = fixture.formal_session().await?;
     for path in ["docs/é", "docs/Report", "docs/report"] {
         listing
             .mkdir(path, d::CreateDirectoryMode::Recursive)
@@ -732,12 +899,7 @@ async fn listing_checks_separate_binding_and_rejects_replaced_directory() -> Tes
         Err(d::ContractViolation::InvalidPage)
     );
 
-    other
-        .unit(Action::Remove(wire::Remove {
-            path: "alias".into(),
-            kind: wire::RemoveKind::NonDirectory.into(),
-        }))
-        .await?;
+    other.remove("alias", d::RemoveKind::NonDirectory).await?;
     listing
         .mkdir("docs/middle", d::CreateDirectoryMode::Single)
         .await?;
@@ -759,7 +921,7 @@ async fn listing_checks_separate_binding_and_rejects_replaced_directory() -> Tes
         "docs/é",
         "docs",
     ] {
-        other.unit(rmdir(path)).await?;
+        other.remove(path, d::RemoveKind::EmptyDirectory).await?;
     }
     listing
         .mkdir("/docs", d::CreateDirectoryMode::Single)
@@ -780,7 +942,6 @@ async fn staging_releases_resources_and_commit_revalidates_slot_and_parent() -> 
     let fixture = Fixture::new(24).await?;
     let mut first = fixture.formal_session().await?;
     let mut second = fixture.formal_session().await?;
-    let mut operations = fixture.session().await?;
     let mut formal = fixture.formal_session().await?;
     first.begin("/file", d::WriteMode::CreateNew).await?;
     first.stage(b"old").await?;
@@ -835,7 +996,9 @@ async fn staging_releases_resources_and_commit_revalidates_slot_and_parent() -> 
         .await?;
     first.begin("parent/child", d::WriteMode::CreateNew).await?;
     first.stage(b"private").await?;
-    operations.unit(rmdir("parent")).await?;
+    formal
+        .remove("parent", d::RemoveKind::EmptyDirectory)
+        .await?;
     formal
         .mkdir("parent", d::CreateDirectoryMode::Single)
         .await?;
