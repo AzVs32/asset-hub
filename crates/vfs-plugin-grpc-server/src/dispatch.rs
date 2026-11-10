@@ -2,9 +2,7 @@
 use ah_vfs::application::driver_error::{DriverError, LifecycleError, LifecycleFailure};
 use ah_vfs::application::port::*;
 use ah_vfs::domain::InstanceId;
-use ah_vfs::domain::storage::{
-    StorageCreateDirRequest, StorageMoveEntryRequest, StorageRemoveEntryRequest,
-};
+use ah_vfs::domain::storage::{StorageMoveEntryRequest, StorageRemoveEntryRequest};
 use ah_vfs_storage::{BackendFailure, Failure, Operation, Rejection, StorageError};
 use ah_vfs_storage::{Permissions, ReadLinkRequest, StoragePath, XattrName, XattrWriteMode};
 use futures_util::FutureExt;
@@ -763,17 +761,38 @@ impl Session {
                     c::storage_protocol_violation_with_source(Operation::List, cause).into()
                 });
             }
-            p::StorageOp::CreateDir(p::CreateDir {
-                path: raw,
-                recursive,
-            }) => Value::Entry(c::entry(
-                operation,
-                s.create_dir(StorageCreateDirRequest {
-                    path: path(&raw)?,
-                    recursive,
-                })
-                .await?,
-            )?),
+            p::StorageOp::CreateDirectory(wire) => {
+                if !self
+                    .generation
+                    .driver
+                    .info()
+                    .capabilities()
+                    .directories()
+                    .can_create()
+                {
+                    return Err(StorageError::without_effects(
+                        operation,
+                        Failure::Rejected(Rejection::Unsupported),
+                        None,
+                    )
+                    .into());
+                }
+                let (request, working_directory, intermediate_symlinks) =
+                    p::decode_create_directory(wire).map_err(invalid_lookup)?;
+                let entry = s
+                    .create_dir(
+                        request,
+                        LookupContext {
+                            working_directory,
+                            intermediate_symlinks,
+                        },
+                    )
+                    .await?;
+                Value::Entry(
+                    c::entry(operation, entry)
+                        .map_err(|error| c::response_error(operation, true, error))?,
+                )
+            }
             p::StorageOp::Remove(p::Path { path: raw }) => {
                 s.remove_entry(StorageRemoveEntryRequest { path: path(&raw)? })
                     .await?;

@@ -1,6 +1,6 @@
 //! Windows names, reparse-point policy and directory-relative filesystem I/O.
 use super::{TEMP_PREFIX, native};
-use ah_vfs::domain::storage::{StorageCreateDirRequest, StorageMoveEntryRequest};
+use ah_vfs::domain::storage::StorageMoveEntryRequest;
 use ah_vfs_storage::{
     BackendFailure, ContractViolation, Failure, Operation, Rejection, StorageError,
 };
@@ -88,69 +88,42 @@ pub(super) fn checked_metadata(
         .metadata()
         .map_err(|cause| error(operation, cause))
 }
-pub(super) fn dir(
-    operation: Operation,
-    root: &Dir,
-    path: &StoragePath,
-    create: bool,
-) -> Result<(Dir, bool), StorageError> {
-    let mut changed = false;
-    let result = (|| {
-        validate(operation, path)?;
-        let mut current = root.try_clone().map_err(|cause| error(operation, cause))?;
-        for name in path.entry_names() {
-            let name = name.as_str();
-            if create {
-                match current.create_dir(name) {
-                    Ok(()) => changed = true,
-                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
-                    Err(cause) => {
-                        changed = true;
-                        return Err(error(operation, cause));
-                    }
-                }
-            }
-            // Keep directory handles unshareable for deletion. Traversal opens the
-            // reparse point itself and rejects it, including junctions and mount points.
-            let mut options = OpenOptions::new();
-            options
-                .read(true)
-                .access_mode(FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | SYNCHRONIZE)
-                .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
-                .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
-                .follow(FollowSymlinks::No);
-            let file = current
-                .open_with(name, &options)
-                .map_err(|cause| error(operation, cause))?;
-            native::public_handle(operation, &file)?;
-            let metadata = file.metadata().map_err(|cause| error(operation, cause))?;
-            if reparse(&metadata) {
-                return Err(StorageError::without_effects(
-                    operation,
-                    Failure::Rejected(Rejection::Unsupported),
-                    None,
-                ));
-            }
-            if !metadata.is_dir() {
-                return Err(StorageError::without_effects(
-                    operation,
-                    Failure::Rejected(Rejection::NotDirectory),
-                    None,
-                ));
-            }
-            current = Dir::from_std_file(file.into_std());
+fn dir(operation: Operation, root: &Dir, path: &StoragePath) -> Result<Dir, StorageError> {
+    validate(operation, path)?;
+    let mut current = root.try_clone().map_err(|cause| error(operation, cause))?;
+    for name in path.entry_names() {
+        let name = name.as_str();
+        // Keep directory handles unshareable for deletion. Traversal opens the
+        // reparse point itself and rejects it, including junctions and mount points.
+        let mut options = OpenOptions::new();
+        options
+            .read(true)
+            .access_mode(FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | SYNCHRONIZE)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+            .follow(FollowSymlinks::No);
+        let file = current
+            .open_with(name, &options)
+            .map_err(|cause| error(operation, cause))?;
+        native::public_handle(operation, &file)?;
+        let metadata = file.metadata().map_err(|cause| error(operation, cause))?;
+        if reparse(&metadata) {
+            return Err(StorageError::without_effects(
+                operation,
+                Failure::Rejected(Rejection::Unsupported),
+                None,
+            ));
         }
-        Ok(current)
-    })();
-    result
-        .map(|dir| (dir, changed))
-        .map_err(|error: StorageError| {
-            if changed {
-                StorageError::after_dispatch(operation, error.failure(), Some(Box::new(error)))
-            } else {
-                error
-            }
-        })
+        if !metadata.is_dir() {
+            return Err(StorageError::without_effects(
+                operation,
+                Failure::Rejected(Rejection::NotDirectory),
+                None,
+            ));
+        }
+        current = Dir::from_std_file(file.into_std());
+    }
+    Ok(current)
 }
 
 pub(super) fn parent(
@@ -173,7 +146,7 @@ pub(super) fn parent(
         })?
         .as_str()
         .to_owned();
-    Ok((dir(operation, root, &parent, false)?.0, name))
+    Ok((dir(operation, root, &parent)?, name))
 }
 pub(super) fn entry(
     operation: Operation,
@@ -303,47 +276,6 @@ pub(super) fn list_entries(
             Some(Box::new(cause)),
         )
     })
-}
-pub(super) fn create_dir(
-    root: &Dir,
-    request: StorageCreateDirRequest,
-) -> Result<Entry, StorageError> {
-    let operation = Operation::CreateDirectory;
-    if request.path.is_root() && !request.recursive {
-        return Err(StorageError::without_effects(
-            operation,
-            Failure::Rejected(Rejection::AlreadyExists),
-            None,
-        ));
-    }
-    if request.recursive {
-        let (dir, changed) = dir(operation, root, &request.path, true)?;
-        (|| {
-            entry(
-                operation,
-                request.path,
-                dir.dir_metadata()
-                    .map_err(|cause| error(operation, cause))?,
-            )
-        })()
-        .map_err(|error: StorageError| {
-            if changed {
-                StorageError::after_dispatch(operation, error.failure(), Some(Box::new(error)))
-            } else {
-                error
-            }
-        })
-    } else {
-        let (parent, name) = parent(operation, root, &request.path)?;
-        parent
-            .create_dir(&name)
-            .map_err(|cause| dispatched_error(operation, cause))?;
-        entry(
-            operation,
-            request.path,
-            checked_metadata(operation, &parent, &name)?,
-        )
-    }
 }
 pub(super) fn remove_entry(root: &Dir, path: StoragePath) -> Result<(), StorageError> {
     let operation = Operation::Remove;

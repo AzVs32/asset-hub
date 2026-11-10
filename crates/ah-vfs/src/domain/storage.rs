@@ -2,4 +2,4 @@
 
 mod operations;
 
-pub use operations::{StorageCreateDirRequest, StorageMoveEntryRequest, StorageRemoveEntryRequest};
+pub use operations::{StorageMoveEntryRequest, StorageRemoveEntryRequest};

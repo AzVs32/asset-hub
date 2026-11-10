@@ -11,9 +11,7 @@ use ah_vfs::application::port::{
 };
 use ah_vfs::application::service::{EntryService, MountService};
 use ah_vfs::domain::namespace::{ChildMountPolicy, VirtualPath};
-use ah_vfs::domain::storage::{
-    StorageCreateDirRequest, StorageMoveEntryRequest, StorageRemoveEntryRequest,
-};
+use ah_vfs::domain::storage::{StorageMoveEntryRequest, StorageRemoveEntryRequest};
 use ah_vfs::domain::{DriverInstance, DriverKey, InstanceId};
 use ah_vfs::infrastructure::mount_repository::SqliteMountRepository;
 use ah_vfs_storage::{
@@ -190,9 +188,6 @@ impl Storage for TestStorage {
         _: ah_vfs::application::port::LookupContext,
     ) -> StorageFuture<'_, Box<dyn StorageFileWriter>> {
         unsupported(Operation::Write)
-    }
-    fn create_dir(&self, _: StorageCreateDirRequest) -> StorageFuture<'_, Entry> {
-        unsupported(Operation::CreateDirectory)
     }
     fn remove_entry(&self, _: StorageRemoveEntryRequest) -> StorageFuture<'_, ()> {
         unsupported(Operation::Remove)
@@ -387,7 +382,7 @@ async fn mount_points_and_synthetic_dirs_keep_distinct_namespace_behavior() -> T
             Failure::Rejected(Rejection::IsDirectory)
         );
         assert!(matches!(
-            files.create_dir(CreateDirRequest { path: path.clone(), recursive: true }).await,
+            files.create_dir(CreateDirRequest::new(path.as_str(), ah_vfs_storage::CreateDirectoryMode::Recursive)?).await,
             Err(EntryError::MountBoundary(boundary)) if boundary == path
         ));
     }

@@ -9,9 +9,7 @@ use crate::application::mount_runtime::MountRuntime;
 use crate::application::port::{LookupContext, Storage};
 use crate::application::session::{FileReadHandle, FileWriteHandle};
 use crate::domain::namespace::{Mount, MountTable, VirtualPath};
-use crate::domain::storage::{
-    StorageCreateDirRequest, StorageMoveEntryRequest, StorageRemoveEntryRequest,
-};
+use crate::domain::storage::{StorageMoveEntryRequest, StorageRemoveEntryRequest};
 use ah_vfs_storage::{BackendFailure, DirectoryCursor, ListRequest, ListTarget};
 use ah_vfs_storage::{
     Capabilities, LinkTarget, ReadLinkRequest, ReadRequest, RenameMode, StatRequest, SymlinkAction,
@@ -426,16 +424,25 @@ impl EntryService {
     pub async fn create_dir(&self, request: CreateDirRequest) -> Result<EntryView, EntryError> {
         let table = self.runtime.table().await?;
         Self::protect(&table, &request.path)?;
-        let (relative, storage, capabilities) = self.open(&table, &request.path).await?;
+        let resolution = table.resolve(&request.path)?;
+        let reference = resolution.mount().driver_instance();
+        let driver = self
+            .runtime
+            .drivers
+            .get(reference.driver_key())
+            .ok_or_else(|| EntryError::DriverNotRegistered(reference.driver_key().clone()))?;
         Self::require(
             Operation::CreateDirectory,
-            capabilities.directories().can_create(),
+            driver.info().capabilities().directories().can_create(),
         )?;
+        let mut operand = resolution.storage_path()?.to_rooted_expr();
+        if request.trailing_slash {
+            operand = operand.with_trailing_slash();
+        }
+        let operation = ah_vfs_storage::CreateDirectoryRequest::new(operand, request.mode);
+        let storage = self.runtime.storage(reference, driver.as_ref()).await?;
         let entry = storage
-            .create_dir(StorageCreateDirRequest {
-                path: relative,
-                recursive: request.recursive,
-            })
+            .create_dir(operation, LookupContext::default())
             .await?;
         Ok(EntryView::from_storage(request.path, entry))
     }

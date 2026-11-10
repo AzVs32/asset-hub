@@ -12,9 +12,7 @@ use ah_vfs::application::port::{
 use ah_vfs::domain::namespace::{
     ChildMountPolicy, Mount, MountId, MountTable, MountTableError, VirtualPath,
 };
-use ah_vfs::domain::storage::{
-    StorageCreateDirRequest, StorageMoveEntryRequest, StorageRemoveEntryRequest,
-};
+use ah_vfs::domain::storage::{StorageMoveEntryRequest, StorageRemoveEntryRequest};
 use ah_vfs::domain::{DriverInstance, DriverKey, DriverKeyError, InstanceId};
 use ah_vfs_storage::Entry;
 
@@ -65,9 +63,6 @@ impl Storage for TestStorage {
         _: ah_vfs::application::port::LookupContext,
     ) -> StorageFuture<'_, Box<dyn StorageFileWriter>> {
         unsupported(Operation::Write)
-    }
-    fn create_dir(&self, _: StorageCreateDirRequest) -> StorageFuture<'_, Entry> {
-        unsupported(Operation::CreateDirectory)
     }
     fn remove_entry(&self, _: StorageRemoveEntryRequest) -> StorageFuture<'_, ()> {
         unsupported(Operation::Remove)

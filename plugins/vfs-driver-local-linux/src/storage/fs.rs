@@ -1,7 +1,7 @@
 //! Relative directory traversal and backend-neutral error/metadata conversion.
 
 use super::TEMP_PREFIX;
-use ah_vfs::domain::storage::{StorageCreateDirRequest, StorageMoveEntryRequest};
+use ah_vfs::domain::storage::StorageMoveEntryRequest;
 use ah_vfs_storage::{
     BackendFailure, ContractViolation, Failure, Operation, Rejection, StorageError,
 };
@@ -33,55 +33,28 @@ pub(super) fn validate(operation: Operation, path: &StoragePath) -> Result<(), S
     Ok(())
 }
 
-pub(super) fn dir(
-    operation: Operation,
-    root: &Dir,
-    path: &StoragePath,
-    create: bool,
-) -> Result<(Dir, bool), StorageError> {
-    let mut changed = false;
-    let result = (|| {
-        validate(operation, path)?;
-        let mut current = root.try_clone().map_err(|cause| error(operation, cause))?;
-        for name in path.entry_names() {
-            let name = name.as_str();
-            if create {
-                match current.create_dir(name) {
-                    Ok(()) => changed = true,
-                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => (),
-                    Err(cause) => {
-                        changed = true;
-                        return Err(error(operation, cause));
-                    }
-                }
-            }
-            if current
-                .symlink_metadata(name)
-                .map_err(|cause| error(operation, cause))?
-                .file_type()
-                .is_symlink()
-            {
-                return Err(StorageError::without_effects(
-                    operation,
-                    Failure::Rejected(Rejection::Unsupported),
-                    None,
-                ));
-            }
-            current = current
-                .open_dir_nofollow(name)
-                .map_err(|cause| error(operation, cause))?;
+fn dir(operation: Operation, root: &Dir, path: &StoragePath) -> Result<Dir, StorageError> {
+    validate(operation, path)?;
+    let mut current = root.try_clone().map_err(|cause| error(operation, cause))?;
+    for name in path.entry_names() {
+        let name = name.as_str();
+        if current
+            .symlink_metadata(name)
+            .map_err(|cause| error(operation, cause))?
+            .file_type()
+            .is_symlink()
+        {
+            return Err(StorageError::without_effects(
+                operation,
+                Failure::Rejected(Rejection::Unsupported),
+                None,
+            ));
         }
-        Ok(current)
-    })();
-    result
-        .map(|dir| (dir, changed))
-        .map_err(|error: StorageError| {
-            if changed {
-                StorageError::after_dispatch(operation, error.failure(), Some(Box::new(error)))
-            } else {
-                error
-            }
-        })
+        current = current
+            .open_dir_nofollow(name)
+            .map_err(|cause| error(operation, cause))?;
+    }
+    Ok(current)
 }
 
 pub(super) fn parent(
@@ -104,7 +77,7 @@ pub(super) fn parent(
         ))?
         .as_str()
         .to_owned();
-    Ok((dir(operation, root, &parent, false)?.0, name))
+    Ok((dir(operation, root, &parent)?, name))
 }
 
 pub(super) fn entry(
@@ -224,53 +197,6 @@ pub(super) fn list_entries(
             Some(Box::new(cause)),
         )
     })
-}
-
-pub(super) fn create_dir(
-    root: &Dir,
-    request: StorageCreateDirRequest,
-) -> Result<Entry, StorageError> {
-    let operation = Operation::CreateDirectory;
-    if request.path.is_root() && !request.recursive {
-        return Err(StorageError::without_effects(
-            operation,
-            Failure::Rejected(Rejection::AlreadyExists),
-            None,
-        ));
-    }
-    if request.recursive {
-        let (dir, changed) = dir(operation, root, &request.path, true)?;
-        (|| {
-            entry(
-                operation,
-                request.path,
-                dir.dir_metadata()
-                    .map_err(|cause| error(operation, cause))?,
-            )
-        })()
-        .map_err(|error: StorageError| {
-            if changed {
-                StorageError::after_dispatch(operation, error.failure(), Some(Box::new(error)))
-            } else {
-                error
-            }
-        })
-    } else {
-        let (parent, name) = parent(operation, root, &request.path)?;
-        parent
-            .create_dir(&name)
-            .map_err(|cause| dispatched_error(operation, cause))?;
-        entry(
-            operation,
-            request.path,
-            parent
-                .symlink_metadata(name)
-                .map_err(|cause| dispatched_error(operation, cause))?,
-        )
-        .map_err(|error| {
-            StorageError::after_dispatch(operation, error.failure(), Some(Box::new(error)))
-        })
-    }
 }
 
 pub(super) fn remove_entry(root: &Dir, path: StoragePath) -> Result<(), StorageError> {

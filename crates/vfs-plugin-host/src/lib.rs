@@ -9,9 +9,7 @@ use ah_vfs::application::driver_error::{DriverError, LifecycleError, LifecycleFa
 use ah_vfs::application::driver_info::DriverInfo;
 use ah_vfs::application::dto::*;
 use ah_vfs::application::port::*;
-use ah_vfs::domain::storage::{
-    StorageCreateDirRequest, StorageMoveEntryRequest, StorageRemoveEntryRequest,
-};
+use ah_vfs::domain::storage::{StorageMoveEntryRequest, StorageRemoveEntryRequest};
 use ah_vfs_storage::{
     BoundListRequest, DirectoryPage, DirectorySelection, Entry, ListRequest, Permissions,
     StoragePath, XattrName, XattrWriteMode,
@@ -677,16 +675,45 @@ impl Storage for RemoteStorage {
             }
         })
     }
-    fn create_dir(&self, r: StorageCreateDirRequest) -> StorageFuture<'_, Entry> {
+    fn create_dir(
+        &self,
+        request: ah_vfs_storage::CreateDirectoryRequest,
+        context: LookupContext,
+    ) -> StorageFuture<'_, Entry> {
         Box::pin(async move {
-            self.entry(
-                p::StorageOp::CreateDir(p::CreateDir {
-                    path: r.path.as_str().into(),
-                    recursive: r.recursive,
-                }),
-                r.path,
-            )
-            .await
+            let op = Operation::CreateDirectory;
+            if !self.driver_info.capabilities().directories().can_create() {
+                return Err(StorageError::without_effects(
+                    op,
+                    Failure::Rejected(Rejection::Unsupported),
+                    None,
+                ));
+            }
+            let reply = self
+                .call(
+                    p::StorageOp::CreateDirectory(p::encode_create_directory(
+                        &request,
+                        &context.working_directory,
+                        context.intermediate_symlinks,
+                    )),
+                    vec![],
+                )
+                .await?;
+            if !reply.data.is_empty() {
+                return Err(bad_response(op, true));
+            }
+            let Some(Value::Entry(entry)) = reply.result else {
+                return Err(bad_response(op, true));
+            };
+            let entry = convert::decode_entry(op, entry)
+                .map_err(|error| convert::response_error(op, true, error))?;
+            if entry.entry_type() != ah_vfs_storage::EntryType::Directory
+                || expected_lookup_address(request.lookup(), &context)
+                    .is_some_and(|path| entry.path() != &path)
+            {
+                return Err(bad_response(op, true));
+            }
+            Ok(entry)
         })
     }
     fn move_entry(&self, r: StorageMoveEntryRequest) -> StorageFuture<'_, Entry> {

@@ -298,10 +298,14 @@ async fn create_dir_preserves_vfs_mount_boundaries_in_both_modes() -> TestResult
         for recursive in [false, true] {
             let error = f
                 .entries
-                .create_dir(CreateDirRequest {
-                    path: virtual_path(name)?,
-                    recursive,
-                })
+                .create_dir(CreateDirRequest::new(
+                    name,
+                    if recursive {
+                        ah_vfs_storage::CreateDirectoryMode::Recursive
+                    } else {
+                        ah_vfs_storage::CreateDirectoryMode::Single
+                    },
+                )?)
                 .await
                 .err()
                 .ok_or("expected protected namespace entry")?;
@@ -310,6 +314,35 @@ async fn create_dir_preserves_vfs_mount_boundaries_in_both_modes() -> TestResult
             );
         }
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn create_dir_at_the_application_entry_preserves_a_trailing_slash() -> TestResult {
+    use ah_vfs_storage::CreateDirectoryMode::{Recursive, Single};
+
+    let f = fixture().await?;
+    let mut writer = f
+        .entries
+        .write_file(WriteFileRequest {
+            path: virtual_path("/file")?,
+            mode: WriteMode::CreateNew,
+            publication: ah_vfs_storage::Publication::Atomic,
+        })
+        .await?;
+    writer.commit().await?;
+    for (name, rejection) in [
+        ("/file", Rejection::AlreadyExists),
+        ("/file/", Rejection::NotDirectory),
+    ] {
+        assert!(
+            matches!(f.entries.create_dir(CreateDirRequest::new(name, Single)?).await,
+            Err(error) if error.storage_error().is_some_and(|error| error.failure() == Failure::Rejected(rejection)))
+        );
+    }
+    f.entries
+        .create_dir(CreateDirRequest::new("/parent/child/", Recursive)?)
+        .await?;
     Ok(())
 }
 

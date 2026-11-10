@@ -1,6 +1,6 @@
 //! Shared protobuf messages, validation and VFS protocol semantics.
 pub mod wire {
-    include!(concat!(env!("OUT_DIR"), "/assethub.vfs.v8.rs"));
+    include!(concat!(env!("OUT_DIR"), "/assethub.vfs.v9.rs"));
 }
 pub use wire::*;
 pub use wire::{reply::Result as Value, request::Operation, storage_call::Operation as StorageOp};
@@ -11,8 +11,8 @@ mod values;
 pub use codec::*;
 pub use directory::*;
 pub use lookup::{
-    LookupValueError, decode_lookup, decode_read, decode_stat, decode_write, encode_lookup,
-    encode_read, encode_stat, encode_write,
+    LookupValueError, decode_create_directory, decode_lookup, decode_read, decode_stat,
+    decode_write, encode_create_directory, encode_lookup, encode_read, encode_stat, encode_write,
 };
 pub use values::{
     EntryValueError, decode_capabilities, decode_entry, decode_time, encode_capabilities,
@@ -23,7 +23,7 @@ pub const FILE_DESCRIPTOR_SET: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "
 /// JSON values at application/configuration boundaries, never a wire message.
 pub type JsonObject = std::collections::BTreeMap<String, serde_json::Value>;
 
-pub const PROTOCOL_MAJOR: u32 = 8;
+pub const PROTOCOL_MAJOR: u32 = 9;
 pub const PROTOCOL_MINOR: u32 = 0;
 pub const MAX_CONTROL_BYTES: usize = 1024 * 1024;
 pub const MAX_DATA_BYTES: usize = 8 * 1024 * 1024;
@@ -180,7 +180,7 @@ impl Operation {
             Self::ReaderNext(_) => matches!(value, Value::Chunk(_)),
             Self::Commit(_) => matches!(value, Value::Entry(_)),
             Self::Storage(call) => match &call.operation {
-                Some(StorageOp::Stat(_) | StorageOp::CreateDir(_) | StorageOp::Move(_)) => {
+                Some(StorageOp::Stat(_) | StorageOp::CreateDirectory(_) | StorageOp::Move(_)) => {
                     matches!(value, Value::Entry(_))
                 }
                 Some(StorageOp::List(_)) => matches!(value, Value::Page(_)),
@@ -212,7 +212,7 @@ impl StorageOp {
             Self::Stat(_) => D::Stat,
             Self::ReadLink(_) => D::ReadLink,
             Self::List(_) | Self::SelectDirectory(_) => D::List,
-            Self::CreateDir(_) => D::CreateDirectory,
+            Self::CreateDirectory(_) => D::CreateDirectory,
             Self::Remove(_) => D::Remove,
             Self::Move(_) => D::Rename,
             Self::GetPermissions(_) => D::GetPermissions,

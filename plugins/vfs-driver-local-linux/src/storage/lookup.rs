@@ -2,11 +2,12 @@
 use super::fs;
 use ah_vfs::application::port::LookupContext;
 use ah_vfs_storage::{
-    BackendFailure, Entry, EntryType, Failure, LinkTarget, LookupStart, Operation, PathComponent,
-    PathExpr, PathLookup, Rejection, StorageError, StoragePath, SymlinkAction, SymlinkTraversal,
+    BackendFailure, CreateDirectoryRequest, Entry, EntryType, Failure, LinkTarget, LookupStart,
+    MissingName, Operation, PathComponent, PathExpr, PathLookup, Rejection, StorageError,
+    StoragePath, SymlinkAction, SymlinkTraversal,
 };
 use cap_std::fs::{Dir, File};
-use rustix::fs::{Mode, OFlags, ResolveFlags, fstat, openat2, readlinkat};
+use rustix::fs::{Mode, OFlags, ResolveFlags, fstat, mkdirat, openat2, readlinkat};
 use rustix::io::Errno;
 use std::{collections::BTreeMap, sync::Arc};
 
@@ -72,6 +73,23 @@ pub(super) fn open_reader(
     Ok(file)
 }
 
+pub(super) fn create_dir(
+    root: &Dir,
+    request: &CreateDirectoryRequest,
+    context: LookupContext,
+) -> Result<Entry, StorageError> {
+    let op = Operation::CreateDirectory;
+    let mut walk = Walk::new(root, request.lookup(), &context, op);
+    let result = walk.resolve(&context).map(|selected| selected.entry);
+    result.map_err(|error| {
+        if walk.created {
+            StorageError::after_dispatch(op, error.failure(), Some(Box::new(error)))
+        } else {
+            error
+        }
+    })
+}
+
 fn link_bytes(op: Operation, file: &File) -> Result<LinkTarget, StorageError> {
     // Linux accepts an empty path for an O_PATH descriptor of the link itself.
     // Reading by descriptor keeps the bytes and the classified type on one object.
@@ -85,6 +103,7 @@ struct Walk<'a, 'r> {
     lookup: PathLookup<'r>,
     links: SymlinkTraversal,
     op: Operation,
+    created: bool,
     // Keep the handles used to resolve the operand, even when navigation
     // leaves a directory or follows a link. Revalidate before returning.
     bound: BTreeMap<StoragePath, Arc<File>>,
@@ -97,13 +116,24 @@ impl<'a, 'r> Walk<'a, 'r> {
         context: LookupContext,
         op: Operation,
     ) -> Result<Selected, StorageError> {
-        let mut walk = Self {
+        Self::new(root, lookup, &context, op).resolve(&context)
+    }
+
+    fn new(root: &'a Dir, lookup: PathLookup<'r>, context: &LookupContext, op: Operation) -> Self {
+        Self {
             root,
             lookup,
             links: SymlinkTraversal::new(context.intermediate_symlinks),
             op,
+            created: false,
             bound: BTreeMap::new(),
-        };
+        }
+    }
+
+    fn resolve(&mut self, context: &LookupContext) -> Result<Selected, StorageError> {
+        let op = self.op;
+        let lookup = self.lookup;
+        let walk = self;
         let mut directories =
             vec![walk.selected(StoragePath::root(), walk.open_file(&StoragePath::root())?)?];
         if lookup.path().start() == LookupStart::BaseDirectory {
@@ -127,10 +157,14 @@ impl<'a, 'r> Walk<'a, 'r> {
                 directories.push(selected);
             }
         }
-        let selected = walk.segment(lookup.path(), &mut directories, &[])?;
-        lookup
-            .check_existing_target(selected.entry.path(), selected.entry.entry_type())
-            .map_err(|reason| rejected(op, reason))?;
+        let selected = walk.segment(lookup.path(), &mut directories, &[], false)?;
+        // Single can create only the final component. Its successful creation
+        // has already satisfied the absent-target policy.
+        if !walk.created || lookup.final_symlink() != SymlinkAction::Preserve {
+            lookup
+                .check_existing_target(selected.entry.path(), selected.entry.entry_type())
+                .map_err(|reason| rejected(op, reason))?;
+        }
         walk.verify_bound()?;
         Ok(selected)
     }
@@ -168,6 +202,52 @@ impl<'a, 'r> Walk<'a, 'r> {
         )
         .map_err(|cause| fs::error(self.op, cause.into()))?;
         self.selected(path, File::from_std(fd.into()))
+    }
+
+    fn create_child(
+        &mut self,
+        parent: &Selected,
+        path: StoragePath,
+        name: &str,
+        missing: MissingName,
+    ) -> Result<Selected, StorageError> {
+        self.lookup
+            .check_missing_name(&path, missing)
+            .map_err(|reason| rejected(self.op, reason))?;
+        self.verify_bound()?;
+        let mode = Mode::RUSR
+            | Mode::WUSR
+            | Mode::XUSR
+            | Mode::RGRP
+            | Mode::WGRP
+            | Mode::XGRP
+            | Mode::ROTH
+            | Mode::WOTH
+            | Mode::XOTH;
+        match mkdirat(parent.file.as_ref(), name, mode) {
+            Ok(()) => {
+                self.created = true;
+                let selected = self.child(parent, path, name)?;
+                if selected.entry.entry_type() != EntryType::Directory {
+                    return Err(stale(self.op));
+                }
+                Ok(selected)
+            }
+            Err(Errno::EXIST) => self.child(parent, path, name),
+            Err(
+                cause @ (Errno::NOENT
+                | Errno::NOTDIR
+                | Errno::ACCESS
+                | Errno::PERM
+                | Errno::ROFS
+                | Errno::NAMETOOLONG
+                | Errno::NOSPC
+                | Errno::DQUOT
+                | Errno::INVAL
+                | Errno::LOOP),
+            ) => Err(fs::error(self.op, cause.into())),
+            Err(cause) => Err(fs::dispatched_error(self.op, cause.into())),
+        }
     }
 
     fn selected(&mut self, path: StoragePath, file: File) -> Result<Selected, StorageError> {
@@ -212,6 +292,7 @@ impl<'a, 'r> Walk<'a, 'r> {
         expression: &PathExpr,
         directories: &mut Vec<Selected>,
         suffix: &[PathComponent],
+        in_link: bool,
     ) -> Result<Selected, StorageError> {
         if expression.start() == LookupStart::InstanceRoot {
             directories.truncate(1);
@@ -231,8 +312,23 @@ impl<'a, 'r> Walk<'a, 'r> {
                         .path()
                         .join(name)
                         .map_err(|_| rejected(self.op, Rejection::PathTooLong))?;
-                    let mut selected = self.child(parent, path, name.as_str())?;
                     let remaining = &expression.components()[index + 1..];
+                    let mut selected = match self.child(parent, path.clone(), name.as_str()) {
+                        Err(error)
+                            if self.op == Operation::CreateDirectory
+                                && error.failure() == Failure::Rejected(Rejection::NotFound) =>
+                        {
+                            let missing = if in_link {
+                                MissingName::LinkTarget
+                            } else if remaining.is_empty() {
+                                MissingName::OperandFinal
+                            } else {
+                                MissingName::OperandIntermediate
+                            };
+                            self.create_child(parent, path, name.as_str(), missing)?
+                        }
+                        result => result?,
+                    };
                     if selected.entry.entry_type() == EntryType::Symlink {
                         let pending: Vec<_> = remaining.iter().chain(suffix).cloned().collect();
                         if self
@@ -244,7 +340,7 @@ impl<'a, 'r> Walk<'a, 'r> {
                             let target = link_bytes(self.op, &selected.file)?
                                 .prepare_lookup(parent.entry.path(), &pending)
                                 .map_err(|reason| failure(self.op, reason))?;
-                            selected = self.segment(&target, directories, &pending)?;
+                            selected = self.segment(&target, directories, &pending, true)?;
                             if selected.entry.entry_type() == EntryType::Directory {
                                 // The expanded walk already left its directory on the stack.
                                 continue;
@@ -300,6 +396,7 @@ mod tests {
             lookup: request.lookup(),
             links: SymlinkTraversal::default(),
             op: Operation::Stat,
+            created: false,
             bound: BTreeMap::new(),
         };
         let root_entry =

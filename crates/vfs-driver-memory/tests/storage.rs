@@ -2,9 +2,7 @@ use ah_vfs_storage::{BackendFailure, Failure, Rejection};
 mod common;
 
 use ah_vfs::application::port::{Driver, Storage, validate_storage_extensions};
-use ah_vfs::domain::storage::{
-    StorageCreateDirRequest, StorageMoveEntryRequest, StorageRemoveEntryRequest,
-};
+use ah_vfs::domain::storage::{StorageMoveEntryRequest, StorageRemoveEntryRequest};
 use ah_vfs_storage::EntryType;
 use ah_vfs_storage::{AttributeSupport, WriteMode};
 use common::*;
@@ -28,7 +26,7 @@ async fn declarations_cover_all_ports_and_optional_attributes_are_absent() -> Te
     let root = storage
         .stat_entry(
             ah_vfs_storage::StatRequest::new(
-                (path("")?).to_rooted_expr(),
+                path("")?.to_rooted_expr(),
                 ah_vfs_storage::SymlinkAction::Preserve,
             ),
             Default::default(),
@@ -418,7 +416,7 @@ async fn invalid_parents_types_and_root_mutations_have_domain_errors() -> TestRe
         storage
             .read_file(
                 ah_vfs_storage::ReadRequest::new(
-                    (path("")?).to_rooted_expr(),
+                    path("")?.to_rooted_expr(),
                     ah_vfs_storage::ReadRange::FULL
                 ),
                 Default::default()
@@ -457,7 +455,7 @@ async fn invalid_parents_types_and_root_mutations_have_domain_errors() -> TestRe
         storage
             .write_file(
                 ah_vfs_storage::WriteRequest::new(
-                    (path("")?).to_rooted_expr(),
+                    path("")?.to_rooted_expr(),
                     ah_vfs_storage::WriteMode::CreateNew,
                     ah_vfs_storage::Publication::Staged
                 ),
@@ -471,10 +469,13 @@ async fn invalid_parents_types_and_root_mutations_have_domain_errors() -> TestRe
     );
     assert_eq!(
         storage
-            .create_dir(StorageCreateDirRequest {
-                path: path("file/nested/dir")?,
-                recursive: true
-            })
+            .create_dir(
+                ah_vfs_storage::CreateDirectoryRequest::new(
+                    path("file/nested/dir")?.to_rooted_expr(),
+                    ah_vfs_storage::CreateDirectoryMode::Recursive
+                ),
+                Default::default()
+            )
             .await
             .err()
             .ok_or("parent")?

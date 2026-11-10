@@ -1,6 +1,6 @@
 //! Build the guest with `cargo build --locked --release --target wasm32-wasip2`
 //! before running these tests. The multipart test uses the default host fuel budget.
-use ah_vfs_storage::{Failure, Rejection};
+use ah_vfs_storage::{Failure, MutationOutcome, Rejection};
 mod common;
 use ah_vfs::application::driver_catalog::DriverCatalog;
 use ah_vfs::application::dto::*;
@@ -241,6 +241,22 @@ async fn protobuf_reads_and_conditional_commits_bind_a_single_s3_version() -> Re
         .open(OpenContext::new(InstanceId::parse("fixture")?, config))
         .await?;
     assert!(!driver.info().capabilities().list());
+    let directories = driver.info().capabilities().directories();
+    assert_eq!(
+        directories,
+        ah_vfs_storage::DirectorySupport::prefix(false, false)
+    );
+    let create = ah_vfs_storage::CreateDirectoryRequest::new(
+        ah_vfs_storage::PathExpr::parse("/absent/child")?,
+        ah_vfs_storage::CreateDirectoryMode::Recursive,
+    );
+    assert!(
+        matches!(storage.create_dir(create, Default::default()).await,
+            Err(error) if error.operation() == ah_vfs_storage::Operation::CreateDirectory
+                && error.failure() == Failure::Rejected(Rejection::Unsupported)
+                && error.outcome() == MutationOutcome::Unchanged
+        )
+    );
     let request = ah_vfs_storage::ListRequest::new(
         ah_vfs_storage::ListTarget::Path(StoragePath::root().to_rooted_expr()),
         Default::default(),

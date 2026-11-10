@@ -196,12 +196,6 @@ impl Session {
             .result
             .ok_or("missing reply")?)
     }
-    async fn entry(&mut self, action: Action) -> TestResult<d::Entry> {
-        let Reply::Entry(entry) = self.call(action).await? else {
-            return Err("expected entry".into());
-        };
-        Ok(wire::decode_entry(entry)?)
-    }
     async fn unit(&mut self, action: Action) -> TestResult {
         if !matches!(self.call(action).await?, Reply::Unit(_)) {
             return Err("expected unit response".into());
@@ -217,6 +211,14 @@ struct FormalSession {
     writer: Option<u64>,
 }
 impl FormalSession {
+    async fn mkdir(&mut self, path: &str, mode: d::CreateDirectoryMode) -> TestResult<d::Entry> {
+        let reply = self.call(mkdir(path, mode)?).await?;
+        let Some(p::Value::Entry(entry)) = reply.result else {
+            return Err(format!("expected created directory: {:?}", reply.result).into());
+        };
+        Ok(p::decode_entry(entry)?)
+    }
+
     async fn call(&mut self, operation: p::StorageOp) -> TestResult<p::Reply> {
         self.invoke(p::Operation::Storage(p::StorageCall {
             handle: self.handle,
@@ -357,21 +359,32 @@ fn stat_failure(reply: p::Reply, cause: d::Failure) -> TestResult {
 }
 
 fn formal_failure(reply: p::Reply, operation: d::Operation, cause: d::Failure) -> TestResult {
+    formal_failure_with_outcome(reply, operation, cause, d::MutationOutcome::Unchanged)
+}
+
+fn formal_failure_with_outcome(
+    reply: p::Reply,
+    operation: d::Operation,
+    cause: d::Failure,
+    outcome: d::MutationOutcome,
+) -> TestResult {
     let Some(p::Value::Failure(failure)) = reply.result else {
         return Err("expected formal storage failure".into());
     };
     let failure = p::decode_storage_error(failure.storage.ok_or("missing storage failure")?)?;
     assert_eq!(failure.operation(), operation);
     assert_eq!(failure.failure(), cause);
-    assert_eq!(failure.outcome(), d::MutationOutcome::Unchanged);
+    assert_eq!(failure.outcome(), outcome);
     Ok(())
 }
 
-fn mkdir(path: &str, recursive: bool) -> Action {
-    Action::CreateDirectory(wire::CreateDirectory {
-        path: path.into(),
-        recursive,
-    })
+fn mkdir(path: &str, mode: d::CreateDirectoryMode) -> TestResult<p::StorageOp> {
+    let request = d::CreateDirectoryRequest::new(d::PathExpr::parse(path)?, mode);
+    Ok(p::StorageOp::CreateDirectory(p::encode_create_directory(
+        &request,
+        &d::StoragePath::root(),
+        d::IntermediateSymlinks::FollowWithinInstance,
+    )))
 }
 fn rmdir(path: &str) -> Action {
     Action::Remove(wire::Remove {
@@ -446,8 +459,59 @@ async fn wire_page(
 async fn formal_lookup_preserves_policy_instance_and_link_bytes() -> TestResult {
     let fixture = Fixture::new(64).await?;
     let mut operations = fixture.session().await?;
-    operations.entry(mkdir("/docs/sub", true)).await?;
     let mut formal = fixture.formal_session().await?;
+    formal
+        .mkdir("/docs/sub", d::CreateDirectoryMode::Recursive)
+        .await?;
+
+    use d::CreateDirectoryMode::Recursive;
+    let request =
+        d::CreateDirectoryRequest::new(d::PathExpr::parse("first/../sibling/")?, Recursive);
+    let reply = formal
+        .call(p::StorageOp::CreateDirectory(p::encode_create_directory(
+            &request,
+            &d::StoragePath::parse("docs/sub")?,
+            d::IntermediateSymlinks::Reject,
+        )))
+        .await?;
+    let Some(p::Value::Entry(directory)) = reply.result else {
+        return Err("expected a directory at the bound working directory".into());
+    };
+    assert_eq!(
+        p::decode_entry(directory)?.path().as_str(),
+        "docs/sub/sibling"
+    );
+    assert_eq!(
+        formal
+            .stat_entry(stat("/docs/sub/first", false))
+            .await?
+            .entry_type(),
+        d::EntryType::Directory
+    );
+
+    let request = d::CreateDirectoryRequest::new(d::PathExpr::parse("alias/child")?, Recursive);
+    formal_failure(
+        formal
+            .call(p::StorageOp::CreateDirectory(p::encode_create_directory(
+                &request,
+                &d::StoragePath::root(),
+                d::IntermediateSymlinks::Reject,
+            )))
+            .await?,
+        d::Operation::CreateDirectory,
+        d::Failure::Rejected(d::Rejection::SymlinkNotAllowed),
+    )?;
+    let directory = formal.mkdir("alias/child", Recursive).await?;
+    assert_eq!(directory.path().as_str(), "docs/child");
+    formal_failure(
+        formal.call(mkdir("dangling/child", Recursive)?).await?,
+        d::Operation::CreateDirectory,
+        d::Failure::Rejected(d::Rejection::NotFound),
+    )?;
+    stat_failure(
+        formal.call(stat("/missing", false)).await?,
+        d::Failure::Rejected(d::Rejection::NotFound),
+    )?;
 
     let root = formal.stat_entry(stat("/../../", true)).await?;
     assert!(root.path().is_root());
@@ -581,12 +645,9 @@ async fn formal_lookup_preserves_policy_instance_and_link_bytes() -> TestResult 
         d::Failure::Backend(d::BackendFailure::Closed),
     )?;
 
-    let mut invalid = wire::encode_entry(root)?;
+    let mut invalid = p::encode_entry(&root)?;
     invalid.kind = p::EntryKind::File.into();
-    assert_eq!(
-        wire::decode_entry(invalid),
-        Err(d::ContractViolation::InvalidEntry)
-    );
+    assert!(p::decode_entry(invalid).is_err());
 
     stat_failure(
         formal
@@ -622,7 +683,9 @@ async fn listing_checks_separate_binding_and_rejects_replaced_directory() -> Tes
     let mut listing = fixture.formal_session().await?;
     let mut other = fixture.session().await?;
     for path in ["docs/é", "docs/Report", "docs/report"] {
-        other.entry(mkdir(path, true)).await?;
+        listing
+            .mkdir(path, d::CreateDirectoryMode::Recursive)
+            .await?;
     }
     let request = d::ListRequest::new(
         d::ListTarget::Path(d::PathExpr::parse("alias/")?),
@@ -675,7 +738,9 @@ async fn listing_checks_separate_binding_and_rejects_replaced_directory() -> Tes
             kind: wire::RemoveKind::NonDirectory.into(),
         }))
         .await?;
-    other.entry(mkdir("docs/middle", false)).await?;
+    listing
+        .mkdir("docs/middle", d::CreateDirectoryMode::Single)
+        .await?;
     let continuation = d::ListRequest::new(
         d::ListTarget::Continue(first.continuation().ok_or("first cursor")?),
         request.size(),
@@ -696,7 +761,9 @@ async fn listing_checks_separate_binding_and_rejects_replaced_directory() -> Tes
     ] {
         other.unit(rmdir(path)).await?;
     }
-    other.entry(mkdir("/docs", false)).await?;
+    listing
+        .mkdir("/docs", d::CreateDirectoryMode::Single)
+        .await?;
     formal_failure(
         listing
             .call(p::StorageOp::List(p::encode_list(&bound)))
@@ -763,11 +830,15 @@ async fn staging_releases_resources_and_commit_revalidates_slot_and_parent() -> 
     }
     assert_eq!(fixture.storage.used_bytes(), 7);
 
-    operations.entry(mkdir("parent", false)).await?;
+    formal
+        .mkdir("parent", d::CreateDirectoryMode::Single)
+        .await?;
     first.begin("parent/child", d::WriteMode::CreateNew).await?;
     first.stage(b"private").await?;
     operations.unit(rmdir("parent")).await?;
-    operations.entry(mkdir("parent", false)).await?;
+    formal
+        .mkdir("parent", d::CreateDirectoryMode::Single)
+        .await?;
     formal_failure(
         first.commit_reply().await?,
         d::Operation::Write,
@@ -807,9 +878,12 @@ async fn staging_releases_resources_and_commit_revalidates_slot_and_parent() -> 
         d::Failure::Rejected(d::Rejection::NotFound),
     )?;
 
-    error(
-        operations
-            .call(mkdir("created/../file/child", true))
+    formal_failure_with_outcome(
+        formal
+            .call(mkdir(
+                "created/../file/child",
+                d::CreateDirectoryMode::Recursive,
+            )?)
             .await?,
         d::Operation::CreateDirectory,
         d::Failure::Rejected(d::Rejection::NotDirectory),

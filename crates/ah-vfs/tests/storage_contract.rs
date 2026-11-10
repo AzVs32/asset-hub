@@ -8,7 +8,7 @@ mod common;
 use ah_vfs::application::driver_catalog::DriverCatalog;
 use ah_vfs::application::driver_error::DriverError;
 use ah_vfs::application::driver_info::DriverInfo;
-use ah_vfs::application::dto::{ReadFileRequest, WriteFileRequest};
+use ah_vfs::application::dto::{CreateDirRequest, ReadFileRequest, WriteFileRequest};
 use ah_vfs::application::error::EntryError;
 use ah_vfs::application::port::{
     DriverFuture, Storage, StorageFileReader, StorageFileWriter, StorageFuture, StoragePermissions,
@@ -244,8 +244,19 @@ async fn unsupported_requests_are_rejected_before_backend_side_effects() -> Test
         .with_read(ReadSupport::Sequential)
         .with_write(WriteSupport::staged(WriteModes::CreateNew, false));
     let (unavailable, _) = fixture(caps, Some(LifecycleFailure::Unavailable)).await?;
-    assert!(matches!(unavailable.write_file(request(true)?).await, Err(EntryError::Storage(error))
-        if error.failure() == Failure::Rejected(Rejection::Unsupported)));
+    assert!(
+        matches!(unavailable.write_file(request(true)?).await, Err(EntryError::Storage(error))
+        if error.failure() == Failure::Rejected(Rejection::Unsupported))
+    );
+    let create = CreateDirRequest::new(
+        "/absent/child",
+        ah_vfs_storage::CreateDirectoryMode::Recursive,
+    )?;
+    assert!(
+        matches!(unavailable.create_dir(create).await, Err(EntryError::Storage(error))
+        if error.operation() == Operation::CreateDirectory
+            && error.failure() == Failure::Rejected(Rejection::Unsupported))
+    );
     let (service, calls) = fixture(caps, None).await?;
     assert!(
         matches!(service.write_file(request(true)?).await, Err(error) if error.storage_error().is_some_and(|e| e.failure() == Failure::Rejected(Rejection::Unsupported)))
@@ -320,8 +331,10 @@ async fn opening_streaming_and_committing_keep_domain_error_categories() -> Test
         path: path.clone(),
         range: ReadRange::FULL,
     };
-    assert!(matches!(service.read_file(read).await, Err(EntryError::Driver(DriverError::Lifecycle(error)))
-        if error.failure() == LifecycleFailure::Unavailable));
+    assert!(
+        matches!(service.read_file(read).await, Err(EntryError::Driver(DriverError::Lifecycle(error)))
+        if error.failure() == LifecycleFailure::Unavailable)
+    );
     let (service, _) = fixture(caps, None).await?;
     let mut reader = service
         .read_file(ReadFileRequest {
@@ -406,7 +419,7 @@ async fn read_only_extension_and_missing_base_operations_reject_mutation() -> Te
         calls: Arc::new(AtomicUsize::new(0)),
     };
     assert!(
-        matches!(storage.create_dir(ah_vfs::domain::storage::StorageCreateDirRequest { path: StoragePath::parse("dir")?, recursive: false }).await, Err(error) if error.failure() == Failure::Rejected(Rejection::Unsupported))
+        matches!(storage.create_dir(ah_vfs_storage::CreateDirectoryRequest::new(StoragePath::parse("dir")?.to_rooted_expr(), ah_vfs_storage::CreateDirectoryMode::Single), Default::default()).await, Err(error) if error.failure() == Failure::Rejected(Rejection::Unsupported))
     );
     Ok(())
 }

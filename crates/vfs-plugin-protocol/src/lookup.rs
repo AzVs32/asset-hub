@@ -19,6 +19,8 @@ pub enum LookupValueError {
     Range(#[from] RangeError),
     #[error("invalid write mode or publication guarantee")]
     WritePolicy,
+    #[error("invalid directory creation mode")]
+    CreateDirectoryMode,
 }
 
 pub fn encode_lookup(
@@ -135,4 +137,40 @@ pub fn decode_write(
     };
     let (operand, base, links) = decode_lookup(value.lookup)?;
     Ok((WriteRequest::new(operand, mode, publication), base, links))
+}
+
+pub fn encode_create_directory(
+    request: &ah_vfs_storage::CreateDirectoryRequest,
+    base: &StoragePath,
+    links: IntermediateSymlinks,
+) -> super::CreateDirectory {
+    use ah_vfs_storage::CreateDirectoryMode;
+    let mode = match request.mode() {
+        CreateDirectoryMode::Single => super::CreateDirectoryMode::Single,
+        CreateDirectoryMode::Recursive => super::CreateDirectoryMode::Recursive,
+    };
+    super::CreateDirectory {
+        lookup: Some(encode_lookup(request.path(), base, links)),
+        mode: mode.into(),
+    }
+}
+
+pub fn decode_create_directory(
+    value: super::CreateDirectory,
+) -> Result<
+    (
+        ah_vfs_storage::CreateDirectoryRequest,
+        StoragePath,
+        IntermediateSymlinks,
+    ),
+    LookupValueError,
+> {
+    use ah_vfs_storage::{CreateDirectoryMode, CreateDirectoryRequest};
+    let mode = match super::CreateDirectoryMode::try_from(value.mode) {
+        Ok(super::CreateDirectoryMode::Single) => CreateDirectoryMode::Single,
+        Ok(super::CreateDirectoryMode::Recursive) => CreateDirectoryMode::Recursive,
+        _ => return Err(LookupValueError::CreateDirectoryMode),
+    };
+    let (operand, base, links) = decode_lookup(value.lookup)?;
+    Ok((CreateDirectoryRequest::new(operand, mode), base, links))
 }

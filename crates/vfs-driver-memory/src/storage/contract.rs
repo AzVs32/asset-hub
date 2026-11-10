@@ -149,31 +149,42 @@ impl MemoryStorage {
             .map_err(|cause| invalid(op, ContractViolation::InvalidPage, cause))
     }
 
-    pub fn create_directory(
+    pub(super) fn create_directory(
         &self,
         request: &CreateDirectoryRequest,
-        links: IntermediateSymlinks,
+        context: LookupContext,
     ) -> Result<Entry, StorageError> {
         let op = Operation::CreateDirectory;
+        if !Self::supported_capabilities().directories().can_create() {
+            return Err(rejected(op, Rejection::Unsupported));
+        }
         let mut nodes = self.lock(op)?;
-        let mut walk = Walk::new(&mut nodes, request.lookup(), links);
-        walk.recursive = request.mode() == CreateDirectoryMode::Recursive;
-        let path = walk.start().map_err(|failure| {
-            if walk.created {
-                StorageError::after_dispatch(op, failure, None)
+        if request.path().start() == LookupStart::BaseDirectory
+            && directory(&nodes, &context.working_directory).is_none()
+        {
+            return Err(stale(op));
+        }
+        let mut walk = Walk::new(&mut nodes, request.lookup(), context.intermediate_symlinks);
+        let path = walk
+            .start_at(&context.working_directory)
+            .map_err(|failure| {
+                if walk.created {
+                    StorageError::after_dispatch(op, failure, None)
+                } else {
+                    StorageError::without_effects(op, failure, None)
+                }
+            })?;
+        let mut created = walk.created;
+        let entry = nodes.entry(path.as_str().into()).or_insert_with(|| {
+            created = true;
+            MemoryEntry::dir()
+        });
+        metadata(path, entry, op).map_err(|error| {
+            if created {
+                StorageError::after_dispatch(op, error.failure(), Some(Box::new(error)))
             } else {
-                StorageError::without_effects(op, failure, None)
+                error
             }
-        })?;
-        let entry = nodes
-            .entry(path.as_str().into())
-            .or_insert_with(MemoryEntry::dir);
-        entry.metadata(path).map_err(|cause| {
-            StorageError::after_dispatch(
-                op,
-                Failure::Contract(ContractViolation::InvalidEntry),
-                Some(Box::new(cause)),
-            )
         })
     }
 
@@ -312,7 +323,6 @@ struct Walk<'a, 'r> {
     nodes: &'a mut Nodes,
     lookup: PathLookup<'r>,
     links: SymlinkTraversal,
-    recursive: bool,
     created: bool,
 }
 
@@ -322,7 +332,6 @@ impl<'a, 'r> Walk<'a, 'r> {
             nodes,
             lookup,
             links: SymlinkTraversal::new(links),
-            recursive: false,
             created: false,
         }
     }
@@ -393,7 +402,7 @@ impl<'a, 'r> Walk<'a, 'r> {
                             self.lookup
                                 .check_missing_name(&child, missing)
                                 .map_err(Failure::Rejected)?;
-                            if missing == MissingName::OperandIntermediate && self.recursive {
+                            if missing == MissingName::OperandIntermediate {
                                 self.nodes.insert(child.as_str().into(), MemoryEntry::dir());
                                 self.created = true;
                             }

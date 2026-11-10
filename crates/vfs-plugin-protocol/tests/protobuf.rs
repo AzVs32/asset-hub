@@ -200,7 +200,7 @@ fn bounds_apply_to_control_data_and_nested_configuration() {
 fn exported_descriptor_contains_the_complete_language_independent_contract() -> Result {
     let descriptor = prost_types::FileDescriptorSet::decode(p::FILE_DESCRIPTOR_SET)?;
     let file = descriptor.file.first().ok_or("schema")?;
-    assert_eq!(file.package.as_deref(), Some("assethub.vfs.v8"));
+    assert_eq!(file.package.as_deref(), Some("assethub.vfs.v9"));
     let storage_info = file
         .message_type
         .iter()
@@ -239,11 +239,11 @@ fn exported_descriptor_contains_the_complete_language_independent_contract() -> 
     for method in &file.service.first().ok_or("Plugin")?.method {
         assert_eq!(
             method.input_type.as_deref(),
-            Some(".assethub.vfs.v8.Request")
+            Some(".assethub.vfs.v9.Request")
         );
         assert_eq!(
             method.output_type.as_deref(),
-            Some(".assethub.vfs.v8.Reply")
+            Some(".assethub.vfs.v9.Reply")
         );
     }
     Ok(())
@@ -415,6 +415,36 @@ fn write_round_trips_binding_and_rejects_implicit_modes() -> Result {
         let operation = Op::Write(invalid);
         assert!(matches!(
             p::encode_request("generation", &operation, vec![]),
+            Err(p::CodecError::InvalidData)
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn create_directory_preserves_ordered_lookup_and_rejects_invalid_modes() -> Result {
+    use ah_vfs_storage as d;
+    let request = d::CreateDirectoryRequest::new(
+        d::PathExpr::parse("../missing/")?,
+        d::CreateDirectoryMode::Recursive,
+    );
+    let base = d::StoragePath::parse("work/sub")?;
+    let links = d::IntermediateSymlinks::Reject;
+    let wire = p::encode_create_directory(&request, &base, links);
+    assert_eq!(
+        p::decode_create_directory(wire.clone())?,
+        (request, base, links)
+    );
+    for mode in [0, i32::MAX] {
+        let op = Op::Storage(p::StorageCall {
+            handle: 1,
+            operation: Some(p::StorageOp::CreateDirectory(p::CreateDirectory {
+                mode,
+                ..wire.clone()
+            })),
+        });
+        assert!(matches!(
+            p::encode_request("generation", &op, vec![]),
             Err(p::CodecError::InvalidData)
         ));
     }

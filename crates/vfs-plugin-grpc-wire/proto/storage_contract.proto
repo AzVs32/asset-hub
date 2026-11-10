@@ -9,24 +9,21 @@ service StorageContract {
 }
 message Unit {}
 message Operand { string path = 1; }
-message CreateDirectory { string path = 1; bool recursive = 2; }
 enum RemoveKind { REMOVE_KIND_UNSPECIFIED = 0; NON_DIRECTORY = 1; EMPTY_DIRECTORY = 2; }
 message Remove { string path = 1; RemoveKind kind = 2; }
 message Command {
-  reserved 2, 3, 4, 7, 8, 9, 10, 11, 13, 14;
+  reserved 2, 3, 4, 5, 7, 8, 9, 10, 11, 13, 14;
   // Applies to ordinary path lookups. The final link has its own policy.
   bool reject_intermediate_links = 1;
   oneof action {
-    CreateDirectory create_directory = 5;
     Remove remove = 6;
     Operand get_permissions = 12;
   }
 }
 message Reply {
-  reserved 3, 4, 5, 7, 8;
+  reserved 2, 3, 4, 5, 7, 8;
   oneof result {
     Unit unit = 1;
-    assethub.vfs.v8.Entry entry = 2;
-    assethub.vfs.v8.StorageFailure failure = 6;
+    assethub.vfs.v9.StorageFailure failure = 6;
   }
 }

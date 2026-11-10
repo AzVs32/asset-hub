@@ -1,9 +1,7 @@
 //! Storage entry operations and file byte streams, independent of plugin transport.
 
 use super::{StoragePermissions, StorageXattrs};
-use crate::domain::storage::{
-    StorageCreateDirRequest, StorageMoveEntryRequest, StorageRemoveEntryRequest,
-};
+use crate::domain::storage::{StorageMoveEntryRequest, StorageRemoveEntryRequest};
 use ah_vfs_storage::{
     BoundListRequest, Capabilities, DirectoryPage, DirectorySelection, ListRequest,
 };
@@ -126,7 +124,11 @@ pub trait Storage: Send + Sync {
     }
 
     /// Create a directory in the backend.
-    fn create_dir(&self, _request: StorageCreateDirRequest) -> StorageFuture<'_, Entry> {
+    fn create_dir(
+        &self,
+        _request: ah_vfs_storage::CreateDirectoryRequest,
+        _context: LookupContext,
+    ) -> StorageFuture<'_, Entry> {
         unsupported(Operation::CreateDirectory)
     }
 

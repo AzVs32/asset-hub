@@ -169,18 +169,6 @@ impl Session {
         };
         let unit = || Reply::Unit(wire::Unit {});
         match frame.action.ok_or_else(invalid_request)? {
-            Action::CreateDirectory(request) => {
-                let mode = if request.recursive {
-                    d::CreateDirectoryMode::Recursive
-                } else {
-                    d::CreateDirectoryMode::Single
-                };
-                let request = d::CreateDirectoryRequest::new(path(&request.path)?, mode);
-                entry(
-                    d::Operation::CreateDirectory,
-                    self.storage.create_directory(&request, links)?,
-                )
-            }
             Action::Remove(request) => {
                 let kind = match wire::RemoveKind::try_from(request.kind) {
                     Ok(wire::RemoveKind::NonDirectory) => d::RemoveKind::NonDirectory,
@@ -204,14 +192,6 @@ impl Session {
     }
 }
 
-fn entry(op: d::Operation, value: d::Entry) -> Result<Reply, CallError> {
-    wire::encode_entry(value)
-        .map(Reply::Entry)
-        .map_err(|cause| response_error(op, cause).into())
-}
-fn response_error(op: d::Operation, cause: d::ContractViolation) -> d::StorageError {
-    d::StorageError::after_dispatch(op, d::Failure::Contract(cause), None)
-}
 fn reject(op: d::Operation, cause: d::Rejection) -> d::StorageError {
     d::StorageError::without_effects(op, d::Failure::Rejected(cause), None)
 }

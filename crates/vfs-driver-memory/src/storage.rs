@@ -1,9 +1,7 @@
 use crate::Capacity;
 use ah_vfs::application::port::LookupContext;
 use ah_vfs::application::port::{Storage, StorageFileReader, StorageFileWriter, StorageFuture};
-use ah_vfs::domain::storage::{
-    StorageCreateDirRequest, StorageMoveEntryRequest, StorageRemoveEntryRequest,
-};
+use ah_vfs::domain::storage::{StorageMoveEntryRequest, StorageRemoveEntryRequest};
 use ah_vfs_storage::{
     BackendFailure, ContractViolation, Failure, Operation, Rejection, StorageError,
 };
@@ -308,51 +306,12 @@ impl Storage for MemoryStorage {
         })
     }
 
-    fn create_dir(&self, request: StorageCreateDirRequest) -> StorageFuture<'_, Entry> {
-        Box::pin(async move {
-            let operation = Operation::CreateDirectory;
-            let mut entries = self.shared.lock(operation)?;
-            if !request.recursive {
-                require_parents(operation, &entries, &request.path)?;
-            }
-            if let Some(existing) = entries.get(request.path.as_str()) {
-                if request.recursive {
-                    require_dir(operation, &entries, request.path.as_str())?;
-                    return existing
-                        .metadata(request.path)
-                        .map_err(|cause| metadata_error(operation, cause));
-                }
-                return Err(error(
-                    operation,
-                    Failure::Rejected(Rejection::AlreadyExists),
-                ));
-            }
-            let mut current = StoragePath::root();
-            let mut missing = Vec::new();
-            for segment in request.path.entry_names() {
-                current = current
-                    .join(&segment)
-                    .map_err(|cause| path_error(operation, cause))?;
-                if entries.contains_key(current.as_str()) {
-                    require_dir(operation, &entries, current.as_str())?;
-                } else {
-                    missing.push(current.as_str().to_owned());
-                }
-            }
-            let target = MemoryEntry::dir();
-            let result = target
-                .metadata(request.path.clone())
-                .map_err(|cause| metadata_error(operation, cause))?;
-            for path in missing {
-                let entry = if path == request.path.as_str() {
-                    target.clone()
-                } else {
-                    MemoryEntry::dir()
-                };
-                entries.insert(path, entry);
-            }
-            Ok(result)
-        })
+    fn create_dir(
+        &self,
+        request: ah_vfs_storage::CreateDirectoryRequest,
+        context: LookupContext,
+    ) -> StorageFuture<'_, Entry> {
+        Box::pin(async move { self.create_directory(&request, context) })
     }
 
     fn remove_entry(&self, request: StorageRemoveEntryRequest) -> StorageFuture<'_, ()> {

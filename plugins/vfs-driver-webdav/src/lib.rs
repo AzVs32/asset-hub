@@ -161,13 +161,21 @@ impl GuestStorage for WebdavStorage {
                 })?;
                 Value::Entry(encode_entry(&context, &entry)?)
             }
-            p::StorageOp::CreateDir(p::CreateDir { path, recursive }) => Value::Entry(
-                encode_entry(&context, &client.create_dir(&path, recursive)?)?,
-            ),
             _ => return Err(context.failure(Failure::Rejected(Rejection::Unsupported))),
         };
         Ok(p::Reply::new(value))
     }
+    fn create_dir(
+        &self,
+        request: &ah_vfs_storage::CreateDirectoryRequest,
+        base: &ah_vfs_storage::StoragePath,
+        _: ah_vfs_storage::IntermediateSymlinks,
+    ) -> Result<ah_vfs_storage::Entry> {
+        self.client
+            .for_operation(Operation::CreateDirectory)
+            .create_dir(request, base)
+    }
+
     fn select_directory(
         &self,
         request: &ah_vfs_storage::ListRequest,

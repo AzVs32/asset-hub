@@ -1,7 +1,7 @@
 //! Storage behavior shared by independent driver test suites.
 
 use crate::application::port::{Storage, StorageFileReader};
-use crate::domain::storage::{StorageCreateDirRequest, StorageMoveEntryRequest};
+use crate::domain::storage::StorageMoveEntryRequest;
 use ah_vfs_storage::RenameSupport;
 use ah_vfs_storage::{EntryType, StoragePath};
 use ah_vfs_storage::{Failure, Rejection};
@@ -16,7 +16,7 @@ async fn put(storage: &dyn Storage, name: &str, bytes: &[u8]) -> TestResult {
     let mut writer = storage
         .write_file(
             ah_vfs_storage::WriteRequest::new(
-                (path(name)?).to_rooted_expr(),
+                path(name)?.to_rooted_expr(),
                 ah_vfs_storage::WriteMode::CreateNew,
                 ah_vfs_storage::Publication::Staged,
             ),
@@ -43,7 +43,7 @@ async fn get(storage: &dyn Storage, name: &str) -> TestResult<Vec<u8>> {
         storage
             .read_file(
                 ah_vfs_storage::ReadRequest::new(
-                    (path(name)?).to_rooted_expr(),
+                    path(name)?.to_rooted_expr(),
                     ah_vfs_storage::ReadRange::FULL,
                 ),
                 Default::default(),
@@ -56,10 +56,13 @@ async fn get(storage: &dyn Storage, name: &str) -> TestResult<Vec<u8>> {
 
 async fn mkdir(storage: &dyn Storage, name: &str) -> TestResult {
     storage
-        .create_dir(StorageCreateDirRequest {
-            path: path(name)?,
-            recursive: true,
-        })
+        .create_dir(
+            ah_vfs_storage::CreateDirectoryRequest::new(
+                path(name)?.to_rooted_expr(),
+                ah_vfs_storage::CreateDirectoryMode::Recursive,
+            ),
+            Default::default(),
+        )
         .await?;
     Ok(())
 }
@@ -68,7 +71,7 @@ async fn exists(storage: &dyn Storage, name: &str) -> TestResult<bool> {
     match storage
         .stat_entry(
             ah_vfs_storage::StatRequest::new(
-                (path(name)?).to_rooted_expr(),
+                path(name)?.to_rooted_expr(),
                 ah_vfs_storage::SymlinkAction::Preserve,
             ),
             Default::default(),
@@ -110,7 +113,7 @@ pub async fn assert_range_read_contract(storage: &dyn Storage) -> TestResult {
             let mut reader = storage
                 .read_file(
                     ah_vfs_storage::ReadRequest::new(
-                        (path(name)?).to_rooted_expr(),
+                        path(name)?.to_rooted_expr(),
                         ah_vfs_storage::ReadRange::new(offset, length)?,
                     ),
                     Default::default(),
@@ -157,65 +160,82 @@ pub async fn assert_range_read_contract(storage: &dyn Storage) -> TestResult {
 /// Assert recursive and exclusive directory creation on fresh writable storage.
 /// The fixture must be empty and isolated; the assertion writes files and dirs.
 pub async fn assert_create_dir_contract(storage: &dyn Storage) -> TestResult {
+    use ah_vfs_storage::{
+        CreateDirectoryMode::{Recursive, Single},
+        CreateDirectoryRequest, MutationOutcome, PathExpr,
+    };
+
+    let create = |operand: &str, mode| -> TestResult<_> {
+        Ok(storage.create_dir(
+            CreateDirectoryRequest::new(PathExpr::parse(operand)?, mode),
+            Default::default(),
+        ))
+    };
     put(storage, "file", b"retained file").await?;
     mkdir(storage, "dir").await?;
     mkdir(storage, "dir/child").await?;
 
-    for (name, recursive, expected) in [
-        ("file", true, Failure::Rejected(Rejection::NotDirectory)),
+    for (name, mode, expected) in [
         (
-            "file/child",
-            true,
+            "file",
+            Recursive,
             Failure::Rejected(Rejection::NotDirectory),
         ),
         (
             "file/child",
-            false,
+            Recursive,
             Failure::Rejected(Rejection::NotDirectory),
         ),
-        ("file", false, Failure::Rejected(Rejection::AlreadyExists)),
-        ("dir", false, Failure::Rejected(Rejection::AlreadyExists)),
+        (
+            "file/child",
+            Single,
+            Failure::Rejected(Rejection::NotDirectory),
+        ),
+        ("file", Single, Failure::Rejected(Rejection::AlreadyExists)),
+        ("file/", Single, Failure::Rejected(Rejection::NotDirectory)),
+        (
+            "file/",
+            Recursive,
+            Failure::Rejected(Rejection::NotDirectory),
+        ),
+        ("dir", Single, Failure::Rejected(Rejection::AlreadyExists)),
         (
             "missing/child",
-            false,
+            Single,
             Failure::Rejected(Rejection::NotFound),
         ),
     ] {
-        let error = storage
-            .create_dir(StorageCreateDirRequest {
-                path: path(name)?,
-                recursive,
-            })
+        let error = create(name, mode)?
             .await
             .err()
             .ok_or("expected create_dir failure")?;
-        assert_eq!(error.failure(), expected, "{name}: recursive={recursive}");
+        assert_eq!(error.failure(), expected, "{name}: {mode:?}");
+        assert_eq!(
+            error.outcome(),
+            MutationOutcome::Unchanged,
+            "{name}: {mode:?}"
+        );
     }
     assert!(!exists(storage, "missing").await?);
 
-    for name in ["", "dir"] {
+    for name in ["/", "dir/"] {
         let before = storage
             .stat_entry(
                 ah_vfs_storage::StatRequest::new(
-                    (path(name)?).to_rooted_expr(),
+                    path(name.trim_matches('/'))?.to_rooted_expr(),
                     ah_vfs_storage::SymlinkAction::Preserve,
                 ),
                 Default::default(),
             )
             .await?;
-        let entry = storage
-            .create_dir(StorageCreateDirRequest {
-                path: path(name)?,
-                recursive: true,
-            })
-            .await?;
+        let entry = create(name, Recursive)?.await?;
         assert_eq!(entry.path(), before.path());
         assert_eq!(entry.entry_type(), EntryType::Directory);
         assert_eq!(entry.modified(), before.modified());
         let after = storage
             .stat_entry(
                 ah_vfs_storage::StatRequest::new(
-                    (path(name)?).to_rooted_expr(),
+                    path(name.trim_matches('/'))?.to_rooted_expr(),
                     ah_vfs_storage::SymlinkAction::Preserve,
                 ),
                 Default::default(),
@@ -224,11 +244,7 @@ pub async fn assert_create_dir_contract(storage: &dyn Storage) -> TestResult {
         assert_eq!(after.entry_type(), before.entry_type());
         assert_eq!(after.modified(), before.modified());
 
-        let error = storage
-            .create_dir(StorageCreateDirRequest {
-                path: path(name)?,
-                recursive: false,
-            })
+        let error = create(name, Single)?
             .await
             .err()
             .ok_or("expected existing directory")?;
@@ -237,12 +253,7 @@ pub async fn assert_create_dir_contract(storage: &dyn Storage) -> TestResult {
     assert_eq!(get(storage, "file").await?, b"retained file");
     assert!(exists(storage, "dir/child").await?);
 
-    let entry = storage
-        .create_dir(StorageCreateDirRequest {
-            path: path("new/parents/leaf")?,
-            recursive: true,
-        })
-        .await?;
+    let entry = create("new/parents/leaf", Recursive)?.await?;
     assert_eq!(entry.path(), &path("new/parents/leaf")?);
     assert_eq!(entry.entry_type(), EntryType::Directory);
     for name in ["new", "new/parents", "new/parents/leaf"] {
@@ -250,7 +261,7 @@ pub async fn assert_create_dir_contract(storage: &dyn Storage) -> TestResult {
             storage
                 .stat_entry(
                     ah_vfs_storage::StatRequest::new(
-                        (path(name)?).to_rooted_expr(),
+                        path(name)?.to_rooted_expr(),
                         ah_vfs_storage::SymlinkAction::Preserve
                     ),
                     Default::default()
@@ -260,13 +271,20 @@ pub async fn assert_create_dir_contract(storage: &dyn Storage) -> TestResult {
             EntryType::Directory
         );
     }
-    let entry = storage
-        .create_dir(StorageCreateDirRequest {
-            path: path("new/sibling")?,
-            recursive: false,
-        })
-        .await?;
+    let entry = create("new/sibling", Single)?.await?;
     assert_eq!(entry.entry_type(), EntryType::Directory);
+    let entry = create("before/../target/", Recursive)?.await?;
+    assert_eq!(entry.path(), &path("target")?);
+    assert!(exists(storage, "before").await?);
+    assert!(!exists(storage, "before/target").await?);
+
+    let error = create("visible/../file/child", Recursive)?
+        .await
+        .err()
+        .ok_or("expected a non-directory parent")?;
+    assert_eq!(error.failure(), Failure::Rejected(Rejection::NotDirectory));
+    assert_eq!(error.outcome(), MutationOutcome::Unknown);
+    assert!(exists(storage, "visible").await?);
     Ok(())
 }
 
@@ -327,7 +345,7 @@ pub async fn assert_same_path_rename_contract(
             let before = storage
                 .stat_entry(
                     ah_vfs_storage::StatRequest::new(
-                        (path(name)?).to_rooted_expr(),
+                        path(name)?.to_rooted_expr(),
                         ah_vfs_storage::SymlinkAction::Preserve,
                     ),
                     Default::default(),
@@ -357,7 +375,7 @@ pub async fn assert_same_path_rename_contract(
             let after = storage
                 .stat_entry(
                     ah_vfs_storage::StatRequest::new(
-                        (path(name)?).to_rooted_expr(),
+                        path(name)?.to_rooted_expr(),
                         ah_vfs_storage::SymlinkAction::Preserve,
                     ),
                     Default::default(),

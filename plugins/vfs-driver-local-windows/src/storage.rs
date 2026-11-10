@@ -2,9 +2,7 @@
 
 use ah_vfs::application::port::{DirectoryBindings, LookupContext};
 use ah_vfs::application::port::{Storage, StorageFileReader, StorageFileWriter, StorageFuture};
-use ah_vfs::domain::storage::{
-    StorageCreateDirRequest, StorageMoveEntryRequest, StorageRemoveEntryRequest,
-};
+use ah_vfs::domain::storage::{StorageMoveEntryRequest, StorageRemoveEntryRequest};
 use ah_vfs_storage::{
     BackendFailure, BoundListRequest, DirectoryPage, DirectorySelection, Failure, ListRequest,
     ListTarget, Operation, StorageError,
@@ -171,10 +169,14 @@ impl Storage for WindowsLocalStorage {
         }))
     }
 
-    fn create_dir(&self, request: StorageCreateDirRequest) -> StorageFuture<'_, Entry> {
+    fn create_dir(
+        &self,
+        request: ah_vfs_storage::CreateDirectoryRequest,
+        context: LookupContext,
+    ) -> StorageFuture<'_, Entry> {
         let dir = self.dir.clone();
         Box::pin(blocking(Operation::CreateDirectory, true, move || {
-            fs::create_dir(&dir, request)
+            lookup::create_dir(&dir, &request, context)
         }))
     }
 

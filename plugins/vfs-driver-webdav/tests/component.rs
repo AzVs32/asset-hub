@@ -1,9 +1,10 @@
 use ah_vfs::application::dto::*;
 use ah_vfs::application::port::*;
 use ah_vfs::domain::InstanceId;
-use ah_vfs::domain::storage::{StorageCreateDirRequest, StorageRemoveEntryRequest};
+use ah_vfs::domain::storage::StorageRemoveEntryRequest;
 use ah_vfs_storage::{
-    EntryType, MutationOutcome, Publication, StoragePath, WriteMode, WriteRequest,
+    CreateDirectoryMode, CreateDirectoryRequest, EntryType, MutationOutcome, PathExpr, Publication,
+    StoragePath, WriteMode, WriteRequest,
 };
 use ah_vfs_storage::{Failure, Rejection};
 use std::{
@@ -80,6 +81,14 @@ fn etag(path: &str, data: &[u8]) -> Option<String> {
     data.hash(&mut hash);
     Some(format!("\"{:x}\"", hash.finish()))
 }
+fn collection_etag(path: &str, root_version: usize) -> Option<String> {
+    match path {
+        "" => Some(format!("\"root-{root_version}\"")),
+        "no-validator" => None,
+        _ => Some(format!("\"collection-{path}\"")),
+    }
+}
+
 fn metadata(path: &str, data: &Option<Vec<u8>>, root_version: usize) -> String {
     let kind = if data.is_none() {
         "<d:collection/>"
@@ -92,8 +101,7 @@ fn metadata(path: &str, data: &Option<Vec<u8>>, root_version: usize) -> String {
         ""
     };
     let tag = match data {
-        None if path.is_empty() => Some(format!("\"root-{root_version}\"")),
-        None => None,
+        None => collection_etag(path, root_version),
         Some(data) => etag(path, data),
     };
     let resource = if path.is_empty() {
@@ -217,8 +225,29 @@ async fn handle(
                 }
             }
             "MKCOL" => {
-                entries.insert(path.into(), None);
-                ("201 Created", vec![], String::new())
+                let (parent, name) = path.rsplit_once('/').unwrap_or(("", path));
+                let version = if path == "raced" {
+                    root_version.fetch_add(1, Ordering::SeqCst) + 1
+                } else {
+                    version
+                };
+                let host = fields.get("host").ok_or("host")?;
+                let suffix = if parent.is_empty() { "" } else { "/" };
+                let condition = collection_etag(parent, version)
+                    .map(|tag| format!("<http://{host}/dav/{parent}{suffix}> ([{tag}])"));
+                let status = if fields.get("if") != condition.as_ref() {
+                    "412 Precondition Failed"
+                } else if name == "denied" {
+                    "403 Forbidden"
+                } else if entries.contains_key(path) {
+                    "405 Method Not Allowed"
+                } else if entries.get(parent) != Some(&None) {
+                    "409 Conflict"
+                } else {
+                    entries.insert(path.into(), None);
+                    "201 Created"
+                };
+                (status, vec![], String::new())
             }
             "GET" => {
                 let data = entries.get(path).and_then(|v| v.as_ref()).ok_or("file")?;
@@ -340,10 +369,13 @@ async fn protobuf_component_opens_writes_commits_reads_and_lists() -> Result {
     assert_eq!(reader.next_chunk().await?, None);
     assert_eq!(reader.next_chunk().await?, None);
     let directory = storage
-        .create_dir(StorageCreateDirRequest {
-            path: StoragePath::parse("empty")?,
-            recursive: false,
-        })
+        .create_dir(
+            ah_vfs_storage::CreateDirectoryRequest::new(
+                StoragePath::parse("empty")?.to_rooted_expr(),
+                ah_vfs_storage::CreateDirectoryMode::Single,
+            ),
+            Default::default(),
+        )
         .await?;
     assert_eq!(directory.entry_type(), EntryType::Directory);
     let request = ah_vfs_storage::ListRequest::new(
@@ -452,6 +484,69 @@ async fn protobuf_component_opens_writes_commits_reads_and_lists() -> Result {
             .map_err(|_| "entries lock")?
             .contains_key("parent-replaced")
     );
+
+    let create = |operand: &str, mode| -> Result<_> {
+        Ok(storage.create_dir(
+            CreateDirectoryRequest::new(PathExpr::parse(operand)?, mode),
+            Default::default(),
+        ))
+    };
+    use CreateDirectoryMode::{Recursive, Single};
+    let directory = create("/sequential/../destination/", Recursive)?.await?;
+    assert_eq!(directory.path(), &StoragePath::parse("destination")?);
+    for (operand, mode, rejection, outcome) in [
+        (
+            "/empty",
+            Single,
+            Rejection::AlreadyExists,
+            MutationOutcome::Unchanged,
+        ),
+        (
+            "/file/",
+            Single,
+            Rejection::NotDirectory,
+            MutationOutcome::Unchanged,
+        ),
+        (
+            "/denied",
+            Single,
+            Rejection::AccessDenied,
+            MutationOutcome::Unchanged,
+        ),
+        (
+            "/visible/denied",
+            Recursive,
+            Rejection::AccessDenied,
+            MutationOutcome::Unknown,
+        ),
+    ] {
+        let error = create(operand, mode)?
+            .await
+            .err()
+            .ok_or("unexpected creation success")?;
+        assert_eq!(error.failure(), Failure::Rejected(rejection));
+        assert_eq!(error.outcome(), outcome);
+    }
+    create("/no-validator", Single)?.await?;
+    for (operand, rejection) in [
+        ("/raced", Rejection::Conflict),
+        ("/no-validator/child", Rejection::Unsupported),
+    ] {
+        let error = create(operand, Single)?
+            .await
+            .err()
+            .ok_or("unbound parent accepted")?;
+        assert_eq!(error.failure(), Failure::Rejected(rejection));
+        assert_eq!(error.outcome(), MutationOutcome::Unchanged);
+    }
+    let entries = fixture.entries.lock().map_err(|_| "entries lock")?;
+    for directory in ["sequential", "destination", "visible"] {
+        assert_eq!(entries.get(directory), Some(&None));
+    }
+    for path in ["visible/denied", "raced", "no-validator/child"] {
+        assert!(!entries.contains_key(path));
+    }
+    drop(entries);
 
     let mut lost = storage
         .write_file(

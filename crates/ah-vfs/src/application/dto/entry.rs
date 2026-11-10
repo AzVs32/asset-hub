@@ -1,6 +1,6 @@
 //! Requests and namespace views using absolute virtual paths.
 
-use crate::domain::namespace::{MountTable, VirtualPath};
+use crate::domain::namespace::{MountTable, VirtualPath, VirtualPathError};
 use ah_vfs_storage::WriteMode;
 use ah_vfs_storage::{DirectoryCursor, DirectorySelection, Entry, EntryType, PageSize};
 
@@ -78,9 +78,25 @@ pub struct WriteFileRequest {
     pub mode: WriteMode,
 }
 
+/// An absolute VFS operand. Routing uses the canonical address and retains
+/// the caller's trailing slash as an instance-local directory requirement.
 pub struct CreateDirRequest {
-    pub path: VirtualPath,
-    pub recursive: bool,
+    pub(crate) path: VirtualPath,
+    pub(crate) mode: ah_vfs_storage::CreateDirectoryMode,
+    pub(crate) trailing_slash: bool,
+}
+
+impl CreateDirRequest {
+    pub fn new(
+        path: &str,
+        mode: ah_vfs_storage::CreateDirectoryMode,
+    ) -> Result<Self, VirtualPathError> {
+        Ok(Self {
+            path: VirtualPath::parse(path)?,
+            mode,
+            trailing_slash: path.ends_with('/'),
+        })
+    }
 }
 
 pub struct RemoveEntryRequest {

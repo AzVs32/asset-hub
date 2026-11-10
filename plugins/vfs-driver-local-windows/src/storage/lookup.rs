@@ -2,8 +2,9 @@
 use super::{fs, native};
 use ah_vfs::application::port::LookupContext;
 use ah_vfs_storage::{
-    BackendFailure, Entry, Failure, IntermediateSymlinks, LookupStart, Operation, PathComponent,
-    PathLookup, Rejection, StorageError, StoragePath, SymlinkAction,
+    BackendFailure, CreateDirectoryRequest, Entry, Failure, IntermediateSymlinks, LookupStart,
+    MissingName, Operation, PathComponent, PathLookup, Rejection, StorageError, StoragePath,
+    SymlinkAction,
 };
 use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt};
 use cap_std::fs::{Dir, File, Metadata, OpenOptions, OpenOptionsExt};
@@ -54,9 +55,7 @@ pub(super) fn open_reader(
         return Err(fs::error(op, std::io::Error::last_os_error()));
     }
     // SAFETY: the successful call transferred ownership of this distinct handle.
-    let file = File::from_std(unsafe {
-        std::fs::File::from_raw_handle(handle)
-    });
+    let file = File::from_std(unsafe { std::fs::File::from_raw_handle(handle) });
     let metadata = file.metadata().map_err(|cause| fs::error(op, cause))?;
     fs::regular_file(op, &metadata)?;
     Ok(file)
@@ -67,6 +66,34 @@ fn select(
     lookup: PathLookup<'_>,
     context: LookupContext,
     op: Operation,
+) -> Result<(Entry, Option<File>, Vec<(StoragePath, Dir)>), StorageError> {
+    walk(root, lookup, context, op, &mut false)
+}
+
+pub(super) fn create_dir(
+    root: &Dir,
+    request: &CreateDirectoryRequest,
+    context: LookupContext,
+) -> Result<Entry, StorageError> {
+    let op = Operation::CreateDirectory;
+    let mut created = false;
+    walk(root, request.lookup(), context, op, &mut created)
+        .map(|(entry, _, _)| entry)
+        .map_err(|error| {
+            if created {
+                StorageError::after_dispatch(op, error.failure(), Some(Box::new(error)))
+            } else {
+                error
+            }
+        })
+}
+
+fn walk(
+    root: &Dir,
+    lookup: PathLookup<'_>,
+    context: LookupContext,
+    op: Operation,
+    created: &mut bool,
 ) -> Result<(Entry, Option<File>, Vec<(StoragePath, Dir)>), StorageError> {
     let root_dir = root.try_clone().map_err(|cause| fs::error(op, cause))?;
     let mut stack = vec![(StoragePath::root(), root_dir)];
@@ -100,8 +127,24 @@ fn select(
                 let path = parent
                     .join(name)
                     .map_err(|_| rejected(op, Rejection::PathTooLong))?;
-                let (file, metadata) = open(op, dir, name.as_str())?;
                 let last = index + 1 == components.len();
+                let (file, metadata) = match open(op, dir, name.as_str()) {
+                    Err(error)
+                        if op == Operation::CreateDirectory
+                            && error.failure() == Failure::Rejected(Rejection::NotFound) =>
+                    {
+                        let missing = if last {
+                            MissingName::OperandFinal
+                        } else {
+                            MissingName::OperandIntermediate
+                        };
+                        lookup
+                            .check_missing_name(&path, missing)
+                            .map_err(|reason| rejected(op, reason))?;
+                        create_child(dir, name.as_str(), created)?
+                    }
+                    result => result?,
+                };
                 if fs::reparse(&metadata) {
                     if !last || lookup.final_symlink() == SymlinkAction::FollowWithinInstance {
                         return Err(rejected(
@@ -137,10 +180,55 @@ fn select(
             (fs::entry(op, path.clone(), metadata)?, None)
         }
     };
-    lookup
-        .check_existing_target(selected.0.path(), selected.0.entry_type())
-        .map_err(|reason| rejected(op, reason))?;
+    if !*created || lookup.final_symlink() != SymlinkAction::Preserve {
+        lookup
+            .check_existing_target(selected.0.path(), selected.0.entry_type())
+            .map_err(|reason| rejected(op, reason))?;
+    }
     Ok((selected.0, selected.1, stack))
+}
+
+fn create_child(
+    dir: &Dir,
+    name: &str,
+    created: &mut bool,
+) -> Result<(File, Metadata), StorageError> {
+    use std::io::ErrorKind;
+    let op = Operation::CreateDirectory;
+    match dir.create_dir(name) {
+        Ok(()) => {
+            *created = true;
+            let (file, metadata) = open(op, dir, name)?;
+            if !metadata.is_dir() || fs::reparse(&metadata) {
+                return Err(stale(op));
+            }
+            Ok((file, metadata))
+        }
+        Err(cause) if cause.kind() == ErrorKind::AlreadyExists => {
+            open(op, dir, name).map_err(|error| {
+                if error.failure() == Failure::Rejected(Rejection::NotFound) {
+                    rejected(op, Rejection::AlreadyExists)
+                } else {
+                    error
+                }
+            })
+        }
+        Err(cause)
+            if matches!(
+                cause.kind(),
+                ErrorKind::NotFound
+                    | ErrorKind::NotADirectory
+                    | ErrorKind::PermissionDenied
+                    | ErrorKind::InvalidInput
+                    | ErrorKind::StorageFull
+                    | ErrorKind::QuotaExceeded
+                    | ErrorKind::ReadOnlyFilesystem
+            ) =>
+        {
+            Err(fs::error(op, cause))
+        }
+        Err(cause) => Err(fs::dispatched_error(op, cause)),
+    }
 }
 
 fn open(op: Operation, dir: &Dir, name: &str) -> Result<(File, Metadata), StorageError> {

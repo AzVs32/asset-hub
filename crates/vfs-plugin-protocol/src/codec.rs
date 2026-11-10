@@ -193,6 +193,10 @@ pub fn validate_request(request: &Request) -> Result<()> {
             StorageOp::Stat(request) => {
                 super::decode_stat(request.clone()).map_err(|_| CodecError::InvalidData)?;
             }
+            StorageOp::CreateDirectory(request) => {
+                super::decode_create_directory(request.clone())
+                    .map_err(|_| CodecError::InvalidData)?;
+            }
             StorageOp::SelectDirectory(request) => {
                 super::decode_select_directory(request.clone())
                     .map_err(|_| CodecError::InvalidData)?;

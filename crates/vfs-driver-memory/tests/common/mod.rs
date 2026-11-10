@@ -2,7 +2,6 @@
 use ah_vfs_storage::{Failure, Rejection};
 
 use ah_vfs::application::port::{Storage, StorageFileReader};
-use ah_vfs::domain::storage::StorageCreateDirRequest;
 use ah_vfs_storage::StoragePath;
 
 pub type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -32,7 +31,7 @@ pub async fn put(storage: &dyn Storage, name: &str, bytes: &[u8]) -> TestResult 
     let mut writer = storage
         .write_file(
             ah_vfs_storage::WriteRequest::new(
-                (path(name)?).to_rooted_expr(),
+                path(name)?.to_rooted_expr(),
                 ah_vfs_storage::WriteMode::CreateNew,
                 ah_vfs_storage::Publication::Staged,
             ),
@@ -59,7 +58,7 @@ pub async fn get(storage: &dyn Storage, name: &str) -> TestResult<Vec<u8>> {
         storage
             .read_file(
                 ah_vfs_storage::ReadRequest::new(
-                    (path(name)?).to_rooted_expr(),
+                    path(name)?.to_rooted_expr(),
                     ah_vfs_storage::ReadRange::FULL,
                 ),
                 Default::default(),
@@ -72,10 +71,13 @@ pub async fn get(storage: &dyn Storage, name: &str) -> TestResult<Vec<u8>> {
 
 pub async fn mkdir(storage: &dyn Storage, name: &str) -> TestResult {
     storage
-        .create_dir(StorageCreateDirRequest {
-            path: path(name)?,
-            recursive: true,
-        })
+        .create_dir(
+            ah_vfs_storage::CreateDirectoryRequest::new(
+                path(name)?.to_rooted_expr(),
+                ah_vfs_storage::CreateDirectoryMode::Recursive,
+            ),
+            Default::default(),
+        )
         .await?;
     Ok(())
 }
@@ -84,7 +86,7 @@ pub async fn exists(storage: &dyn Storage, name: &str) -> TestResult<bool> {
     match storage
         .stat_entry(
             ah_vfs_storage::StatRequest::new(
-                (path(name)?).to_rooted_expr(),
+                path(name)?.to_rooted_expr(),
                 ah_vfs_storage::SymlinkAction::Preserve,
             ),
             Default::default(),

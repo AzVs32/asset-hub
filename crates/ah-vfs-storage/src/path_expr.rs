@@ -101,6 +101,12 @@ impl PathExpr {
         &self.components
     }
 
+    /// Retain an explicit directory requirement when routing an operand to an instance.
+    pub fn with_trailing_slash(mut self) -> Self {
+        self.trailing_slash = true;
+        self
+    }
+
     pub fn has_trailing_slash(&self) -> bool {
         self.trailing_slash
     }

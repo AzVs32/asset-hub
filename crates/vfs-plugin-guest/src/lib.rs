@@ -24,6 +24,18 @@ pub mod api {
     pub trait GuestStorage {
         fn info(&self) -> p::StorageInfo;
         fn call(&self, request: p::StorageOp, data: Vec<u8>) -> Result<p::Reply>;
+        fn create_dir(
+            &self,
+            _request: &ah_vfs_storage::CreateDirectoryRequest,
+            _base: &ah_vfs_storage::StoragePath,
+            _links: ah_vfs_storage::IntermediateSymlinks,
+        ) -> Result<ah_vfs_storage::Entry> {
+            Err(
+                ErrorContext::storage(ah_vfs_storage::Operation::CreateDirectory).failure(
+                    ah_vfs_storage::Failure::Rejected(ah_vfs_storage::Rejection::Unsupported),
+                ),
+            )
+        }
         fn select_directory(
             &self,
             _request: &ah_vfs_storage::ListRequest,
@@ -271,6 +283,29 @@ impl<D: api::Guest> Dispatcher<D> {
                     handle,
                     info: Some(info),
                 })
+            }
+            Op::Storage(p::StorageCall {
+                handle,
+                operation: Some(p::StorageOp::CreateDirectory(wire)),
+            }) => {
+                use ah_vfs_storage::{ContractViolation, Failure, Operation, Rejection};
+                let (request, base, links) = p::decode_create_directory(wire)
+                    .map_err(|_| p::Failure::new(p::FailureCode::InvalidRequest))?;
+                let capabilities = p::decode_capabilities(&D::describe().capabilities)
+                    .map_err(|reason| context.failure(Failure::Contract(reason)))?;
+                if !capabilities.directories().can_create() {
+                    return Err(context.failure(Failure::Rejected(Rejection::Unsupported)));
+                }
+                let entry = self
+                    .storage(&context, handle)?
+                    .create_dir(&request, &base, links)?;
+                Value::Entry(p::encode_entry(&entry).map_err(|_| {
+                    ah_vfs_storage::StorageError::after_dispatch(
+                        Operation::CreateDirectory,
+                        Failure::Contract(ContractViolation::InvalidEntry),
+                        None,
+                    )
+                })?)
             }
             Op::Storage(p::StorageCall {
                 handle,

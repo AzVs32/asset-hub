@@ -1,7 +1,10 @@
 //! WebDAV/HTTP behavior kept inside the plugin, with no host-specific branches.
 //! See RFC 4918 sections 9.1, 9.3, 9.6 and 9.9, and RFC 9110 conditional requests.
 use super::*;
-use ah_vfs_storage::{Entry, EntryType, StoragePath};
+use ah_vfs_storage::{
+    CreateDirectoryRequest, Entry, EntryType, LookupStart, MissingName, MutationOutcome,
+    PathComponent, StoragePath,
+};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use percent_encoding::percent_decode_str;
 use time::{OffsetDateTime, format_description::well_known::Rfc2822};
@@ -484,14 +487,6 @@ impl Client {
         ah_vfs_storage::DirectoryPage::new(bound, entries, more).map_err(|_| invalid())
     }
 
-    fn parent(&self, relative: &str) -> Result<()> {
-        let context = &self.context;
-        let parent = relative.rsplit_once('/').map_or("", |(parent, _)| parent);
-        if self.stat(parent)?.entry.entry_type() != EntryType::Directory {
-            return Err(context.failure(Failure::Rejected(Rejection::NotDirectory)));
-        }
-        Ok(())
-    }
     pub fn write_condition(
         &self,
         request: &ah_vfs_storage::WriteRequest,
@@ -566,86 +561,147 @@ impl Client {
             modified(context, header(&reply, "last-modified"))?,
         )
     }
-    fn make_collection(&self, relative: &str) -> Result<Entry> {
+    fn make_collection(&self, relative: &StoragePath, parent: &Metadata) -> Result<bool> {
         let context = &self.context;
-        let reply = self.request("MKCOL", self.url(relative, true)?, vec![], vec![])?;
-        if reply.status().as_u16() == 405 {
-            return match self.stat(relative) {
-                Ok(_) => Err(context.failure(Failure::Rejected(Rejection::AlreadyExists))),
-                Err(error)
-                    if error.storage_error().is_some_and(|error| {
-                        error.failure() == Failure::Rejected(Rejection::NotFound)
-                    }) =>
-                {
-                    Err(context.failure(Failure::Rejected(Rejection::Unsupported)))
+        let tag = parent
+            .strong_etag()
+            .ok_or_else(|| context.failure(Failure::Rejected(Rejection::Unsupported)))?;
+        let parent_url = self.url(parent.entry.path().as_str(), true)?;
+        let condition = format!("<{parent_url}> ([{tag}])");
+        // Keep per-request dispatch evidence separate from earlier successful
+        // MKCOL steps so a known refusal cannot erase a visible parent.
+        let attempt = self.for_operation(Operation::CreateDirectory);
+        let reply = attempt
+            .request(
+                "MKCOL",
+                self.url(relative.as_str(), true)?,
+                vec![("if", condition)],
+                vec![],
+            )
+            .map_err(|error| {
+                if let Some(storage) = error.storage_error() {
+                    if storage.outcome() == MutationOutcome::Unknown {
+                        context.dispatched();
+                    }
+                    return context.failure(storage.failure());
                 }
-                Err(error) => Err(error),
-            };
+                error
+            })?;
+        match reply.status().as_u16() {
+            201 => {
+                context.dispatched();
+                Ok(true)
+            }
+            405 => Ok(false),
+            412 => Err(context.failure(Failure::Rejected(Rejection::Conflict))),
+            // RFC 4918 MKCOL refusals do not create this collection.
+            status @ (403 | 409 | 415 | 507) => Err(status_error(context, status)),
+            status => {
+                context.dispatched();
+                Err(status_error(context, status))
+            }
         }
-        if reply.status().as_u16() != 201 {
-            return Err(status_error(context, reply.status().as_u16()));
-        }
-        entry(context, relative, EntryType::Directory, None)
     }
-    pub fn create_dir(&self, relative: &str, recursive: bool) -> Result<Entry> {
+
+    pub fn create_dir(
+        &self,
+        request: &CreateDirectoryRequest,
+        base: &StoragePath,
+    ) -> Result<Entry> {
         let context = &self.context;
-        path(context, relative)?;
-        if relative.is_empty() {
-            if !recursive {
-                return Err(context.failure(Failure::Rejected(Rejection::AlreadyExists)));
-            }
-            let root = self.stat("")?.entry;
-            if root.entry_type() != EntryType::Directory {
-                return Err(context.failure(Failure::Rejected(Rejection::NotDirectory)));
-            }
-            return Ok(root);
+        let reject = |reason| context.failure(Failure::Rejected(reason));
+        let stale = || context.failure(Failure::Backend(BackendFailure::Stale));
+        let lookup = request.lookup();
+        let root = self.stat("")?;
+        if root.entry.entry_type() != EntryType::Directory {
+            return Err(reject(Rejection::NotDirectory));
         }
-        if !recursive {
-            match self.stat(relative) {
-                Ok(_) => return Err(context.failure(Failure::Rejected(Rejection::AlreadyExists))),
-                Err(error)
-                    if error.storage_error().is_some_and(|error| {
-                        error.failure() == Failure::Rejected(Rejection::NotFound)
-                    }) => {}
-                Err(error) => return Err(error),
+        let mut directories = vec![root];
+        if request.path().start() == LookupStart::BaseDirectory {
+            for name in base.entry_names() {
+                let parent = directories.last().ok_or_else(stale)?;
+                let address = parent.entry.path().join(&name).map_err(|_| stale())?;
+                let metadata = self
+                    .stat(address.as_str())
+                    .map_err(|error| if is_missing(&error) { stale() } else { error })?;
+                if metadata.entry.entry_type() != EntryType::Directory {
+                    return Err(stale());
+                }
+                directories.push(metadata);
             }
-            self.parent(relative)?;
-            return self.make_collection(relative);
         }
-        let mut prefix = String::new();
-        let mut result = None;
-        for name in relative.split('/') {
-            if !prefix.is_empty() {
-                prefix.push('/');
-            }
-            prefix.push_str(name);
-            let metadata = match self.stat(&prefix) {
-                Ok(metadata) => metadata.entry,
-                Err(error)
-                    if error.storage_error().is_some_and(|error| {
-                        error.failure() == Failure::Rejected(Rejection::NotFound)
-                    }) =>
-                {
-                    match self.make_collection(&prefix) {
-                        Ok(entry) => entry,
-                        Err(error)
-                            if error.storage_error().is_some_and(|error| {
-                                error.failure() == Failure::Rejected(Rejection::AlreadyExists)
-                            }) =>
-                        {
-                            self.stat(&prefix)?.entry
+
+        let components = request.path().components();
+        for (index, component) in components.iter().enumerate() {
+            match component {
+                PathComponent::CurrentDirectory => {}
+                PathComponent::ParentDirectory if directories.len() > 1 => {
+                    directories.pop();
+                }
+                PathComponent::ParentDirectory => {}
+                PathComponent::Name(name) => {
+                    let parent = directories.last().ok_or_else(stale)?;
+                    let address = parent
+                        .entry
+                        .path()
+                        .join(name)
+                        .map_err(|_| reject(Rejection::PathTooLong))?;
+                    let last = index + 1 == components.len();
+                    // This namespace exposes collections and resources, with
+                    // no link-target traversal. Only operand names can be created.
+                    let metadata = match self.stat(address.as_str()) {
+                        Ok(metadata) => metadata,
+                        Err(error) if is_missing(&error) => {
+                            let missing = if last {
+                                MissingName::OperandFinal
+                            } else {
+                                MissingName::OperandIntermediate
+                            };
+                            lookup
+                                .check_missing_name(&address, missing)
+                                .map_err(reject)?;
+                            let created = self.make_collection(&address, parent)?;
+                            if created && last {
+                                return entry(
+                                    context,
+                                    address.as_str(),
+                                    EntryType::Directory,
+                                    None,
+                                );
+                            }
+                            self.stat(address.as_str()).map_err(|error| {
+                                if is_missing(&error) {
+                                    if created {
+                                        stale()
+                                    } else {
+                                        reject(Rejection::Unsupported)
+                                    }
+                                } else {
+                                    error
+                                }
+                            })?
                         }
                         Err(error) => return Err(error),
+                    };
+                    if last {
+                        let entry = metadata.entry;
+                        lookup
+                            .check_existing_target(entry.path(), entry.entry_type())
+                            .map_err(reject)?;
+                        return Ok(entry);
                     }
+                    if metadata.entry.entry_type() != EntryType::Directory {
+                        return Err(reject(Rejection::NotDirectory));
+                    }
+                    directories.push(metadata);
                 }
-                Err(error) => return Err(error),
-            };
-            if metadata.entry_type() != EntryType::Directory {
-                return Err(context.failure(Failure::Rejected(Rejection::NotDirectory)));
             }
-            result = Some(metadata);
         }
-        result.ok_or_else(|| context.failure(Failure::Backend(BackendFailure::CorruptData)))
+        let entry = directories.pop().ok_or_else(stale)?.entry;
+        lookup
+            .check_existing_target(entry.path(), entry.entry_type())
+            .map_err(reject)?;
+        Ok(entry)
     }
     pub fn read_range(
         &self,
@@ -764,4 +820,10 @@ fn directory_identity(
     Some(ah_vfs_storage::DirectoryIdentity::from_bytes(
         hash[..16].try_into().ok()?,
     ))
+}
+
+fn is_missing(error: &api::Failure) -> bool {
+    error
+        .storage_error()
+        .is_some_and(|error| error.failure() == Failure::Rejected(Rejection::NotFound))
 }
