@@ -47,17 +47,31 @@ pub(super) fn read_link(
     link_bytes(op, &selected.file)
 }
 
+pub(super) fn attribute_target(
+    root: &Dir,
+    lookup: PathLookup<'_>,
+    context: LookupContext,
+    op: Operation,
+) -> Result<(Entry, Arc<File>), StorageError> {
+    let selected = Walk::select(root, lookup, context, op)?;
+    Ok((selected.entry, selected.file))
+}
+
+pub(super) fn descriptor_path(file: &File) -> String {
+    use std::os::fd::AsRawFd;
+    format!("/proc/self/fd/{}", file.as_raw_fd())
+}
+
 pub(super) fn open_reader(
     root: &Dir,
     lookup: PathLookup<'_>,
     context: LookupContext,
 ) -> Result<File, StorageError> {
-    use std::os::fd::AsRawFd;
     let op = Operation::Read;
     let selected = Walk::select(root, lookup, context, op)?;
     // The procfs descriptor refers to the pinned inode even after a rename.
     // Reopening the selected name would race a replacement with a different file.
-    let descriptor = format!("/proc/self/fd/{}", selected.file.as_raw_fd());
+    let descriptor = descriptor_path(&selected.file);
     let fd = rustix::fs::open(
         descriptor.as_str(),
         OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NONBLOCK,

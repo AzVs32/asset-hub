@@ -2944,8 +2944,6 @@ dependencies = [
 name = "vfs-plugin-grpc-wire"
 version = "0.1.0"
 dependencies = [
- "ah-vfs-storage",
- "prost",
  "protoc-bin-vendored",
  "tonic",
  "tonic-prost",

@@ -10,8 +10,8 @@ use ah_vfs::application::driver_info::DriverInfo;
 use ah_vfs::application::dto::*;
 use ah_vfs::application::port::*;
 use ah_vfs_storage::{
-    BoundListRequest, DirectoryPage, DirectorySelection, Entry, ListRequest, Permissions,
-    StoragePath, XattrName, XattrWriteMode,
+    AttributeRequest, AttributeResult, AttributeSupport, BoundListRequest, DirectoryPage,
+    DirectorySelection, Entry, ListRequest, StoragePath,
 };
 use ah_vfs_storage::{LinkTarget, ReadLinkRequest, ReadRequest, StatRequest, WriteRequest};
 use std::{
@@ -313,13 +313,13 @@ impl Driver for PluginDriver {
                     return Err(convert::protocol_violation());
                 };
                 let resource = Resource::new(runtime, p::ResourceKind::Storage, handle)?;
-                if info.chunk_size == 0 || info.chunk_size as usize > p::MAX_DATA_BYTES {
-                    return Err(convert::protocol_violation());
-                }
+                let chunk_size = NonZeroUsize::new(info.chunk_size as usize)
+                    .filter(|size| size.get() <= p::MAX_DATA_BYTES)
+                    .ok_or_else(convert::protocol_violation)?;
                 let storage = RemoteStorage {
                     resource,
                     driver_info: self.info.clone(),
-                    chunk_size: convert::limit(info.chunk_size).map_err(DriverError::from)?,
+                    chunk_size,
                 };
                 return Ok(Arc::new(storage) as Arc<dyn Storage>);
             }
@@ -559,20 +559,11 @@ impl Storage for RemoteStorage {
     fn chunk_size(&self) -> NonZeroUsize {
         self.chunk_size
     }
-    fn permissions(&self) -> Option<&dyn StoragePermissions> {
-        self.driver_info
-            .capabilities()
-            .permissions()
-            .can_read()
-            .then_some(self)
+    fn attributes(&self) -> Option<&dyn StorageAttributes> {
+        let (permissions, xattrs) = self.support();
+        (permissions.can_read() || xattrs.can_read()).then_some(self)
     }
-    fn xattrs(&self) -> Option<&dyn StorageXattrs> {
-        self.driver_info
-            .capabilities()
-            .xattrs()
-            .can_read()
-            .then_some(self)
-    }
+
     fn stat_entry(&self, request: StatRequest, context: LookupContext) -> StorageFuture<'_, Entry> {
         Box::pin(async move {
             let op = Operation::Stat;
@@ -1050,171 +1041,63 @@ impl StorageFileWriter for RemoteWriter {
     }
 }
 
-impl StoragePermissions for RemoteStorage {
-    fn get_permissions(&self, path: StoragePath) -> StorageFuture<'_, Permissions> {
+impl StorageAttributes for RemoteStorage {
+    fn support(&self) -> (AttributeSupport, AttributeSupport) {
+        let caps = self.driver_info.capabilities();
+        (caps.permissions(), caps.xattrs())
+    }
+
+    fn execute(
+        &self,
+        request: AttributeRequest,
+        context: LookupContext,
+    ) -> StorageFuture<'_, AttributeResult> {
         Box::pin(async move {
-            let r = self
-                .call(
-                    p::StorageOp::GetPermissions(p::Path {
-                        path: path.as_str().into(),
-                    }),
-                    vec![],
-                )
-                .await?;
-            match r
-                .result
-                .ok_or_else(|| bad_response(Operation::GetPermissions, false))?
-            {
-                Value::Permissions(p::Permissions { mode }) if r.data.is_empty() => {
-                    Permissions::new(mode).map_err(|error| {
-                        StorageError::without_effects(
-                            Operation::GetPermissions,
-                            Failure::Contract(ContractViolation::InvalidResponse),
-                            Some(Box::new(error)),
-                        )
-                    })
-                }
-                _ => Err(bad_response(Operation::GetPermissions, false)),
+            let operation = request.operation();
+            if !self.driver_info.capabilities().supports(operation) {
+                return Err(StorageError::without_effects(
+                    operation,
+                    Failure::Rejected(Rejection::Unsupported),
+                    None,
+                ));
             }
-        })
-    }
-    fn set_permissions(
-        &self,
-        path: StoragePath,
-        permissions: Permissions,
-    ) -> StorageFuture<'_, ()> {
-        Box::pin(async move {
-            self.unit(
-                p::StorageOp::SetPermissions(p::SetPermissions {
-                    path: path.as_str().into(),
-                    mode: permissions.bits(),
-                }),
-                vec![],
+            let expected = request.action().expectation();
+            let (wire, data) = p::encode_attribute(
+                request,
+                &context.working_directory,
+                context.intermediate_symlinks,
             )
-            .await
-        })
-    }
-}
-impl StorageXattrs for RemoteStorage {
-    fn list_xattrs(
-        &self,
-        path: StoragePath,
-        max_bytes: NonZeroUsize,
-    ) -> StorageFuture<'_, Vec<XattrName>> {
-        Box::pin(async move {
-            let max_bytes = u32::try_from(max_bytes.get()).map_err(|source| {
+            .map_err(|error| {
+                let reason = match error {
+                    p::AttributeValueError::Limit => Rejection::LimitExceeded,
+                    _ => Rejection::Unsupported,
+                };
                 StorageError::without_effects(
-                    Operation::ListXattrs,
-                    Failure::Rejected(Rejection::LimitExceeded),
-                    Some(Box::new(source)),
+                    operation,
+                    Failure::Rejected(reason),
+                    Some(Box::new(error)),
                 )
             })?;
-            let r = self
-                .call(
-                    p::StorageOp::ListXattrs(p::ListXattrs {
-                        path: path.as_str().into(),
-                        max_bytes,
-                    }),
-                    vec![],
-                )
-                .await?;
-            match r
-                .result
-                .ok_or_else(|| bad_response(Operation::ListXattrs, false))?
-            {
-                Value::Names(p::Names { names }) if r.data.is_empty() => {
-                    if names.windows(2).any(|v| v[0] >= v[1])
-                        || names.iter().map(|n| n.len() + 1).sum::<usize>() > max_bytes as usize
-                    {
-                        return Err(bad_response(Operation::ListXattrs, false));
-                    }
-                    names
-                        .into_iter()
-                        .map(|n| {
-                            XattrName::parse(&n).map_err(|error| {
-                                StorageError::without_effects(
-                                    Operation::ListXattrs,
-                                    Failure::Contract(ContractViolation::InvalidResponse),
-                                    Some(Box::new(error)),
-                                )
-                            })
-                        })
-                        .collect()
+            let reply = self.call(wire, data).await.map_err(|error| {
+                if error.failure() == Failure::Contract(ContractViolation::InvalidResponse) {
+                    let failure = Failure::Contract(ContractViolation::InvalidAttributes);
+                    let wrap = if error.outcome() == ah_vfs_storage::MutationOutcome::Unknown {
+                        StorageError::after_dispatch
+                    } else {
+                        StorageError::without_effects
+                    };
+                    wrap(operation, failure, Some(Box::new(error)))
+                } else {
+                    error
                 }
-                _ => Err(bad_response(Operation::ListXattrs, false)),
-            }
-        })
-    }
-    fn get_xattr(
-        &self,
-        path: StoragePath,
-        name: XattrName,
-        max_bytes: NonZeroUsize,
-    ) -> StorageFuture<'_, Vec<u8>> {
-        Box::pin(async move {
-            let max_bytes = u32::try_from(max_bytes.get()).map_err(|source| {
-                StorageError::without_effects(
-                    Operation::GetXattr,
-                    Failure::Rejected(Rejection::LimitExceeded),
-                    Some(Box::new(source)),
-                )
             })?;
-            let r = self
-                .call(
-                    p::StorageOp::GetXattr(p::GetXattr {
-                        path: path.as_str().into(),
-                        name: name.as_str().into(),
-                        max_bytes,
-                    }),
-                    vec![],
+            p::decode_attribute_result(expected, reply).map_err(|cause| {
+                StorageError::after_dispatch(
+                    operation,
+                    Failure::Contract(ContractViolation::InvalidAttributes),
+                    Some(Box::new(cause)),
                 )
-                .await?;
-            if matches!(
-                r.result
-                    .ok_or_else(|| bad_response(Operation::GetXattr, false))?,
-                Value::Bytes(p::Empty {})
-            ) && r.data.len() <= max_bytes as usize
-            {
-                Ok(r.data)
-            } else {
-                Err(bad_response(Operation::GetXattr, false))
-            }
-        })
-    }
-    fn set_xattr(
-        &self,
-        path: StoragePath,
-        name: XattrName,
-        value: Vec<u8>,
-        mode: XattrWriteMode,
-    ) -> StorageFuture<'_, ()> {
-        Box::pin(async move {
-            self.unit(
-                p::StorageOp::SetXattr(p::SetXattr {
-                    path: path.as_str().into(),
-                    name: name.as_str().into(),
-                    mode: match mode {
-                        XattrWriteMode::Upsert => p::XattrWriteMode::Upsert,
-                        XattrWriteMode::CreateNew => p::XattrWriteMode::CreateNew,
-                        XattrWriteMode::Replace => p::XattrWriteMode::Replace,
-                    }
-                    .into(),
-                }),
-                value,
-            )
-            .await
-        })
-    }
-    fn remove_xattr(&self, path: StoragePath, name: XattrName) -> StorageFuture<'_, ()> {
-        Box::pin(async move {
-            self.unit(
-                p::StorageOp::RemoveXattr(p::RemoveXattr {
-                    path: path.as_str().into(),
-                    name: name.as_str().into(),
-                }),
-                vec![],
-            )
-            .await
+            })
         })
     }
 }

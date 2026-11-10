@@ -1,9 +1,16 @@
-use ah_vfs_storage::{BackendFailure, Failure, Operation, Rejection, StorageError};
+use ah_vfs_storage::{
+    AttributeAction, AttributeRequest, AttributeResult, AttributeSupport, BackendFailure, Failure,
+    IntermediateSymlinks, Operation, PathExpr, Permissions, Rejection, StorageError, StoragePath,
+};
 use std::cell::{Cell, RefCell};
 use vfs_plugin_guest::{Dispatcher, api::*};
 use vfs_plugin_protocol::{self as p, Operation as Op, Value};
 type TestResult<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 std::thread_local! { static OPENS: Cell<usize> = const { Cell::new(0) }; static COMMITS: Cell<usize> = const { Cell::new(0) }; }
+std::thread_local! {
+    static DECLARE_ATTRIBUTES: Cell<bool> = const { Cell::new(false) };
+    static ATTRIBUTE_CALLS: Cell<usize> = const { Cell::new(0) };
+}
 struct Driver;
 impl Guest for Driver {
     fn describe() -> p::Description {
@@ -19,12 +26,19 @@ impl Guest for Driver {
             name: "Fixture".into(),
             version: "1.0.0".into(),
             child_mounts: true,
-            capabilities: vec![
-                p::Capability::Stat as i32,
-                p::Capability::WriteNew as i32,
-                p::Capability::RangeRead as i32,
-            ],
-
+            capabilities: [
+                p::Capability::Stat,
+                p::Capability::WriteNew,
+                p::Capability::RangeRead,
+            ]
+            .into_iter()
+            .chain(
+                DECLARE_ATTRIBUTES
+                    .with(Cell::get)
+                    .then_some(p::Capability::PermissionsRead),
+            )
+            .map(Into::into)
+            .collect(),
             settings_schema: None,
             instance_schema: None,
             config_version: 1,
@@ -49,6 +63,10 @@ impl Guest for Driver {
         let config = p::json_object(config)?;
         OPENS.with(|v| v.set(v.get() + 1));
         Ok(Storage::new(Store {
+            attributes: config
+                .get("attributes")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
             fail: config
                 .get("fail")
                 .and_then(|v| v.as_bool())
@@ -65,11 +83,15 @@ fn entry(size: u64) -> p::Entry {
     }
 }
 struct Store {
+    attributes: bool,
     fail: bool,
 }
 impl GuestStorage for Store {
     fn info(&self) -> p::StorageInfo {
         p::StorageInfo { chunk_size: 65536 }
+    }
+    fn attributes(&self) -> Option<&dyn GuestAttributes> {
+        self.attributes.then_some(self)
     }
     fn call(&self, request: p::StorageOp, _: Vec<u8>) -> Result<p::Reply> {
         match request {
@@ -102,6 +124,28 @@ impl GuestStorage for Store {
         }))
     }
 }
+impl GuestAttributes for Store {
+    fn support(&self) -> (AttributeSupport, AttributeSupport) {
+        (AttributeSupport::Read, AttributeSupport::None)
+    }
+
+    fn execute(
+        &self,
+        request: AttributeRequest,
+        base: StoragePath,
+        links: IntermediateSymlinks,
+    ) -> Result<AttributeResult> {
+        ATTRIBUTE_CALLS.with(|v| v.set(v.get() + 1));
+        assert_eq!(base.as_str(), "work/sub");
+        assert_eq!(links, IntermediateSymlinks::Reject);
+        assert_eq!(request.path().to_string(), "../file/");
+        assert!(matches!(request.action(), AttributeAction::GetPermissions));
+        let mode =
+            Permissions::new(0o440).map_err(|_| p::Failure::new(p::FailureCode::InvalidRequest))?;
+        Ok(AttributeResult::Permissions(mode))
+    }
+}
+
 struct Input(Cell<bool>);
 impl GuestReader for Input {
     fn next(&self) -> Result<Option<Vec<u8>>> {
@@ -428,4 +472,65 @@ fn missing_open_configuration_is_invalid_request_without_opening_storage() -> Te
 
 fn storage_failure(error: StorageError) -> p::Failure {
     vfs_plugin_guest::api::Failure::from(error).into()
+}
+
+#[test]
+fn guest_dispatch_checks_attribute_interfaces_and_admits_read_only_requests() -> TestResult {
+    DECLARE_ATTRIBUTES.with(|v| v.set(true));
+    ATTRIBUTE_CALLS.with(|v| v.set(0));
+    let mut dispatcher = setup()?;
+    let request = Op::Open(p::Open {
+        id: "one".into(),
+        config: Some(p::Object::new()),
+    });
+    let bytes = p::encode_request("generation", &request, vec![])?;
+    assert_eq!(
+        p::decode_reply(&dispatcher.call(&bytes))?,
+        Err(p::Failure::new(p::FailureCode::LifecycleInvalidDeclaration))
+    );
+    let reply = call(
+        &mut dispatcher,
+        Op::Open(p::Open {
+            id: "one".into(),
+            config: Some(p::Object::from([("attributes".into(), true.into())])),
+        }),
+        vec![],
+    )?;
+    let Value::Storage(storage) = reply.into_value()? else {
+        return Err("missing storage".into());
+    };
+    let operation = |action| -> TestResult<_> {
+        let request = AttributeRequest::new(PathExpr::parse("../file/")?, action);
+        let (op, data) = p::encode_attribute(
+            request,
+            &StoragePath::parse("work/sub")?,
+            IntermediateSymlinks::Reject,
+        )?;
+        Ok((
+            Op::Storage(p::StorageCall {
+                handle: storage.handle,
+                operation: Some(op),
+            }),
+            data,
+        ))
+    };
+    let (read, data) = operation(AttributeAction::GetPermissions)?;
+    let reply = call(&mut dispatcher, read, data)?;
+    assert_eq!(
+        p::decode_attribute_result(ah_vfs_storage::AttributeExpectation::Permissions, reply)?,
+        AttributeResult::Permissions(Permissions::new(0o440)?)
+    );
+    let (write, data) = operation(AttributeAction::SetPermissions(Permissions::new(0o600)?))?;
+    let bytes = p::encode_request("generation", &write, data)?;
+    assert_eq!(
+        p::decode_reply(&dispatcher.call(&bytes))?,
+        Err(storage_failure(StorageError::without_effects(
+            Operation::SetPermissions,
+            Failure::Rejected(Rejection::Unsupported),
+            None,
+        )))
+    );
+    assert_eq!(ATTRIBUTE_CALLS.with(Cell::get), 1);
+    DECLARE_ATTRIBUTES.with(|v| v.set(false));
+    Ok(())
 }

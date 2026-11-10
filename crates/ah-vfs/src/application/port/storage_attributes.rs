@@ -1,71 +1,18 @@
 //! Optional typed storage attributes, independent of file formats.
-use super::StorageFuture;
-use ah_vfs_storage::{Failure, Operation, Rejection, StorageError};
+use super::{LookupContext, StorageFuture};
+use ah_vfs_storage::{AttributeRequest, AttributeResult, AttributeSupport};
 
-use ah_vfs_storage::{Permissions, StoragePath, XattrName, XattrWriteMode};
-use std::num::NonZeroUsize;
+pub trait StorageAttributes: Send + Sync {
+    /// Declared permissions and xattr support, respectively. The values must
+    /// match DriverInfo and do not grant access to any individual entry.
+    fn support(&self) -> (AttributeSupport, AttributeSupport);
 
-/// POSIX mode bits on files/dirs. Never follow symlinks, including parents.
-/// ACLs and ownership are separate. Adapters document additional access needed
-/// to acquire stable handles. Read-only extensions reject writes before mutation.
-pub trait StoragePermissions: Send + Sync {
-    fn get_permissions(&self, path: StoragePath) -> StorageFuture<'_, Permissions>;
-    fn set_permissions(
+    /// Resolve the bound operand, preserve its final link and apply one action.
+    /// Return a complete result within the request bounds. Xattr writes must
+    /// enforce the requested existence policy atomically.
+    fn execute(
         &self,
-        _path: StoragePath,
-        _permissions: Permissions,
-    ) -> StorageFuture<'_, ()> {
-        Box::pin(async {
-            Err(StorageError::without_effects(
-                Operation::SetPermissions,
-                Failure::Rejected(Rejection::Unsupported),
-                None,
-            ))
-        })
-    }
-}
-/// Opaque filesystem attributes. Never follow symlinks. Calls are live and do not
-/// promise a multi-attribute transaction or a snapshot across calls.
-pub trait StorageXattrs: Send + Sync {
-    /// Return sorted names. max_bytes bounds encoded names including NUL separators;
-    /// overflow returns TooLarge, never truncated names.
-    fn list_xattrs(
-        &self,
-        path: StoragePath,
-        max_bytes: NonZeroUsize,
-    ) -> StorageFuture<'_, Vec<XattrName>>;
-    /// Missing keys return AttributeNotFound; empty values are valid. Values larger
-    /// than max_bytes return TooLarge rather than truncated content.
-    fn get_xattr(
-        &self,
-        path: StoragePath,
-        name: XattrName,
-        max_bytes: NonZeroUsize,
-    ) -> StorageFuture<'_, Vec<u8>>;
-    /// CreateNew conflicts with existing keys; Replace requires an existing key.
-    fn set_xattr(
-        &self,
-        _path: StoragePath,
-        _name: XattrName,
-        _value: Vec<u8>,
-        _mode: XattrWriteMode,
-    ) -> StorageFuture<'_, ()> {
-        Box::pin(async {
-            Err(StorageError::without_effects(
-                Operation::SetXattr,
-                Failure::Rejected(Rejection::Unsupported),
-                None,
-            ))
-        })
-    }
-    /// Missing keys return AttributeNotFound. Read-only extensions reject writes.
-    fn remove_xattr(&self, _path: StoragePath, _name: XattrName) -> StorageFuture<'_, ()> {
-        Box::pin(async {
-            Err(StorageError::without_effects(
-                Operation::RemoveXattr,
-                Failure::Rejected(Rejection::Unsupported),
-                None,
-            ))
-        })
-    }
+        request: AttributeRequest,
+        context: LookupContext,
+    ) -> StorageFuture<'_, AttributeResult>;
 }

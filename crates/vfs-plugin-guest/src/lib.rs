@@ -21,8 +21,26 @@ pub mod api {
 
         fn open(id: String, config: p::Object) -> Result<Storage>;
     }
+    pub trait GuestAttributes {
+        /// Permission and xattr support, respectively, matching the declaration.
+        fn support(
+            &self,
+        ) -> (
+            ah_vfs_storage::AttributeSupport,
+            ah_vfs_storage::AttributeSupport,
+        );
+        fn execute(
+            &self,
+            request: ah_vfs_storage::AttributeRequest,
+            working_directory: ah_vfs_storage::StoragePath,
+            intermediate_symlinks: ah_vfs_storage::IntermediateSymlinks,
+        ) -> Result<ah_vfs_storage::AttributeResult>;
+    }
     pub trait GuestStorage {
         fn info(&self) -> p::StorageInfo;
+        fn attributes(&self) -> Option<&dyn GuestAttributes> {
+            None
+        }
         fn call(&self, request: p::StorageOp, data: Vec<u8>) -> Result<p::Reply>;
         fn remove(
             &self,
@@ -301,12 +319,57 @@ impl<D: api::Guest> Dispatcher<D> {
             }) => {
                 self.capacity(&context)?;
                 let storage = D::open(id, config)?;
+                use ah_vfs_storage::{AttributeSupport, ContractViolation, Failure};
+                let caps = p::decode_capabilities(&D::describe().capabilities)
+                    .map_err(|reason| context.failure(Failure::Contract(reason)))?;
+                let declared = match (caps.permissions(), caps.xattrs()) {
+                    (AttributeSupport::None, AttributeSupport::None) => None,
+                    support => Some(support),
+                };
+                if declared != storage.0.attributes().map(api::GuestAttributes::support) {
+                    return Err(
+                        context.failure(Failure::Contract(ContractViolation::InvalidDeclaration))
+                    );
+                }
                 let info = storage.0.info();
                 let handle = self.insert(Resource::Storage(storage));
                 Value::Storage(p::Storage {
                     handle,
                     info: Some(info),
                 })
+            }
+            Op::Storage(p::StorageCall {
+                handle,
+                operation:
+                    Some(
+                        attribute @ (p::StorageOp::GetPermissions(_)
+                        | p::StorageOp::SetPermissions(_)
+                        | p::StorageOp::ListXattrs(_)
+                        | p::StorageOp::GetXattr(_)
+                        | p::StorageOp::SetXattr(_)
+                        | p::StorageOp::RemoveXattr(_)),
+                    ),
+            }) => {
+                use ah_vfs_storage::{ContractViolation, Failure, Rejection, StorageError};
+                let (request, base, links) = p::decode_attribute(attribute, data)
+                    .map_err(|_| p::Failure::new(p::FailureCode::InvalidRequest))?;
+                let operation = request.operation();
+                let capabilities = p::decode_capabilities(&D::describe().capabilities)
+                    .map_err(|reason| context.failure(Failure::Contract(reason)))?;
+                if !capabilities.supports(operation) {
+                    return Err(context.failure(Failure::Rejected(Rejection::Unsupported)));
+                }
+                let attributes = self
+                    .storage(&context, handle)?
+                    .attributes()
+                    .ok_or_else(|| {
+                        context.failure(Failure::Contract(ContractViolation::InvalidAttributes))
+                    })?;
+                let expected = request.action().expectation();
+                let result = attributes.execute(request, base, links)?;
+                return p::encode_attribute_result(expected, result).map_err(|reason| {
+                    StorageError::after_dispatch(operation, Failure::Contract(reason), None).into()
+                });
             }
             Op::Storage(p::StorageCall {
                 handle,

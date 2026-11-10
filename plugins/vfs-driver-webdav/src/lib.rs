@@ -428,9 +428,18 @@ mod tests {
         let storage = storage()?;
         // Native WIT HTTP imports panic if called, so this also verifies that
         // unsupported removal does not inspect or mutate remote resources.
-        for path in ["", "file", "empty-dir", "nonempty-dir", "missing"] {
+        for path in ["file", "empty-dir", "nonempty-dir", "missing"] {
+            use ah_vfs_storage::{IntermediateSymlinks, RemoveKind, RemoveRequest, StoragePath};
+            let context = api::ErrorContext::storage(Operation::Remove);
+            let address = StoragePath::parse(path).map_err(|_| {
+                context.failure(Failure::Contract(ContractViolation::InvalidResponse))
+            })?;
+            let request = RemoveRequest::new(address.to_rooted_expr(), RemoveKind::NonDirectory)
+                .map_err(|_| {
+                    context.failure(Failure::Contract(ContractViolation::InvalidResponse))
+                })?;
             let error = storage
-                .call(p::StorageOp::Remove(p::Path { path: path.into() }), vec![])
+                .remove(&request, &StoragePath::root(), IntermediateSymlinks::Reject)
                 .err()
                 .ok_or_else(|| {
                     api::ErrorContext::storage(Operation::Remove)

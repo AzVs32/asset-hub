@@ -3,9 +3,8 @@ use ah_vfs::application::port::*;
 use ah_vfs::domain::InstanceId;
 use ah_vfs_storage::Capabilities;
 use ah_vfs_storage::{BackendFailure, ContractViolation, Failure, Operation};
-use ah_vfs_storage::{Entry, EntryType, PermissionsError, StoragePath, XattrName, XattrNameError};
+use ah_vfs_storage::{Entry, EntryType, StoragePath};
 use std::{
-    error::Error,
     num::NonZeroUsize,
     sync::{
         Arc,
@@ -23,7 +22,7 @@ enum Fault {
     Rename,
     Reader,
     DirectoryPage { wrong_address: bool },
-    Attributes(String),
+    Attributes(Vec<u8>),
 }
 struct Peer {
     fault: Fault,
@@ -131,12 +130,13 @@ impl Transport for Peer {
                     Some(p::StorageOp::GetPermissions(_)) => {
                         Value::Permissions(p::Permissions { mode: 0o100644 })
                     }
-                    Some(p::StorageOp::ListXattrs(_)) => Value::Names(p::Names {
-                        names: vec![match &self.fault {
-                            Fault::Attributes(name) => name.clone(),
-                            _ => "user.valid".into(),
-                        }],
-                    }),
+                    Some(p::StorageOp::ListXattrs(_)) => {
+                        let mut reply = p::Reply::new(Value::Names(p::Empty {}));
+                        if let Fault::Attributes(names) = &self.fault {
+                            reply.data = names.clone();
+                        }
+                        return Ok(reply);
+                    }
                     _ => Value::Unit(p::Empty {}),
                 },
                 Op::Write(_) => Value::Writer(p::Handle { handle: 2 }),
@@ -328,72 +328,72 @@ fn timestamps_and_unknown_error_codes_preserve_boundary_semantics() -> Result {
 }
 
 #[tokio::test]
-async fn malformed_permissions_response_is_a_protocol_violation_with_its_validation_cause() -> Result
-{
-    let (driver, _) = peer(Fault::Attributes("user.valid".into())).await?;
+async fn invalid_attribute_replies_are_distinct_from_backend_name_errors() -> Result {
+    use ah_vfs_storage::{AttributeAction, AttributeRequest, MutationOutcome, PathExpr};
+    let (driver, _) = peer(Fault::Attributes(vec![])).await?;
     let storage = driver
         .open(OpenContext::new(
             InstanceId::parse("instance")?,
             Default::default(),
         ))
         .await?;
-    let error = storage
-        .permissions()
-        .ok_or("missing permissions extension")?
-        .get_permissions(StoragePath::root())
+    let request = AttributeRequest::new(PathExpr::parse("/")?, AttributeAction::GetPermissions);
+    let attributes = storage.attributes().ok_or("missing attributes port")?;
+    let error = attributes
+        .execute(request, Default::default())
         .await
         .err()
         .ok_or("accepted entry type bits")?;
     assert_eq!(
         error.failure(),
-        Failure::Contract(ContractViolation::InvalidResponse)
+        Failure::Contract(ContractViolation::InvalidAttributes)
     );
+    assert!(matches!(
+        std::error::Error::source(&error)
+            .and_then(|source| source.downcast_ref::<p::AttributeValueError>()),
+        Some(p::AttributeValueError::Permissions(
+            ah_vfs_storage::PermissionsError::InvalidBits
+        ))
+    ));
+    assert_eq!(error.outcome(), MutationOutcome::Unchanged);
     assert_eq!(
-        error
-            .source()
-            .and_then(|e| e.downcast_ref::<PermissionsError>()),
-        Some(&PermissionsError::InvalidBits)
-    );
-    Ok(())
-}
-
-#[tokio::test]
-async fn malformed_xattr_responses_keep_each_value_validation_cause() -> Result {
-    for (name, expected) in [
-        (String::new(), XattrNameError::Empty),
+        attributes.support(),
         (
-            "a".repeat(XattrName::MAX_BYTES + 1),
-            XattrNameError::TooLong,
-        ),
-        ("user.\0name".to_owned(), XattrNameError::Nul),
+            ah_vfs_storage::AttributeSupport::Read,
+            ah_vfs_storage::AttributeSupport::Read
+        )
+    );
+
+    for packed in [
+        b"user.a\0user.a\0".as_slice(),
+        b"user.b\0user.a\0",
+        b"\0",
+        b"user.\xff\0",
+        b"user.missing-terminator",
     ] {
-        let (driver, _) = peer(Fault::Attributes(name)).await?;
+        let (driver, _) = peer(Fault::Attributes(packed.to_vec())).await?;
         let storage = driver
             .open(OpenContext::new(
                 InstanceId::parse("instance")?,
                 Default::default(),
             ))
             .await?;
+        let request = AttributeRequest::new(
+            PathExpr::parse("/entry")?,
+            AttributeAction::list_xattrs(NonZeroUsize::new(1024).ok_or("zero limit")?),
+        );
         let error = storage
-            .xattrs()
-            .ok_or("missing xattrs extension")?
-            .list_xattrs(
-                StoragePath::root(),
-                NonZeroUsize::new(1024).ok_or("zero limit")?,
-            )
+            .attributes()
+            .ok_or("missing attributes port")?
+            .execute(request, Default::default())
             .await
             .err()
-            .ok_or("accepted invalid attribute name")?;
+            .ok_or("accepted invalid attribute names")?;
         assert_eq!(
             error.failure(),
-            Failure::Contract(ContractViolation::InvalidResponse)
+            Failure::Contract(ContractViolation::InvalidAttributes)
         );
-        assert_eq!(
-            error
-                .source()
-                .and_then(|e| e.downcast_ref::<XattrNameError>()),
-            Some(&expected)
-        );
+        assert_eq!(error.outcome(), MutationOutcome::Unchanged);
     }
     Ok(())
 }

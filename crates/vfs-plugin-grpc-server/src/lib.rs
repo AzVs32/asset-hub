@@ -3,8 +3,6 @@ use ah_vfs_storage::{BackendFailure, ContractViolation, Failure};
 pub mod dispatch;
 mod limits;
 mod security;
-#[cfg(feature = "storage-contract")]
-pub mod storage_contract;
 pub use limits::ServerLimits;
 
 use ah_vfs::application::port::Driver;

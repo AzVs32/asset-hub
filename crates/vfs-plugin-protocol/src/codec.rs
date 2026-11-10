@@ -214,17 +214,15 @@ pub fn validate_request(request: &Request) -> Result<()> {
                 super::decode_lookup(request.lookup.clone())
                     .map_err(|_| CodecError::InvalidData)?;
             }
-            StorageOp::SetXattr(v)
-                if !matches!(
-                    XattrWriteMode::try_from(v.mode),
-                    Ok(XattrWriteMode::Upsert
-                        | XattrWriteMode::CreateNew
-                        | XattrWriteMode::Replace)
-                ) =>
-            {
-                return Err(CodecError::InvalidData);
+            attribute @ (StorageOp::GetPermissions(_)
+            | StorageOp::SetPermissions(_)
+            | StorageOp::ListXattrs(_)
+            | StorageOp::GetXattr(_)
+            | StorageOp::SetXattr(_)
+            | StorageOp::RemoveXattr(_)) => {
+                super::decode_attribute(attribute.clone(), vec![])
+                    .map_err(|_| CodecError::InvalidData)?;
             }
-            _ => {}
         },
         O::Read(read) => {
             super::decode_read(read.clone()).map_err(|_| CodecError::InvalidData)?;
@@ -251,7 +249,10 @@ fn check_entry(value: &Entry) -> Result<()> {
 pub fn validate_reply(reply: &Reply) -> Result<()> {
     let value = field(&reply.result)?;
     if !reply.data.is_empty()
-        && !matches!(value, Value::Bytes(_) | Value::Chunk(_) | Value::Page(_))
+        && !matches!(
+            value,
+            Value::Bytes(_) | Value::Names(_) | Value::Chunk(_) | Value::Page(_)
+        )
     {
         return Err(CodecError::InvalidData);
     }
@@ -276,6 +277,9 @@ pub fn validate_reply(reply: &Reply) -> Result<()> {
         Value::Page(v) => {
             field(&v.reported)?;
             field(&v.completion)?;
+        }
+        Value::Names(_) if reply.data.len() > MAX_ATTRIBUTE_NAMES_BYTES => {
+            return Err(CodecError::TooLarge);
         }
         Value::Chunk(v) if v.eof != reply.data.is_empty() => return Err(CodecError::InvalidData),
         _ => {}

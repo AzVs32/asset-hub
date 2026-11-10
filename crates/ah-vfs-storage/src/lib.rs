@@ -557,8 +557,8 @@ mod request;
 
 pub use address::{EntryName, MAX_PATH_BYTES, NameError, PathError, StoragePath};
 pub use attributes::{
-    AttributeAction, AttributeRequest, Permissions, PermissionsError, XattrList, XattrListError,
-    XattrName, XattrNameError, XattrWriteMode,
+    AttributeAction, AttributeExpectation, AttributeRequest, AttributeResult, Permissions,
+    PermissionsError, XattrList, XattrListError, XattrName, XattrNameError, XattrWriteMode,
 };
 pub use capabilities::{
     AttributeSupport, Capabilities, DirectorySupport, ReadSupport, RenameSupport, WriteModes,

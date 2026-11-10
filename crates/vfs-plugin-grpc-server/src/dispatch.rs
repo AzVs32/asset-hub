@@ -3,7 +3,7 @@ use ah_vfs::application::driver_error::{DriverError, LifecycleError, LifecycleFa
 use ah_vfs::application::port::*;
 use ah_vfs::domain::InstanceId;
 use ah_vfs_storage::{BackendFailure, Failure, Operation, Rejection, StorageError};
-use ah_vfs_storage::{Permissions, ReadLinkRequest, StoragePath, XattrName, XattrWriteMode};
+use ah_vfs_storage::{ContractViolation, ReadLinkRequest};
 use futures_util::FutureExt;
 use std::{
     collections::HashMap,
@@ -70,22 +70,6 @@ fn invalid_lookup(cause: p::LookupValueError) -> DriverError {
     LifecycleError::with_source(LifecycleFailure::InvalidRequest, cause).into()
 }
 
-fn path(s: &str) -> Result<StoragePath, DriverError> {
-    StoragePath::parse(s).map_err(|cause| {
-        LifecycleError::with_source(LifecycleFailure::InvalidRequest, cause).into()
-    })
-}
-// Attribute validation errors acquire request semantics only at this boundary.
-fn permissions(mode: u32) -> Result<Permissions, DriverError> {
-    Permissions::new(mode).map_err(|error| {
-        LifecycleError::with_source(LifecycleFailure::InvalidRequest, error).into()
-    })
-}
-fn xattr_name(name: &str) -> Result<XattrName, DriverError> {
-    XattrName::parse(name).map_err(|error| {
-        LifecycleError::with_source(LifecycleFailure::InvalidRequest, error).into()
-    })
-}
 fn id(s: &str) -> Result<InstanceId, DriverError> {
     InstanceId::parse(s).map_err(|error| {
         LifecycleError::with_source(LifecycleFailure::InvalidRequest, error).into()
@@ -835,109 +819,50 @@ impl Session {
                         .map_err(|error| c::response_error(operation, true, error))?,
                 )
             }
-            p::StorageOp::GetPermissions(p::Path { path: raw }) => {
-                Value::Permissions(p::Permissions {
-                    mode: s
-                        .permissions()
-                        .ok_or_else(|| {
-                            StorageError::without_effects(
-                                operation,
-                                Failure::Rejected(Rejection::Unsupported),
-                                None,
-                            )
-                        })?
-                        .get_permissions(path(&raw)?)
-                        .await?
-                        .bits(),
-                })
-            }
-            p::StorageOp::SetPermissions(p::SetPermissions { path: raw, mode }) => {
-                s.permissions()
-                    .ok_or_else(|| {
-                        StorageError::without_effects(
-                            operation,
-                            Failure::Rejected(Rejection::Unsupported),
-                            None,
-                        )
-                    })?
-                    .set_permissions(path(&raw)?, permissions(mode)?)
+            attribute @ (p::StorageOp::GetPermissions(_)
+            | p::StorageOp::SetPermissions(_)
+            | p::StorageOp::ListXattrs(_)
+            | p::StorageOp::GetXattr(_)
+            | p::StorageOp::SetXattr(_)
+            | p::StorageOp::RemoveXattr(_)) => {
+                let (request, working_directory, intermediate_symlinks) =
+                    p::decode_attribute(attribute, data).map_err(|cause| {
+                        LifecycleError::with_source(LifecycleFailure::InvalidRequest, cause)
+                    })?;
+                if !self
+                    .generation
+                    .driver
+                    .info()
+                    .capabilities()
+                    .supports(operation)
+                {
+                    return Err(StorageError::without_effects(
+                        operation,
+                        Failure::Rejected(Rejection::Unsupported),
+                        None,
+                    )
+                    .into());
+                }
+                let attributes = s.attributes().ok_or_else(|| {
+                    StorageError::without_effects(
+                        operation,
+                        Failure::Contract(ContractViolation::InvalidAttributes),
+                        None,
+                    )
+                })?;
+                let expected = request.action().expectation();
+                let result = attributes
+                    .execute(
+                        request,
+                        LookupContext {
+                            working_directory,
+                            intermediate_symlinks,
+                        },
+                    )
                     .await?;
-                Value::Unit(p::Empty {})
-            }
-            p::StorageOp::ListXattrs(p::ListXattrs {
-                path: raw,
-                max_bytes,
-            }) => Value::Names(p::Names {
-                names: s
-                    .xattrs()
-                    .ok_or_else(|| {
-                        StorageError::without_effects(
-                            operation,
-                            Failure::Rejected(Rejection::Unsupported),
-                            None,
-                        )
-                    })?
-                    .list_xattrs(path(&raw)?, c::limit(max_bytes)?)
-                    .await?
-                    .into_iter()
-                    .map(|n| n.as_str().into())
-                    .collect(),
-            }),
-            p::StorageOp::GetXattr(p::GetXattr {
-                path: raw,
-                name,
-                max_bytes,
-            }) => {
-                return Ok(p::Reply {
-                    result: Some(Value::Bytes(p::Empty {})),
-                    data: s
-                        .xattrs()
-                        .ok_or_else(|| {
-                            StorageError::without_effects(
-                                operation,
-                                Failure::Rejected(Rejection::Unsupported),
-                                None,
-                            )
-                        })?
-                        .get_xattr(path(&raw)?, xattr_name(&name)?, c::limit(max_bytes)?)
-                        .await?,
+                return p::encode_attribute_result(expected, result).map_err(|reason| {
+                    StorageError::after_dispatch(operation, Failure::Contract(reason), None).into()
                 });
-            }
-            p::StorageOp::SetXattr(p::SetXattr {
-                path: raw,
-                name,
-                mode,
-            }) => {
-                let mode = match p::XattrWriteMode::try_from(mode) {
-                    Ok(p::XattrWriteMode::Upsert) => XattrWriteMode::Upsert,
-                    Ok(p::XattrWriteMode::CreateNew) => XattrWriteMode::CreateNew,
-                    Ok(p::XattrWriteMode::Replace) => XattrWriteMode::Replace,
-                    _ => return Err(LifecycleError::new(LifecycleFailure::InvalidRequest).into()),
-                };
-                s.xattrs()
-                    .ok_or_else(|| {
-                        StorageError::without_effects(
-                            operation,
-                            Failure::Rejected(Rejection::Unsupported),
-                            None,
-                        )
-                    })?
-                    .set_xattr(path(&raw)?, xattr_name(&name)?, data, mode)
-                    .await?;
-                Value::Unit(p::Empty {})
-            }
-            p::StorageOp::RemoveXattr(p::RemoveXattr { path: raw, name }) => {
-                s.xattrs()
-                    .ok_or_else(|| {
-                        StorageError::without_effects(
-                            operation,
-                            Failure::Rejected(Rejection::Unsupported),
-                            None,
-                        )
-                    })?
-                    .remove_xattr(path(&raw)?, xattr_name(&name)?)
-                    .await?;
-                Value::Unit(p::Empty {})
             }
         };
         Ok(p::Reply::new(value))
@@ -945,9 +870,8 @@ impl Session {
 }
 
 #[cfg(test)]
-mod attribute_validation_tests {
+mod request_validation_tests {
     use super::*;
-    use ah_vfs_storage::{PermissionsError, XattrNameError};
     use std::error::Error;
 
     #[test]
@@ -961,47 +885,6 @@ mod attribute_validation_tests {
                 .and_then(|e| e.downcast_ref::<ah_vfs::domain::InstanceIdError>())
                 .is_some()
         );
-        Ok(())
-    }
-
-    #[test]
-    fn request_permissions_keep_the_value_validation_cause() -> Result<(), Box<dyn Error>> {
-        let error = permissions(0o100644)
-            .err()
-            .ok_or("accepted entry type bits")?;
-        let storage = error.lifecycle_error().ok_or("missing storage category")?;
-        assert_eq!(storage.failure(), LifecycleFailure::InvalidRequest);
-        assert_eq!(
-            storage
-                .source()
-                .and_then(|e| e.downcast_ref::<PermissionsError>()),
-            Some(&PermissionsError::InvalidBits)
-        );
-        assert_eq!(permissions(0o7640)?.bits(), 0o7640);
-        Ok(())
-    }
-
-    #[test]
-    fn request_xattr_names_keep_each_validation_cause() -> Result<(), Box<dyn Error>> {
-        for (name, expected) in [
-            (String::new(), XattrNameError::Empty),
-            (
-                "a".repeat(XattrName::MAX_BYTES + 1),
-                XattrNameError::TooLong,
-            ),
-            ("user.\0name".to_owned(), XattrNameError::Nul),
-        ] {
-            let error = xattr_name(&name).err().ok_or("accepted invalid name")?;
-            let storage = error.lifecycle_error().ok_or("missing storage category")?;
-            assert_eq!(storage.failure(), LifecycleFailure::InvalidRequest);
-            assert_eq!(
-                storage
-                    .source()
-                    .and_then(|e| e.downcast_ref::<XattrNameError>()),
-                Some(&expected)
-            );
-        }
-        assert_eq!(xattr_name("user.名字")?.as_str(), "user.名字");
         Ok(())
     }
 }

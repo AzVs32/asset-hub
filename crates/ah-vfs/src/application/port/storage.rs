@@ -1,8 +1,9 @@
 //! Storage entry operations and file byte streams, independent of plugin transport.
 
-use super::{StoragePermissions, StorageXattrs};
+use super::StorageAttributes;
 use ah_vfs_storage::{
-    BoundListRequest, Capabilities, DirectoryPage, DirectorySelection, ListRequest,
+    AttributeSupport, BoundListRequest, Capabilities, DirectoryPage, DirectorySelection,
+    ListRequest,
 };
 use ah_vfs_storage::{
     Entry, IntermediateSymlinks, LinkTarget, ReadLinkRequest, ReadRequest, StatRequest,
@@ -36,15 +37,8 @@ pub trait Storage: Send + Sync {
         false
     }
 
-    /// Present exactly when DriverInfo declares permissions support. Instance,
-    /// path and authorization restrictions are reported by the operation itself.
-    fn permissions(&self) -> Option<&dyn StoragePermissions> {
-        None
-    }
-
-    /// Present exactly when DriverInfo declares xattr support. Backends that
-    /// cannot serve a particular instance/path return UnsupportedOperation.
-    fn xattrs(&self) -> Option<&dyn StorageXattrs> {
+    /// Present when the driver implements at least one attribute family.
+    fn attributes(&self) -> Option<&dyn StorageAttributes> {
         None
     }
 
@@ -194,15 +188,17 @@ fn unsupported<T: Send + 'static>(operation: Operation) -> StorageFuture<'static
     })
 }
 
-/// Check independent extension interfaces against the driver's single declaration.
+/// Check the attribute interface and access levels against the driver declaration.
 /// No instance capability negotiation or backend probing is performed.
 pub fn validate_storage_extensions(
     declared: Capabilities,
     storage: &dyn Storage,
 ) -> Result<(), crate::application::driver_error::LifecycleError> {
-    if declared.permissions().can_read() != storage.permissions().is_some()
-        || declared.xattrs().can_read() != storage.xattrs().is_some()
-    {
+    let declared = match (declared.permissions(), declared.xattrs()) {
+        (AttributeSupport::None, AttributeSupport::None) => None,
+        support => Some(support),
+    };
+    if declared != storage.attributes().map(StorageAttributes::support) {
         return Err(crate::application::driver_error::LifecycleError::new(
             crate::application::driver_error::LifecycleFailure::InvalidDeclaration,
         ));

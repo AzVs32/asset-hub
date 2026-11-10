@@ -6,7 +6,6 @@ use ah_vfs_storage::{
 };
 use ah_vfs_storage::{Entry, EntryName, EntryType, StoragePath};
 
-use cap_fs_ext::DirExt;
 use cap_std::fs::{Dir, Metadata};
 use std::io;
 
@@ -30,53 +29,6 @@ pub(super) fn validate(operation: Operation, path: &StoragePath) -> Result<(), S
         ));
     }
     Ok(())
-}
-
-fn dir(operation: Operation, root: &Dir, path: &StoragePath) -> Result<Dir, StorageError> {
-    validate(operation, path)?;
-    let mut current = root.try_clone().map_err(|cause| error(operation, cause))?;
-    for name in path.entry_names() {
-        let name = name.as_str();
-        if current
-            .symlink_metadata(name)
-            .map_err(|cause| error(operation, cause))?
-            .file_type()
-            .is_symlink()
-        {
-            return Err(StorageError::without_effects(
-                operation,
-                Failure::Rejected(Rejection::Unsupported),
-                None,
-            ));
-        }
-        current = current
-            .open_dir_nofollow(name)
-            .map_err(|cause| error(operation, cause))?;
-    }
-    Ok(current)
-}
-
-pub(super) fn parent(
-    operation: Operation,
-    root: &Dir,
-    path: &StoragePath,
-) -> Result<(Dir, String), StorageError> {
-    validate(operation, path)?;
-    let parent = path.parent().ok_or(StorageError::without_effects(
-        operation,
-        Failure::Rejected(Rejection::RootProtected),
-        None,
-    ))?;
-    let name = path
-        .name()
-        .ok_or(StorageError::without_effects(
-            operation,
-            Failure::Rejected(Rejection::RootProtected),
-            None,
-        ))?
-        .as_str()
-        .to_owned();
-    Ok((dir(operation, root, &parent)?, name))
 }
 
 pub(super) fn entry(
@@ -105,24 +57,6 @@ pub(super) fn entry(
             Some(Box::new(cause)),
         )
     })
-}
-
-pub(super) fn regular_file(operation: Operation, metadata: &Metadata) -> Result<(), StorageError> {
-    if metadata.is_dir() {
-        return Err(StorageError::without_effects(
-            operation,
-            Failure::Rejected(Rejection::IsDirectory),
-            None,
-        ));
-    }
-    if !metadata.is_file() {
-        return Err(StorageError::without_effects(
-            operation,
-            Failure::Rejected(Rejection::Unsupported),
-            None,
-        ));
-    }
-    Ok(())
 }
 
 fn list_path_error(operation: Operation, cause: ah_vfs_storage::PathError) -> StorageError {

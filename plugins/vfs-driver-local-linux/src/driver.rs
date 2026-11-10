@@ -26,7 +26,7 @@ pub struct LinuxLocalDriver {
     info: DriverInfo,
 }
 impl LinuxLocalDriver {
-    fn supported_capabilities() -> Capabilities {
+    pub(crate) fn supported_capabilities() -> Capabilities {
         Capabilities::default()
             .with_stat(true)
             .with_read_link(true)

@@ -8,12 +8,16 @@ use ah_vfs::application::driver_catalog::DriverCatalog;
 use ah_vfs::application::driver_error::DriverError;
 use ah_vfs::application::dto::{MountRequest, ReadFileRequest};
 use ah_vfs::application::error::EntryError;
-use ah_vfs::application::port::{Driver, Storage};
+use ah_vfs::application::port::{Driver, LookupContext, Storage, validate_storage_extensions};
 use ah_vfs::application::service::{EntryService, MountService};
 use ah_vfs::domain::namespace::VirtualPath;
 use ah_vfs::domain::{DriverInstance, DriverKey, InstanceId};
 use ah_vfs::infrastructure::mount_repository::SqliteMountRepository;
-use ah_vfs_storage::{Permissions, StoragePath, XattrName, XattrWriteMode};
+use ah_vfs_storage::{
+    AttributeAction as A, AttributeRequest, AttributeResult as R, BackendFailure,
+    IntermediateSymlinks, MutationOutcome, PathExpr, Permissions, StoragePath, XattrName,
+    XattrWriteMode,
+};
 use ah_vfs_storage::{ReadRange, ReadSupport, RenameMode};
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -81,11 +85,7 @@ async fn instance_support_matches_driver_and_atomic_publication_is_honored() -> 
     let f = fixture().await?;
     let caps = f.driver.info().capabilities();
     assert_eq!(caps.read(), ReadSupport::Range);
-    assert_eq!(
-        caps.permissions().can_read(),
-        f.storage.permissions().is_some()
-    );
-    assert_eq!(caps.xattrs().can_read(), f.storage.xattrs().is_some());
+    validate_storage_extensions(caps, f.storage.as_ref())?;
     assert_eq!(
         caps.rename().supports(RenameMode::NoReplace),
         cfg!(any(target_os = "linux", target_os = "android"))
@@ -174,149 +174,240 @@ async fn unavailable_root_is_normalized_before_returning_from_driver_open() -> T
     Ok(())
 }
 
-#[cfg(unix)]
 #[tokio::test]
 async fn permissions_round_trip_through_vfs_and_protect_mount_boundaries() -> TestResult {
     use std::os::unix::fs::PermissionsExt;
     let f = fixture().await?;
     let (entries, _) = services(&f).await?;
-    for target in ["/file", "/dir"] {
-        let target = VirtualPath::parse(target)?;
-        entries
-            .set_permissions(&target, Permissions::new(0o750)?)
-            .await?;
-        assert_eq!(entries.get_permissions(&target).await?.bits(), 0o750);
+    let mode = Permissions::new(0o750)?;
+    for target in ["/file", "/dir/"] {
+        assert_eq!(
+            entries.attribute(target, A::SetPermissions(mode)).await?,
+            R::Unit
+        );
+        assert_eq!(
+            entries.attribute(target, A::GetPermissions).await?,
+            R::Permissions(mode)
+        );
     }
     assert_eq!(
         std::fs::metadata(f.root.join("file"))?.permissions().mode() & 0o7777,
         0o750
     );
     assert!(matches!(
-        entries
-            .set_permissions(&VirtualPath::root(), Permissions::new(0o700)?)
-            .await,
+        entries.attribute("/", A::SetPermissions(mode)).await,
         Err(EntryError::MountBoundary(_))
     ));
     Ok(())
 }
 
-#[cfg(any(target_os = "linux", target_os = "android"))]
 #[tokio::test]
 async fn xattrs_support_binary_empty_and_bounded_values_with_atomic_existence_policies()
 -> TestResult {
     let f = fixture().await?;
     let (entries, _) = services(&f).await?;
-    let target = VirtualPath::parse("/file")?;
     let name = XattrName::parse("user.asset-hub-test")?;
     let limit = NonZeroUsize::new(4096).ok_or("zero limit")?;
-    let result = entries
-        .set_xattr(
-            &target,
-            name.clone(),
-            vec![0, 255, 1, 0],
-            XattrWriteMode::CreateNew,
-        )
+    let get = || A::get_xattr(name.clone(), limit);
+    let set = |value, mode| A::set_xattr(name.clone(), value, mode);
+
+    let first = entries
+        .attribute("/file", set(vec![0, 255, 1, 0], XattrWriteMode::CreateNew))
         .await;
-    if result.as_ref().err().is_some_and(|error| {
-        error
-            .storage_error()
-            .is_some_and(|error| error.failure() == Failure::Rejected(Rejection::Unsupported))
-    }) {
-        assert!(f.storage.xattrs().is_some());
+    if first
+        .as_ref()
+        .err()
+        .and_then(EntryError::storage_error)
+        .is_some_and(|error| error.failure() == Failure::Rejected(Rejection::Unsupported))
+    {
         return Ok(());
     }
-    result?;
+    assert_eq!(first?, R::Unit);
     assert_eq!(
-        entries.get_xattr(&target, name.clone(), limit).await?,
-        [0, 255, 1, 0]
+        entries.attribute("/file", get()).await?,
+        R::Value(vec![0, 255, 1, 0])
     );
-    assert!(
-        matches!(entries.set_xattr(&target, name.clone(), vec![], XattrWriteMode::CreateNew).await, Err(error) if error.storage_error().is_some_and(|e| e.failure() == Failure::Rejected(Rejection::AlreadyExists)))
-    );
-    assert!(
-        matches!(entries.get_xattr(&target, name.clone(), NonZeroUsize::MIN).await, Err(error) if error.storage_error().is_some_and(|e| e.failure() == Failure::Rejected(Rejection::LimitExceeded)))
-    );
-    assert!(
-        matches!(entries.list_xattrs(&target, NonZeroUsize::MIN).await, Err(error) if error.storage_error().is_some_and(|e| e.failure() == Failure::Rejected(Rejection::LimitExceeded)))
-    );
-    let names = entries.list_xattrs(&target, limit).await?;
-    assert!(names.contains(&name));
-    assert!(
-        names
-            .windows(2)
-            .all(|pair| pair[0].as_str() < pair[1].as_str())
-    );
+    for (action, reason) in [
+        (
+            set(vec![], XattrWriteMode::CreateNew),
+            Rejection::AlreadyExists,
+        ),
+        (
+            A::get_xattr(name.clone(), NonZeroUsize::MIN),
+            Rejection::LimitExceeded,
+        ),
+        (A::list_xattrs(NonZeroUsize::MIN), Rejection::LimitExceeded),
+        (
+            set(vec![0; 64 * 1024 + 1], XattrWriteMode::Upsert),
+            Rejection::LimitExceeded,
+        ),
+    ] {
+        let error = entries
+            .attribute("/file", action)
+            .await
+            .err()
+            .ok_or("expected rejection")?;
+        let error = error.storage_error().ok_or("expected storage error")?;
+        assert_eq!(error.failure(), Failure::Rejected(reason));
+        assert_eq!(error.outcome(), MutationOutcome::Unchanged);
+    }
+
+    let first_name = XattrName::parse("user.a-first")?;
     entries
-        .set_xattr(&target, name.clone(), vec![], XattrWriteMode::Replace)
+        .attribute(
+            "/file",
+            A::set_xattr(first_name.clone(), vec![7], XattrWriteMode::Upsert),
+        )
         .await?;
-    assert!(
-        entries
-            .get_xattr(&target, name.clone(), limit)
-            .await?
-            .is_empty()
-    );
-    entries.remove_xattr(&target, name.clone()).await?;
-    assert!(
-        matches!(entries.get_xattr(&target, name.clone(), limit).await, Err(error) if error.storage_error().is_some_and(|e| e.failure() == Failure::Rejected(Rejection::AttributeNotFound)))
-    );
-    assert!(
-        matches!(entries.set_xattr(&target, name.clone(), vec![1], XattrWriteMode::Replace).await, Err(error) if error.storage_error().is_some_and(|e| e.failure() == Failure::Rejected(Rejection::AttributeNotFound)))
-    );
-    assert!(
-        matches!(entries.remove_xattr(&target, name.clone()).await, Err(error) if error.storage_error().is_some_and(|e| e.failure() == Failure::Rejected(Rejection::AttributeNotFound)))
-    );
-    let dir = VirtualPath::parse("/dir")?;
+    let R::Names(names) = entries.attribute("/file", A::list_xattrs(limit)).await? else {
+        return Err("expected names".into());
+    };
+    assert_eq!(names.names(), &[first_name, name.clone()]);
+
     entries
-        .set_xattr(&dir, name.clone(), vec![2], XattrWriteMode::Upsert)
+        .attribute("/file", set(vec![], XattrWriteMode::Replace))
         .await?;
-    assert_eq!(entries.get_xattr(&dir, name.clone(), limit).await?, [2]);
+    assert_eq!(entries.attribute("/file", get()).await?, R::Value(vec![]));
+    entries
+        .attribute("/file", A::RemoveXattr(name.clone()))
+        .await?;
+    for action in [
+        get(),
+        set(vec![1], XattrWriteMode::Replace),
+        A::RemoveXattr(name.clone()),
+    ] {
+        let error = entries
+            .attribute("/file", action)
+            .await
+            .err()
+            .ok_or("expected missing attribute")?;
+        let error = error.storage_error().ok_or("expected storage error")?;
+        assert_eq!(
+            error.failure(),
+            Failure::Rejected(Rejection::AttributeNotFound)
+        );
+        assert_eq!(error.outcome(), MutationOutcome::Unchanged);
+    }
+
+    let (first, second) = tokio::join!(
+        entries.attribute("/file", set(vec![1], XattrWriteMode::CreateNew)),
+        entries.attribute("/file", set(vec![2], XattrWriteMode::CreateNew)),
+    );
+    let (winner, loser) = match (first, second) {
+        (Ok(R::Unit), Err(error)) => (1, error),
+        (Err(error), Ok(R::Unit)) => (2, error),
+        _ => return Err("expected one atomic create".into()),
+    };
+    let loser = loser.storage_error().ok_or("expected storage error")?;
+    assert_eq!(loser.failure(), Failure::Rejected(Rejection::AlreadyExists));
+    assert_eq!(loser.outcome(), MutationOutcome::Unchanged);
+    assert_eq!(
+        entries.attribute("/file", get()).await?,
+        R::Value(vec![winner])
+    );
+
+    entries
+        .attribute("/dir/", set(vec![2], XattrWriteMode::Upsert))
+        .await?;
+    assert_eq!(entries.attribute("/dir/", get()).await?, R::Value(vec![2]));
     assert!(matches!(
         entries
-            .set_xattr(&VirtualPath::root(), name, vec![3], XattrWriteMode::Upsert)
+            .attribute("/", set(vec![3], XattrWriteMode::Upsert))
             .await,
         Err(EntryError::MountBoundary(_))
     ));
+
+    let invalid = std::ffi::CStr::from_bytes_with_nul(b"user.native-\xff\0")?;
+    rustix::fs::setxattr(
+        f.root.join("file"),
+        invalid,
+        b"value",
+        rustix::fs::XattrFlags::CREATE,
+    )?;
+    let error = entries
+        .attribute("/file", A::list_xattrs(limit))
+        .await
+        .err()
+        .ok_or("invalid native name accepted")?;
+    assert_eq!(
+        error.storage_error().ok_or("storage error")?.failure(),
+        Failure::Backend(BackendFailure::UnrepresentableName)
+    );
     Ok(())
 }
 
-#[cfg(unix)]
 #[tokio::test]
-async fn attribute_access_never_follows_file_or_parent_symlinks() -> TestResult {
+async fn attribute_lookup_preserves_the_final_link_and_obeys_intermediate_policy() -> TestResult {
     use std::os::unix::{fs::PermissionsExt, fs::symlink};
     let f = fixture().await?;
     let outside = tempfile::tempdir()?;
     let outside_file = outside.path().join("file");
     std::fs::write(&outside_file, b"outside")?;
-    let mode = std::fs::metadata(&outside_file)?.permissions().mode();
+    let outside_mode = outside_file.metadata()?.permissions().mode();
+    std::fs::set_permissions(f.root.join("file"), std::fs::Permissions::from_mode(0o600))?;
     symlink(&outside_file, f.root.join("link"))?;
-    symlink(outside.path(), f.root.join("linked-dir"))?;
-    let permissions = f
-        .storage
-        .permissions()
-        .ok_or("missing permissions extension")?;
-    for name in ["link", "linked-dir/file"] {
-        assert!(permissions.get_permissions(path(name)?).await.is_err());
-        assert!(
-            permissions
-                .set_permissions(path(name)?, Permissions::new(0o700)?)
-                .await
-                .is_err()
-        );
-        if let Some(xattrs) = f.storage.xattrs() {
-            assert!(
-                xattrs
-                    .set_xattr(
-                        path(name)?,
-                        XattrName::parse("user.asset-hub-test")?,
-                        vec![1],
-                        XattrWriteMode::Upsert
-                    )
-                    .await
-                    .is_err()
-            );
-        }
+    symlink(outside.path(), f.root.join("outside"))?;
+    symlink("/", f.root.join("alias"))?;
+    let attributes = f.storage.attributes().ok_or("missing attributes")?;
+    let execute = |operand: &str, action, intermediate_symlinks| -> Result<_, Box<dyn Error>> {
+        Ok(attributes.execute(
+            AttributeRequest::new(PathExpr::parse(operand)?, action),
+            LookupContext {
+                working_directory: path("dir")?,
+                intermediate_symlinks,
+            },
+        ))
+    };
+    use IntermediateSymlinks::{FollowWithinInstance, Reject};
+    assert_eq!(
+        execute("../alias/file", A::GetPermissions, FollowWithinInstance)?.await?,
+        R::Permissions(Permissions::new(0o600)?)
+    );
+    assert_eq!(
+        execute("../link", A::GetPermissions, FollowWithinInstance)?.await?,
+        R::Permissions(Permissions::new(0o777)?)
+    );
+
+    for (operand, action, links, reason) in [
+        (
+            "../alias/file",
+            A::GetPermissions,
+            Reject,
+            Rejection::SymlinkNotAllowed,
+        ),
+        (
+            "/link/",
+            A::GetPermissions,
+            FollowWithinInstance,
+            Rejection::NotDirectory,
+        ),
+        (
+            "/outside/file",
+            A::GetPermissions,
+            FollowWithinInstance,
+            Rejection::NotFound,
+        ),
+        (
+            "/link",
+            A::SetPermissions(Permissions::new(0o700)?),
+            FollowWithinInstance,
+            Rejection::Unsupported,
+        ),
+        (
+            "/link",
+            A::list_xattrs(NonZeroUsize::MIN),
+            FollowWithinInstance,
+            Rejection::Unsupported,
+        ),
+    ] {
+        let error = execute(operand, action, links)?
+            .await
+            .err()
+            .ok_or("expected lookup rejection")?;
+        assert_eq!(error.failure(), Failure::Rejected(reason));
+        assert_eq!(error.outcome(), MutationOutcome::Unchanged);
     }
-    assert_eq!(std::fs::metadata(outside_file)?.permissions().mode(), mode);
+    assert_eq!(outside_file.metadata()?.permissions().mode(), outside_mode);
     Ok(())
 }
 

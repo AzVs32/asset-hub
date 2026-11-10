@@ -104,7 +104,7 @@ pub use storage::validate_storage_extensions;
 pub use storage::{LookupContext, Storage, StorageFileReader, StorageFileWriter, StorageFuture};
 
 mod storage_attributes;
-pub use storage_attributes::{StoragePermissions, StorageXattrs};
+pub use storage_attributes::StorageAttributes;
 
 mod open_context;
 pub use open_context::OpenContext;

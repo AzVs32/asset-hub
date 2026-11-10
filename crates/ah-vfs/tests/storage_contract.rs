@@ -11,7 +11,7 @@ use ah_vfs::application::driver_info::DriverInfo;
 use ah_vfs::application::dto::{CreateDirRequest, ReadFileRequest, WriteFileRequest};
 use ah_vfs::application::error::EntryError;
 use ah_vfs::application::port::{
-    DriverFuture, Storage, StorageFileReader, StorageFileWriter, StorageFuture, StoragePermissions,
+    DriverFuture, Storage, StorageAttributes, StorageFileReader, StorageFileWriter, StorageFuture,
     validate_storage_extensions,
 };
 use ah_vfs::application::service::{EntryService, MountService};
@@ -19,9 +19,11 @@ use ah_vfs::domain::namespace::{ChildMountPolicy, VirtualPath};
 use ah_vfs::domain::{DriverInstance, DriverKey, InstanceId};
 use ah_vfs::infrastructure::mount_repository::SqliteMountRepository;
 use ah_vfs_storage::{
+    AttributeAction, AttributeRequest, AttributeResult, Entry, Permissions, StoragePath, XattrName,
+};
+use ah_vfs_storage::{
     AttributeSupport, Capabilities, ReadRange, ReadSupport, WriteMode, WriteModes, WriteSupport,
 };
-use ah_vfs_storage::{Entry, Permissions, StoragePath, XattrName};
 use std::{
     error::Error,
     io,
@@ -153,11 +155,20 @@ async fn fixture(
     declared: Capabilities,
     open_failure: Option<LifecycleFailure>,
 ) -> Result<(EntryService, Arc<AtomicUsize>), Box<dyn Error>> {
-    let key = DriverKey::parse("test")?;
     let calls = Arc::new(AtomicUsize::new(0));
     let storage = Arc::new(TestStorage {
         calls: calls.clone(),
     });
+    let service = entry_fixture(declared, open_failure, storage).await?;
+    Ok((service, calls))
+}
+
+async fn entry_fixture(
+    declared: Capabilities,
+    open_failure: Option<LifecycleFailure>,
+    storage: Arc<dyn Storage>,
+) -> Result<EntryService, Box<dyn Error>> {
+    let key = DriverKey::parse("test")?;
     let mut drivers = DriverCatalog::new();
     common::register(
         &mut drivers,
@@ -183,7 +194,7 @@ async fn fixture(
     MountService::new(runtime.clone())
         .initialize_root(DriverInstance::new(key, InstanceId::parse("root")?))
         .await?;
-    Ok((EntryService::new(runtime), calls))
+    Ok(EntryService::new(runtime))
 }
 fn request(atomic: bool) -> Result<WriteFileRequest, Box<dyn Error>> {
     Ok(WriteFileRequest {
@@ -356,16 +367,32 @@ async fn opening_streaming_and_committing_keep_domain_error_categories() -> Test
 }
 
 struct ReadOnlyPermissions;
-impl StoragePermissions for ReadOnlyPermissions {
-    fn get_permissions(&self, _: StoragePath) -> StorageFuture<'_, Permissions> {
-        Box::pin(async {
-            Permissions::new(0o444).map_err(|error| {
-                StorageError::without_effects(
-                    Operation::GetPermissions,
-                    Failure::Contract(ContractViolation::InvalidResponse),
-                    Some(Box::new(error)),
-                )
-            })
+impl StorageAttributes for ReadOnlyPermissions {
+    fn support(&self) -> (AttributeSupport, AttributeSupport) {
+        (AttributeSupport::Read, AttributeSupport::None)
+    }
+
+    fn execute(
+        &self,
+        request: AttributeRequest,
+        _: ah_vfs::application::port::LookupContext,
+    ) -> StorageFuture<'_, AttributeResult> {
+        Box::pin(async move {
+            if !matches!(request.action(), AttributeAction::GetPermissions) {
+                return Err(failure(
+                    request.operation(),
+                    Failure::Rejected(Rejection::Unsupported),
+                ));
+            }
+            Permissions::new(0o444)
+                .map(AttributeResult::Permissions)
+                .map_err(|error| {
+                    StorageError::without_effects(
+                        Operation::GetPermissions,
+                        Failure::Contract(ContractViolation::InvalidAttributes),
+                        Some(Box::new(error)),
+                    )
+                })
         })
     }
 }
@@ -375,16 +402,27 @@ impl Storage for PermissionStorage {
     fn chunk_size(&self) -> NonZeroUsize {
         NonZeroUsize::MIN
     }
-    fn permissions(&self) -> Option<&dyn StoragePermissions> {
+    fn attributes(&self) -> Option<&dyn StorageAttributes> {
         Some(&self.0)
     }
 }
 
 #[test]
-fn independent_attribute_interfaces_must_match_the_driver_declaration() -> TestResult {
+fn attribute_interface_and_access_levels_must_match_the_driver_declaration() -> TestResult {
     let declared = Capabilities::default().with_permissions(AttributeSupport::Read);
     let supported = PermissionStorage(ReadOnlyPermissions);
     validate_storage_extensions(declared, &supported)?;
+    assert!(
+        validate_storage_extensions(
+            declared.with_permissions(AttributeSupport::ReadWrite),
+            &supported,
+        )
+        .is_err()
+    );
+    assert!(
+        validate_storage_extensions(declared.with_xattrs(AttributeSupport::Read), &supported,)
+            .is_err()
+    );
     let absent = TestStorage {
         calls: Arc::new(AtomicUsize::new(0)),
     };
@@ -411,9 +449,19 @@ fn independent_attribute_interfaces_must_match_the_driver_declaration() -> TestR
 }
 #[tokio::test]
 async fn read_only_extension_and_missing_base_operations_reject_mutation() -> TestResult {
-    let extension = ReadOnlyPermissions;
+    let supported = Arc::new(PermissionStorage(ReadOnlyPermissions));
+    let caps = Capabilities::default().with_permissions(AttributeSupport::Read);
+    let service = entry_fixture(caps, None, supported.clone()).await?;
+    assert_eq!(
+        service
+            .attribute("/file", AttributeAction::GetPermissions)
+            .await?,
+        AttributeResult::Permissions(Permissions::new(0o444)?)
+    );
+    let unavailable = entry_fixture(caps, Some(LifecycleFailure::Unavailable), supported).await?;
     assert!(
-        matches!(extension.set_permissions(StoragePath::root(), Permissions::new(0o600)?).await, Err(error) if error.failure() == Failure::Rejected(Rejection::Unsupported))
+        matches!(unavailable.attribute("/file", AttributeAction::SetPermissions(Permissions::new(0o600)?)).await,
+        Err(error) if error.storage_error().is_some_and(|error| error.failure() == Failure::Rejected(Rejection::Unsupported)))
     );
     let storage = TestStorage {
         calls: Arc::new(AtomicUsize::new(0)),

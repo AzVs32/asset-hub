@@ -9,13 +9,8 @@ use tonic::{
     transport::{Channel, Endpoint, Server},
 };
 use vfs_driver_memory::{Capacity, CapacityUnit, MemoryDriver, MemoryStorage};
-use vfs_plugin_grpc_server::{
-    ServerLimits,
-    dispatch::Dispatcher,
-    storage_contract::{service, wire},
-};
+use vfs_plugin_grpc_server::dispatch::Dispatcher;
 use vfs_plugin_protocol as p;
-use wire::{command::Action, reply::Result as Reply};
 
 type TestResult<T = ()> = Result<T, Box<dyn Error>>;
 const TIMEOUT: Duration = Duration::from_secs(5);
@@ -76,7 +71,6 @@ impl Fixture {
             Capacity::new(quota, CapacityUnit::B)?,
             links,
         )?);
-        let service = service("storage-test", ServerLimits::default())?;
         let dispatcher = Arc::new(Dispatcher::new(Arc::new(BoundMemory {
             driver: MemoryDriver::new()?,
             storage: storage.clone(),
@@ -98,7 +92,6 @@ impl Fixture {
             tokio_stream::once(Ok::<_, io::Error>(server)).chain(tokio_stream::pending());
         let task = tokio::spawn(async move {
             Server::builder()
-                .add_service(service)
                 .add_service(formal)
                 .serve_with_incoming(incoming)
                 .await
@@ -121,22 +114,6 @@ impl Fixture {
             generation,
             task,
         })
-    }
-
-    async fn session(&self) -> TestResult<Session> {
-        let mut client =
-            wire::storage_contract_client::StorageContractClient::new(self.channel.clone())
-                .max_decoding_message_size(wire::MAX_FRAME_BYTES)
-                .max_encoding_message_size(wire::MAX_FRAME_BYTES);
-        let (tx, rx) = mpsc::channel(1);
-        let mut request = Request::new(ReceiverStream::new(rx));
-        request
-            .metadata_mut()
-            .insert("authorization", "Bearer storage-test".parse()?);
-        let replies = tokio::time::timeout(TIMEOUT, client.session(request))
-            .await??
-            .into_inner();
-        Ok(Session { tx, replies })
     }
 
     async fn formal_session(&self) -> TestResult<FormalSession> {
@@ -186,25 +163,6 @@ impl Fixture {
 impl Drop for Fixture {
     fn drop(&mut self) {
         self.task.abort();
-    }
-}
-
-struct Session {
-    tx: mpsc::Sender<wire::Command>,
-    replies: Streaming<wire::Reply>,
-}
-impl Session {
-    async fn call(&mut self, action: Action) -> TestResult<Reply> {
-        self.tx
-            .send(wire::Command {
-                action: Some(action),
-            })
-            .await?;
-        Ok(tokio::time::timeout(TIMEOUT, self.replies.message())
-            .await??
-            .ok_or("session closed")?
-            .result
-            .ok_or("missing reply")?)
     }
 }
 
@@ -411,31 +369,6 @@ fn write(handle: u64, path: &str, mode: d::WriteMode) -> TestResult<p::Operation
         d::IntermediateSymlinks::FollowWithinInstance,
     )))
 }
-fn error(
-    reply: Reply,
-    operation: d::Operation,
-    cause: d::Failure,
-    outcome: d::MutationOutcome,
-) -> TestResult {
-    let Reply::Failure(wire) = reply else {
-        return Err("expected storage failure".into());
-    };
-    let error = wire::decode_failure(operation, wire)?;
-    assert_eq!(
-        (error.operation(), error.failure(), error.outcome()),
-        (operation, cause, outcome)
-    );
-    assert!(error.source().is_none());
-    Ok(())
-}
-fn rejected(reply: Reply, operation: d::Operation, cause: d::Rejection) -> TestResult {
-    error(
-        reply,
-        operation,
-        d::Failure::Rejected(cause),
-        d::MutationOutcome::Unchanged,
-    )
-}
 async fn select_listing(
     session: &mut FormalSession,
     request: &d::ListRequest,
@@ -469,7 +402,6 @@ async fn wire_page(
 #[tokio::test]
 async fn formal_lookup_preserves_policy_instance_and_link_bytes() -> TestResult {
     let fixture = Fixture::new(64).await?;
-    let mut operations = fixture.session().await?;
     let mut formal = fixture.formal_session().await?;
     formal
         .mkdir("/docs/sub", d::CreateDirectoryMode::Recursive)
@@ -615,14 +547,19 @@ async fn formal_lookup_preserves_policy_instance_and_link_bytes() -> TestResult 
         d::Operation::Write,
         d::Failure::Rejected(d::Rejection::RootProtected),
     )?;
-    rejected(
-        operations
-            .call(Action::GetPermissions(wire::Operand {
-                path: "missing".into(),
-            }))
-            .await?,
+    let request = d::AttributeRequest::new(
+        d::PathExpr::parse("missing")?,
+        d::AttributeAction::GetPermissions,
+    );
+    let (wire, _) = p::encode_attribute(
+        request,
+        &d::StoragePath::root(),
+        d::IntermediateSymlinks::FollowWithinInstance,
+    )?;
+    formal_failure(
+        formal.call(wire).await?,
         d::Operation::GetPermissions,
-        d::Rejection::Unsupported,
+        d::Failure::Rejected(d::Rejection::Unsupported),
     )?;
     assert_eq!(fixture.storage.used_bytes(), 0);
 

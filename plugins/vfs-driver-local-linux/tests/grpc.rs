@@ -128,6 +128,47 @@ async fn native_process_passes_shared_storage_contracts_over_grpc() -> Result {
             .entries()
             .is_empty()
     );
+    use ah_vfs_storage::{
+        AttributeAction as A, AttributeRequest, AttributeResult as R, IntermediateSymlinks,
+        PathExpr, Permissions, Rejection, XattrName, XattrWriteMode,
+    };
+    use std::num::NonZeroUsize;
+    std::fs::write(root.path().join("docs/attributes"), b"test")?;
+    std::os::unix::fs::symlink("/docs", root.path().join("alias"))?;
+    let attributes = storage.attributes().ok_or("missing attributes port")?;
+    let execute = |action| -> Result<_> {
+        Ok(attributes.execute(
+            AttributeRequest::new(PathExpr::parse("../alias/attributes")?, action),
+            LookupContext {
+                working_directory: StoragePath::parse("docs")?,
+                intermediate_symlinks: IntermediateSymlinks::FollowWithinInstance,
+            },
+        ))
+    };
+    let mode = Permissions::new(0o640)?;
+    assert_eq!(execute(A::SetPermissions(mode))?.await?, R::Unit);
+    assert_eq!(execute(A::GetPermissions)?.await?, R::Permissions(mode));
+    let name = XattrName::parse("user.grpc")?;
+    let bound = NonZeroUsize::new(1024).ok_or("limit")?;
+    let set = execute(A::set_xattr(
+        name.clone(),
+        vec![0, 255, 0],
+        XattrWriteMode::CreateNew,
+    ))?
+    .await;
+    if !matches!(&set, Err(error) if error.failure() == Failure::Rejected(Rejection::Unsupported)) {
+        assert_eq!(set?, R::Unit);
+        assert_eq!(
+            execute(A::get_xattr(name.clone(), bound))?.await?,
+            R::Value(vec![0, 255, 0])
+        );
+        let R::Names(names) = execute(A::list_xattrs(bound))?.await? else {
+            return Err("missing name list".into());
+        };
+        assert_eq!(names.names(), &[name.clone()]);
+        assert_eq!(execute(A::RemoveXattr(name))?.await?, R::Unit);
+    }
+
     let mut writer = storage
         .write_file(
             ah_vfs_storage::WriteRequest::new(

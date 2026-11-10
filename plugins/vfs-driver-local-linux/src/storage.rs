@@ -2,7 +2,7 @@
 
 use ah_vfs::application::port::{DirectoryBindings, LookupContext};
 use ah_vfs::application::port::{
-    Storage, StorageFileReader, StorageFileWriter, StorageFuture, StoragePermissions, StorageXattrs,
+    Storage, StorageAttributes, StorageFileReader, StorageFileWriter, StorageFuture,
 };
 use ah_vfs_storage::{
     BackendFailure, BoundListRequest, DirectoryPage, DirectorySelection, Failure, ListRequest,
@@ -80,13 +80,10 @@ impl LinuxLocalStorage {
 }
 
 impl Storage for LinuxLocalStorage {
-    fn permissions(&self) -> Option<&dyn StoragePermissions> {
+    fn attributes(&self) -> Option<&dyn StorageAttributes> {
         Some(self)
     }
 
-    fn xattrs(&self) -> Option<&dyn StorageXattrs> {
-        Some(self)
-    }
     fn chunk_size(&self) -> NonZeroUsize {
         NonZeroUsize::new(CHUNK_SIZE).unwrap_or(NonZeroUsize::MIN)
     }

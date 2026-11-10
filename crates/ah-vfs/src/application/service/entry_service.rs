@@ -9,15 +9,15 @@ use crate::application::mount_runtime::MountRuntime;
 use crate::application::port::{LookupContext, Storage};
 use crate::application::session::{FileReadHandle, FileWriteHandle};
 use crate::domain::namespace::{Mount, MountTable, VirtualPath};
+use ah_vfs_storage::{AttributeAction, AttributeRequest, AttributeResult, EntryType, StoragePath};
 use ah_vfs_storage::{BackendFailure, DirectoryCursor, ListRequest, ListTarget};
 use ah_vfs_storage::{
     Capabilities, LinkTarget, ReadLinkRequest, ReadRequest, RemoveRequest, RenameRequest,
     StatRequest, SymlinkAction, WriteRequest,
 };
-use ah_vfs_storage::{EntryType, Permissions, StoragePath, XattrName, XattrWriteMode};
 use ah_vfs_storage::{Failure, Operation, Rejection, StorageError};
 
-use std::{collections::BTreeMap, num::NonZeroUsize, sync::Arc};
+use std::{collections::BTreeMap, sync::Arc};
 
 /// Resolve paths through a shared runtime snapshot and reuse validated storage.
 /// Concurrent namespace changes are not serialized with I/O. Open streams retain
@@ -483,130 +483,47 @@ impl EntryService {
         Ok(EntryView::from_storage(request.destination, entry))
     }
 
-    async fn attribute_storage(
+    /// Execute an attribute action on an absolute VFS operand.
+    pub async fn attribute(
         &self,
-        path: &VirtualPath,
-        write: bool,
-        operation: Operation,
-    ) -> Result<(StoragePath, Arc<dyn Storage>, Capabilities), EntryError> {
+        operand: &str,
+        action: AttributeAction,
+    ) -> Result<AttributeResult, EntryError> {
+        let path = VirtualPath::parse(operand)?;
+        let operation = action.operation();
         let table = self.runtime.table().await?;
-        if write {
-            Self::protect(&table, path)?;
+        if operation.may_mutate() {
+            Self::protect(&table, &path)?;
         }
-        if matches!(Self::classify(&table, path), NamespaceEntry::SyntheticDir) {
-            return Err(StorageError::without_effects(
-                operation,
-                Failure::Rejected(Rejection::Unsupported),
-                None,
+        if matches!(Self::classify(&table, &path), NamespaceEntry::SyntheticDir) {
+            Self::require(operation, false)?;
+        }
+        let resolution = table.resolve(&path)?;
+        let reference = resolution.mount().driver_instance();
+        let driver = self
+            .runtime
+            .drivers
+            .get(reference.driver_key())
+            .ok_or_else(|| EntryError::DriverNotRegistered(reference.driver_key().clone()))?;
+        Self::require(operation, driver.info().capabilities().supports(operation))?;
+        let operand = mutation_operand(resolution.storage_path()?, operand.ends_with('/'));
+        let expected = action.expectation();
+        let storage = self.runtime.storage(reference, driver.as_ref()).await?;
+        let attributes = storage
+            .attributes()
+            .ok_or(EntryError::InvalidStorageResponse(
+                "missing attribute interface",
+            ))?;
+        let result = attributes
+            .execute(
+                AttributeRequest::new(operand, action),
+                LookupContext::default(),
             )
-            .into());
-        }
-        self.open(&table, path).await
-    }
-
-    /// Read POSIX mode bits. Synthetic dirs have no backend attributes.
-    pub async fn get_permissions(&self, path: &VirtualPath) -> Result<Permissions, EntryError> {
-        let (relative, storage, capabilities) = self
-            .attribute_storage(path, false, Operation::GetPermissions)
             .await?;
-        Self::require(
-            Operation::GetPermissions,
-            capabilities.permissions().can_read(),
-        )?;
-        let extension = storage
-            .permissions()
-            .ok_or(EntryError::InvalidStorageResponse(
-                "missing permissions extension",
-            ))?;
-        Ok(extension.get_permissions(relative).await?)
-    }
-
-    /// Change mode bits without bypassing mount/ancestor protection.
-    pub async fn set_permissions(
-        &self,
-        path: &VirtualPath,
-        permissions: Permissions,
-    ) -> Result<(), EntryError> {
-        let (relative, storage, capabilities) = self
-            .attribute_storage(path, true, Operation::SetPermissions)
-            .await?;
-        Self::require(
-            Operation::SetPermissions,
-            capabilities.permissions().can_write(),
-        )?;
-        let extension = storage
-            .permissions()
-            .ok_or(EntryError::InvalidStorageResponse(
-                "missing permissions extension",
-            ))?;
-        Ok(extension.set_permissions(relative, permissions).await?)
-    }
-
-    /// Return sorted opaque attribute names within the supplied byte budget.
-    pub async fn list_xattrs(
-        &self,
-        path: &VirtualPath,
-        max_bytes: NonZeroUsize,
-    ) -> Result<Vec<XattrName>, EntryError> {
-        let (relative, storage, capabilities) = self
-            .attribute_storage(path, false, Operation::ListXattrs)
-            .await?;
-        Self::require(Operation::ListXattrs, capabilities.xattrs().can_read())?;
-        let extension = storage.xattrs().ok_or(EntryError::InvalidStorageResponse(
-            "missing xattr extension",
-        ))?;
-        Ok(extension.list_xattrs(relative, max_bytes).await?)
-    }
-
-    /// Return a complete opaque attribute value, never a truncated prefix.
-    pub async fn get_xattr(
-        &self,
-        path: &VirtualPath,
-        name: XattrName,
-        max_bytes: NonZeroUsize,
-    ) -> Result<Vec<u8>, EntryError> {
-        let (relative, storage, capabilities) = self
-            .attribute_storage(path, false, Operation::GetXattr)
-            .await?;
-        Self::require(Operation::GetXattr, capabilities.xattrs().can_read())?;
-        let extension = storage.xattrs().ok_or(EntryError::InvalidStorageResponse(
-            "missing xattr extension",
-        ))?;
-        Ok(extension.get_xattr(relative, name, max_bytes).await?)
-    }
-
-    /// Atomically apply the attribute existence policy; preserve namespace boundaries.
-    pub async fn set_xattr(
-        &self,
-        path: &VirtualPath,
-        name: XattrName,
-        value: Vec<u8>,
-        mode: XattrWriteMode,
-    ) -> Result<(), EntryError> {
-        let (relative, storage, capabilities) = self
-            .attribute_storage(path, true, Operation::SetXattr)
-            .await?;
-        Self::require(Operation::SetXattr, capabilities.xattrs().can_write())?;
-        let extension = storage.xattrs().ok_or(EntryError::InvalidStorageResponse(
-            "missing xattr extension",
-        ))?;
-        Ok(extension.set_xattr(relative, name, value, mode).await?)
-    }
-
-    /// Remove one attribute, returning AttributeNotFound for an absent key.
-    pub async fn remove_xattr(
-        &self,
-        path: &VirtualPath,
-        name: XattrName,
-    ) -> Result<(), EntryError> {
-        let (relative, storage, capabilities) = self
-            .attribute_storage(path, true, Operation::RemoveXattr)
-            .await?;
-        Self::require(Operation::RemoveXattr, capabilities.xattrs().can_write())?;
-        let extension = storage.xattrs().ok_or(EntryError::InvalidStorageResponse(
-            "missing xattr extension",
-        ))?;
-        Ok(extension.remove_xattr(relative, name).await?)
+        expected.validate(&result).map_err(|reason| {
+            StorageError::after_dispatch(operation, Failure::Contract(reason), None)
+        })?;
+        Ok(result)
     }
 }
 

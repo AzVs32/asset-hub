@@ -6,7 +6,7 @@ use crate::application::driver_info::DriverInfo;
 use crate::application::dto::*;
 use crate::application::error::MountRepositoryError;
 use crate::application::port::{
-    DriverFuture, MountRepositoryFuture, StorageFuture, StoragePermissions,
+    DriverFuture, MountRepositoryFuture, StorageAttributes, StorageFuture,
 };
 use crate::application::service::{EntryService, InstanceService, MountService};
 use crate::domain::namespace::{ChildMountPolicy, MountId, MountTableError, VirtualPath};
@@ -122,7 +122,7 @@ impl Storage for TestStorage {
     fn is_stale(&self) -> bool {
         self.generation != self.current_generation.load(Ordering::SeqCst)
     }
-    fn permissions(&self) -> Option<&dyn StoragePermissions> {
+    fn attributes(&self) -> Option<&dyn StorageAttributes> {
         self.validations.fetch_add(1, Ordering::SeqCst);
         self.invalid_extensions
             .load(Ordering::SeqCst)
@@ -156,14 +156,27 @@ impl Storage for TestStorage {
     }
 }
 
-impl StoragePermissions for TestStorage {
-    fn get_permissions(
+impl StorageAttributes for TestStorage {
+    fn support(
         &self,
-        _: ah_vfs_storage::StoragePath,
-    ) -> StorageFuture<'_, ah_vfs_storage::Permissions> {
-        Box::pin(async {
+    ) -> (
+        ah_vfs_storage::AttributeSupport,
+        ah_vfs_storage::AttributeSupport,
+    ) {
+        (
+            ah_vfs_storage::AttributeSupport::Read,
+            ah_vfs_storage::AttributeSupport::None,
+        )
+    }
+
+    fn execute(
+        &self,
+        request: ah_vfs_storage::AttributeRequest,
+        _: crate::application::port::LookupContext,
+    ) -> StorageFuture<'_, ah_vfs_storage::AttributeResult> {
+        Box::pin(async move {
             Err(StorageError::without_effects(
-                Operation::GetPermissions,
+                request.operation(),
                 Failure::Rejected(Rejection::Unsupported),
                 None,
             ))

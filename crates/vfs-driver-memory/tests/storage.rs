@@ -20,8 +20,7 @@ async fn declarations_cover_all_ports_and_optional_attributes_are_absent() -> Te
     validate_storage_extensions(capabilities, &storage)?;
     assert_eq!(capabilities.permissions(), AttributeSupport::None);
     assert_eq!(capabilities.xattrs(), AttributeSupport::None);
-    assert!(storage.permissions().is_none());
-    assert!(storage.xattrs().is_none());
+    assert!(storage.attributes().is_none());
     assert_eq!(storage.chunk_size().get(), 64 * 1024);
     let root = storage
         .stat_entry(

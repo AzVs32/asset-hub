@@ -1,13 +1,18 @@
 //! Shared protobuf messages, validation and VFS protocol semantics.
 pub mod wire {
-    include!(concat!(env!("OUT_DIR"), "/assethub.vfs.v10.rs"));
+    include!(concat!(env!("OUT_DIR"), "/assethub.vfs.v11.rs"));
 }
 pub use wire::*;
 pub use wire::{reply::Result as Value, request::Operation, storage_call::Operation as StorageOp};
+mod attributes;
 mod codec;
 mod directory;
 mod lookup;
 mod values;
+pub use attributes::{
+    AttributeValueError, decode_attribute, decode_attribute_result, encode_attribute,
+    encode_attribute_result,
+};
 pub use codec::*;
 pub use directory::*;
 pub use lookup::{
@@ -24,10 +29,12 @@ pub const FILE_DESCRIPTOR_SET: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "
 /// JSON values at application/configuration boundaries, never a wire message.
 pub type JsonObject = std::collections::BTreeMap<String, serde_json::Value>;
 
-pub const PROTOCOL_MAJOR: u32 = 10;
+pub const PROTOCOL_MAJOR: u32 = 11;
 pub const PROTOCOL_MINOR: u32 = 0;
 pub const MAX_CONTROL_BYTES: usize = 1024 * 1024;
 pub const MAX_DATA_BYTES: usize = 8 * 1024 * 1024;
+/// Bound the allocation for converting a packed name list into typed keys.
+pub const MAX_ATTRIBUTE_NAMES_BYTES: usize = MAX_CONTROL_BYTES;
 pub const MAX_FRAME_BYTES: usize = MAX_CONTROL_BYTES + MAX_DATA_BYTES + 1024;
 pub const MAX_RESOURCES: usize = 1024;
 pub const INSTANCE_SCHEMA_PROFILE: &str = "assethub.config.annotations.v1";

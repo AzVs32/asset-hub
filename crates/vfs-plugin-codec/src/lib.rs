@@ -10,7 +10,7 @@ use ah_vfs_storage::{
     BackendFailure, ContractViolation, Failure, Operation, Rejection, StorageError,
 };
 use ah_vfs_storage::{Capabilities, Entry};
-use std::num::{NonZeroU32, NonZeroUsize};
+use std::num::NonZeroU32;
 use vfs_plugin_protocol as p;
 
 /// A directory binding can expire while the storage session remains live.
@@ -285,10 +285,6 @@ pub fn decode_entry(operation: Operation, entry: p::Entry) -> Result<Entry, Stor
         p::EntryValueError::Path(cause) => storage_protocol_violation_with_source(operation, cause),
         cause => storage_protocol_violation_with_source(operation, cause),
     })
-}
-pub fn limit(value: u32) -> Result<NonZeroUsize, DriverError> {
-    NonZeroUsize::new(value as usize)
-        .ok_or_else(|| LifecycleError::new(LifecycleFailure::InvalidRequest).into())
 }
 /// An unexpected control-plane failure during storage execution is a contract bug.
 /// Valid storage failures retain their independent cause and outcome.

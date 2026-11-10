@@ -1,211 +1,165 @@
-//! Attribute operations on pinned file/dir handles; paths never follow symlinks.
-use super::LinuxLocalStorage;
-use ah_vfs_storage::{BackendFailure, Failure, Operation, Rejection, StorageError};
+//! POSIX mode bits and bounded xattrs on entries selected by the shared lookup.
+use super::{LinuxLocalStorage, blocking, fs, lookup};
+use crate::driver::LinuxLocalDriver;
+use ah_vfs::application::port::{LookupContext, StorageAttributes, StorageFuture};
+use ah_vfs_storage::{
+    AttributeAction, AttributeRequest, AttributeResult, AttributeSupport, BackendFailure,
+    EntryType, Failure, Operation, Permissions, Rejection, StorageError, XattrList, XattrName,
+    XattrWriteMode,
+};
+use rustix::fs::{self as native, AtFlags, CWD, Mode, XattrFlags};
+use rustix::io::Errno;
 
-use cap_std::fs::Dir;
+const MAX_NATIVE_XATTR_BYTES: usize = 64 * 1024;
 
-mod posix {
-    use super::super::{blocking, fs};
-    use super::*;
-    use ah_vfs::application::port::{StorageFuture, StoragePermissions};
-
-    use ah_vfs_storage::{Permissions, StoragePath};
-    use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt};
-    use cap_std::fs::{File, OpenOptions, Permissions as NativePermissions, PermissionsExt};
-
-    pub(super) type Handle = File;
-    pub(super) fn open(
-        operation: Operation,
-        root: &Dir,
-        path: &StoragePath,
-    ) -> Result<Handle, StorageError> {
-        if path.is_root() {
-            return root.open(".").map_err(|cause| fs::error(operation, cause));
-        }
-        let (parent, name) = fs::parent(operation, root, path)?;
-        let metadata = parent
-            .symlink_metadata(&name)
-            .map_err(|cause| fs::error(operation, cause))?;
-        if metadata.is_dir() {
-            return parent
-                .open_dir_nofollow(name)
-                .map_err(|cause| fs::error(operation, cause))?
-                .open(".")
-                .map_err(|cause| fs::error(operation, cause));
-        }
-        fs::regular_file(operation, &metadata)?;
-        let mut options = OpenOptions::new();
-        options.read(true).follow(FollowSymlinks::No);
-        let file = parent
-            .open_with(name, &options)
-            .map_err(|cause| fs::error(operation, cause))?;
-        fs::regular_file(
-            operation,
-            &file
-                .metadata()
-                .map_err(|cause| fs::error(operation, cause))?,
-        )?;
-        Ok(file)
+impl StorageAttributes for LinuxLocalStorage {
+    fn support(&self) -> (AttributeSupport, AttributeSupport) {
+        let caps = LinuxLocalDriver::supported_capabilities();
+        (caps.permissions(), caps.xattrs())
     }
 
-    /// Attribute access requires enough access to open the file/dir for reading.
-    impl StoragePermissions for LinuxLocalStorage {
-        fn get_permissions(&self, path: StoragePath) -> StorageFuture<'_, Permissions> {
-            let operation = Operation::GetPermissions;
-            let dir = self.dir.clone();
-            Box::pin(blocking(operation, false, move || {
-                Permissions::new(
-                    open(operation, &dir, &path)?
-                        .metadata()
-                        .map_err(|cause| fs::error(operation, cause))?
-                        .permissions()
-                        .mode()
-                        & 0o7777,
-                )
-                .map_err(|error| {
-                    StorageError::without_effects(
-                        operation,
-                        Failure::Backend(BackendFailure::CorruptData),
-                        Some(Box::new(error)),
+    fn execute(
+        &self,
+        request: AttributeRequest,
+        context: LookupContext,
+    ) -> StorageFuture<'_, AttributeResult> {
+        let op = request.operation();
+        let root = self.dir.clone();
+        Box::pin(blocking(op, op.may_mutate(), move || {
+            if !LinuxLocalDriver::supported_capabilities().supports(op) {
+                return Err(rejected(op, Rejection::Unsupported));
+            }
+            if matches!(request.action(), AttributeAction::SetXattr { value, .. } if value.len() > MAX_NATIVE_XATTR_BYTES)
+            {
+                return Err(rejected(op, Rejection::LimitExceeded));
+            }
+            let (entry, handle) = lookup::attribute_target(&root, request.lookup(), context, op)?;
+            let (_, action) = request.into_parts();
+            if let AttributeAction::GetPermissions = action {
+                let stat =
+                    native::fstat(handle.as_ref()).map_err(|error| native_error(op, error))?;
+                let bits = Mode::from_raw_mode(stat.st_mode).as_raw_mode();
+                return Permissions::new(bits)
+                    .map(AttributeResult::Permissions)
+                    .map_err(|cause| {
+                        StorageError::without_effects(
+                            op,
+                            Failure::Backend(BackendFailure::CorruptData),
+                            Some(Box::new(cause)),
+                        )
+                    });
+            }
+            if !matches!(
+                entry.entry_type(),
+                EntryType::Directory | EntryType::File { .. }
+            ) {
+                // These operations have no supported handle-based implementation for
+                // the selected link or special entry. Never operate on its referent.
+                return Err(rejected(op, Rejection::Unsupported));
+            }
+            // This procfs reference follows the held descriptor, not the original
+            // name. The handle stays live throughout the native call.
+            let bound = lookup::descriptor_path(&handle);
+            let bound = bound.as_str();
+            match action {
+                AttributeAction::SetPermissions(mode) => {
+                    native::chmodat(
+                        CWD,
+                        bound,
+                        Mode::from_raw_mode(mode.bits()),
+                        AtFlags::empty(),
                     )
-                })
-            }))
-        }
-        fn set_permissions(
-            &self,
-            path: StoragePath,
-            permissions: Permissions,
-        ) -> StorageFuture<'_, ()> {
-            let operation = Operation::SetPermissions;
-            let dir = self.dir.clone();
-            Box::pin(blocking(operation, true, move || {
-                open(operation, &dir, &path)?
-                    .set_permissions(NativePermissions::from_mode(permissions.bits()))
-                    .map_err(|cause| fs::dispatched_error(operation, cause))
-            }))
-        }
-    }
-
-    mod xattrs {
-        use super::*;
-        use ah_vfs::application::port::StorageXattrs;
-
-        use ah_vfs_storage::{XattrName, XattrWriteMode};
-        use std::num::NonZeroUsize;
-
-        fn xattr_error(operation: Operation, error: rustix::io::Errno) -> StorageError {
-            if error == rustix::io::Errno::RANGE {
-                StorageError::without_effects(
-                    operation,
-                    Failure::Rejected(Rejection::LimitExceeded),
-                    Some(Box::new(std::io::Error::from(error))),
-                )
-            } else {
-                fs::error(operation, error.into())
-            }
-        }
-        /// Linux attribute values and name lists are bounded to 64 KiB per request.
-        impl StorageXattrs for LinuxLocalStorage {
-            fn list_xattrs(
-                &self,
-                path: StoragePath,
-                max_bytes: NonZeroUsize,
-            ) -> StorageFuture<'_, Vec<XattrName>> {
-                let operation = Operation::ListXattrs;
-                let dir = self.dir.clone();
-                Box::pin(blocking(operation, false, move || {
-                    let handle = open(operation, &dir, &path)?;
-                    let mut bytes = vec![0; max_bytes.get().min(64 * 1024)];
-                    let len = rustix::fs::flistxattr(&handle, &mut bytes[..])
-                        .map_err(|cause| xattr_error(operation, cause))?;
-                    bytes.truncate(len);
-                    let mut names = bytes
-                        .split(|byte| *byte == 0)
-                        .filter(|name| !name.is_empty())
-                        .map(|name| {
-                            let name = std::str::from_utf8(name).map_err(|error| {
-                                StorageError::without_effects(
-                                    operation,
-                                    Failure::Backend(BackendFailure::UnrepresentableName),
-                                    Some(Box::new(error)),
-                                )
-                            })?;
-                            XattrName::parse(name).map_err(|error| {
-                                StorageError::without_effects(
-                                    operation,
-                                    Failure::Backend(BackendFailure::CorruptData),
-                                    Some(Box::new(error)),
-                                )
+                    .map_err(|error| native_error(op, error))?;
+                    Ok(AttributeResult::Unit)
+                }
+                AttributeAction::ListXattrs { max_bytes, .. } => {
+                    let mut bytes = vec![0; max_bytes.get().min(MAX_NATIVE_XATTR_BYTES)];
+                    let len = native::listxattr(bound, &mut bytes[..])
+                        .map_err(|error| native_error(op, error))?;
+                    let bytes = &bytes[..len];
+                    let mut names = if bytes.is_empty() {
+                        Vec::new()
+                    } else {
+                        let packed = bytes.strip_suffix(&[0]).ok_or_else(|| corrupt(op))?;
+                        packed
+                            .split(|byte| *byte == 0)
+                            .map(|name| {
+                                XattrName::from_backend_bytes(name).map_err(|reason| {
+                                    StorageError::without_effects(
+                                        op,
+                                        Failure::Backend(reason),
+                                        None,
+                                    )
+                                })
                             })
-                        })
-                        .collect::<Result<Vec<_>, StorageError>>()?;
-                    names.sort_by(|a, b| a.as_str().cmp(b.as_str()));
-                    Ok(names)
-                }))
-            }
-            fn get_xattr(
-                &self,
-                path: StoragePath,
-                name: XattrName,
-                max_bytes: NonZeroUsize,
-            ) -> StorageFuture<'_, Vec<u8>> {
-                let operation = Operation::GetXattr;
-                let dir = self.dir.clone();
-                Box::pin(blocking(operation, false, move || {
-                    let handle = open(operation, &dir, &path)?;
-                    let mut bytes = vec![0; max_bytes.get().min(64 * 1024)];
-                    let len = rustix::fs::fgetxattr(&handle, name.as_str(), &mut bytes[..])
-                        .map_err(|cause| xattr_error(operation, cause))?;
-                    bytes.truncate(len);
-                    Ok(bytes)
-                }))
-            }
-            fn set_xattr(
-                &self,
-                path: StoragePath,
-                name: XattrName,
-                value: Vec<u8>,
-                mode: XattrWriteMode,
-            ) -> StorageFuture<'_, ()> {
-                let operation = Operation::SetXattr;
-                let dir = self.dir.clone();
-                Box::pin(blocking(operation, true, move || {
-                    if value.len() > 64 * 1024 {
-                        return Err(StorageError::without_effects(
-                            operation,
-                            Failure::Rejected(Rejection::LimitExceeded),
-                            None,
-                        ));
-                    }
-                    let handle = open(operation, &dir, &path)?;
-                    let flags = match mode {
-                        XattrWriteMode::Upsert => rustix::fs::XattrFlags::empty(),
-                        XattrWriteMode::CreateNew => rustix::fs::XattrFlags::CREATE,
-                        XattrWriteMode::Replace => rustix::fs::XattrFlags::REPLACE,
+                            .collect::<Result<Vec<_>, _>>()?
                     };
-                    rustix::fs::fsetxattr(&handle, name.as_str(), &value, flags).map_err(|cause| {
-                        StorageError::after_dispatch(
-                            operation,
-                            crate::error::io_failure(&std::io::Error::from(cause)),
-                            Some(Box::new(std::io::Error::from(cause))),
-                        )
-                    })
-                }))
+                    names.sort_unstable();
+                    XattrList::new(names, max_bytes)
+                        .map(AttributeResult::Names)
+                        .map_err(|_| corrupt(op))
+                }
+                AttributeAction::GetXattr {
+                    name, max_bytes, ..
+                } => {
+                    let mut bytes = vec![0; max_bytes.get().min(MAX_NATIVE_XATTR_BYTES)];
+                    let len = native::getxattr(bound, name.as_str(), &mut bytes[..])
+                        .map_err(|error| native_error(op, error))?;
+                    bytes.truncate(len);
+                    Ok(AttributeResult::Value(bytes))
+                }
+                AttributeAction::SetXattr {
+                    name, value, mode, ..
+                } => {
+                    let flags = match mode {
+                        XattrWriteMode::Upsert => XattrFlags::empty(),
+                        XattrWriteMode::CreateNew => XattrFlags::CREATE,
+                        XattrWriteMode::Replace => XattrFlags::REPLACE,
+                    };
+                    native::setxattr(bound, name.as_str(), &value, flags)
+                        .map_err(|error| native_error(op, error))?;
+                    Ok(AttributeResult::Unit)
+                }
+                AttributeAction::RemoveXattr(name) => {
+                    native::removexattr(bound, name.as_str())
+                        .map_err(|error| native_error(op, error))?;
+                    Ok(AttributeResult::Unit)
+                }
+                _ => Err(rejected(op, Rejection::Unsupported)),
             }
-            fn remove_xattr(&self, path: StoragePath, name: XattrName) -> StorageFuture<'_, ()> {
-                let operation = Operation::RemoveXattr;
-                let dir = self.dir.clone();
-                Box::pin(blocking(operation, true, move || {
-                    let handle = open(operation, &dir, &path)?;
-                    rustix::fs::fremovexattr(&handle, name.as_str()).map_err(|cause| {
-                        StorageError::after_dispatch(
-                            operation,
-                            crate::error::io_failure(&std::io::Error::from(cause)),
-                            Some(Box::new(std::io::Error::from(cause))),
-                        )
-                    })
-                }))
-            }
-        }
+        }))
     }
+}
+
+fn rejected(op: Operation, reason: Rejection) -> StorageError {
+    StorageError::without_effects(op, Failure::Rejected(reason), None)
+}
+
+fn corrupt(op: Operation) -> StorageError {
+    StorageError::without_effects(op, Failure::Backend(BackendFailure::CorruptData), None)
+}
+
+fn native_error(op: Operation, cause: Errno) -> StorageError {
+    let reason = match cause {
+        Errno::RANGE | Errno::TOOBIG => Rejection::LimitExceeded,
+        Errno::NOSYS | Errno::OPNOTSUPP | Errno::NOENT => Rejection::Unsupported,
+        Errno::INVAL
+            if matches!(
+                op,
+                Operation::GetXattr | Operation::SetXattr | Operation::RemoveXattr
+            ) =>
+        {
+            Rejection::UnsupportedName
+        }
+        Errno::ACCESS | Errno::PERM | Errno::ROFS => Rejection::AccessDenied,
+        Errno::NODATA => Rejection::AttributeNotFound,
+        Errno::EXIST => Rejection::AlreadyExists,
+        Errno::NOSPC | Errno::DQUOT => return fs::error(op, cause.into()),
+        _ => return fs::dispatched_error(op, cause.into()),
+    };
+    StorageError::without_effects(
+        op,
+        Failure::Rejected(reason),
+        Some(Box::new(std::io::Error::from(cause))),
+    )
 }

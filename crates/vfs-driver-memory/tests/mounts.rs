@@ -442,7 +442,7 @@ async fn capacity_and_unsupported_attribute_failures_reach_vfs_as_domain_errors(
     );
     let error = f
         .entries
-        .get_permissions(&virtual_path("/small")?)
+        .attribute("/small", ah_vfs_storage::AttributeAction::GetPermissions)
         .await
         .err()
         .ok_or("unsupported")?;
@@ -452,7 +452,10 @@ async fn capacity_and_unsupported_attribute_failures_reach_vfs_as_domain_errors(
     );
     let error = f
         .entries
-        .list_xattrs(&virtual_path("/small")?, NonZeroUsize::MIN)
+        .attribute(
+            "/small",
+            ah_vfs_storage::AttributeAction::list_xattrs(NonZeroUsize::MIN),
+        )
         .await
         .err()
         .ok_or("unsupported")?;

@@ -200,7 +200,7 @@ fn bounds_apply_to_control_data_and_nested_configuration() {
 fn exported_descriptor_contains_the_complete_language_independent_contract() -> Result {
     let descriptor = prost_types::FileDescriptorSet::decode(p::FILE_DESCRIPTOR_SET)?;
     let file = descriptor.file.first().ok_or("schema")?;
-    assert_eq!(file.package.as_deref(), Some("assethub.vfs.v10"));
+    assert_eq!(file.package.as_deref(), Some("assethub.vfs.v11"));
     let storage_info = file
         .message_type
         .iter()
@@ -239,11 +239,11 @@ fn exported_descriptor_contains_the_complete_language_independent_contract() -> 
     for method in &file.service.first().ok_or("Plugin")?.method {
         assert_eq!(
             method.input_type.as_deref(),
-            Some(".assethub.vfs.v10.Request")
+            Some(".assethub.vfs.v11.Request")
         );
         assert_eq!(
             method.output_type.as_deref(),
-            Some(".assethub.vfs.v10.Reply")
+            Some(".assethub.vfs.v11.Reply")
         );
     }
     Ok(())
@@ -495,6 +495,159 @@ fn mutations_round_trip_shared_bindings_and_reject_non_entry_operands() -> Resul
             Err(p::CodecError::InvalidData)
         ));
     }
+    Ok(())
+}
+
+#[test]
+fn attribute_requests_preserve_lookup_and_move_binary_values_without_copying() -> Result {
+    use ah_vfs_storage as d;
+    use d::AttributeAction as A;
+    use std::num::NonZeroUsize;
+
+    let base = d::StoragePath::parse("work/sub")?;
+    let links = d::IntermediateSymlinks::Reject;
+    let path = d::PathExpr::parse("../entry/")?;
+    let name = d::XattrName::parse("user.key")?;
+    let max = NonZeroUsize::new(1024).ok_or("limit")?;
+    for action in [
+        A::GetPermissions,
+        A::SetPermissions(d::Permissions::new(0o754)?),
+        A::list_xattrs(max),
+        A::get_xattr(name.clone(), max),
+        A::set_xattr(name.clone(), vec![], d::XattrWriteMode::Upsert),
+        A::set_xattr(name.clone(), vec![0, 255, 0], d::XattrWriteMode::Replace),
+        A::RemoveXattr(name.clone()),
+    ] {
+        let original = d::AttributeRequest::new(path.clone(), action);
+        let copy = original.clone();
+        let pointer = match original.action() {
+            A::SetXattr { value, .. } => Some(value.as_ptr()),
+            _ => None,
+        };
+        let (wire, data) = p::encode_attribute(original, &base, links)?;
+        if let Some(pointer) = pointer {
+            assert_eq!(data.as_ptr(), pointer);
+        }
+        let (decoded, decoded_base, decoded_links) = p::decode_attribute(wire, data)?;
+        if let A::SetXattr { value, .. } = decoded.action() {
+            assert_eq!(Some(value.as_ptr()), pointer);
+        }
+        assert_eq!(
+            (decoded, decoded_base, decoded_links),
+            (copy, base.clone(), links)
+        );
+    }
+
+    let lookup = Some(p::encode_lookup(&path, &base, links));
+    for wire in [
+        p::StorageOp::SetPermissions(p::SetPermissions {
+            lookup: lookup.clone(),
+            mode: 0o100644,
+        }),
+        p::StorageOp::GetXattr(p::GetXattr {
+            lookup: lookup.clone(),
+            name: "user.key".into(),
+            max_bytes: 0,
+        }),
+        p::StorageOp::SetXattr(p::SetXattr {
+            lookup: lookup.clone(),
+            name: "user.key".into(),
+            mode: 0,
+        }),
+        p::StorageOp::RemoveXattr(p::RemoveXattr {
+            lookup: lookup.clone(),
+            name: "user.\0bad".into(),
+        }),
+        p::StorageOp::ListXattrs(p::ListXattrs {
+            lookup,
+            max_bytes: (p::MAX_ATTRIBUTE_NAMES_BYTES + 1).try_into()?,
+        }),
+    ] {
+        assert!(matches!(
+            p::encode_request(
+                "generation",
+                &Op::Storage(p::StorageCall {
+                    handle: 1,
+                    operation: Some(wire),
+                }),
+                vec![]
+            ),
+            Err(p::CodecError::InvalidData)
+        ));
+    }
+    let request = d::AttributeRequest::new(
+        path.clone(),
+        A::set_xattr(
+            name,
+            vec![0; p::MAX_DATA_BYTES + 1],
+            d::XattrWriteMode::CreateNew,
+        ),
+    );
+    assert!(matches!(
+        p::encode_attribute(request, &base, links),
+        Err(p::AttributeValueError::Limit)
+    ));
+    let request = d::AttributeRequest::new(path, A::list_xattrs(NonZeroUsize::MAX));
+    let (wire, data) = p::encode_attribute(request, &base, links)?;
+    let (bounded, _, _) = p::decode_attribute(wire, data)?;
+    assert!(matches!(bounded.action(), A::ListXattrs { max_bytes, .. }
+        if max_bytes.get() == p::MAX_ATTRIBUTE_NAMES_BYTES));
+    Ok(())
+}
+
+#[test]
+fn attribute_replies_apply_limits_before_decoding_and_preserve_empty_values() -> Result {
+    use ah_vfs_storage::{AttributeExpectation as E, AttributeResult as R, XattrList, XattrName};
+    use std::num::NonZeroUsize;
+    let limit = NonZeroUsize::new(20).ok_or("limit")?;
+    let names = XattrList::new(
+        vec![XattrName::parse("user.a")?, XattrName::parse("user.b")?],
+        limit,
+    )?;
+    let reply = p::encode_attribute_result(E::Names(limit), R::Names(names.clone()))?;
+    assert_eq!(
+        p::decode_attribute_result(E::Names(limit), reply)?,
+        R::Names(names)
+    );
+    let empty = XattrList::new(vec![], limit)?;
+    let reply = p::encode_attribute_result(E::Names(limit), R::Names(empty.clone()))?;
+    assert_eq!(
+        p::decode_attribute_result(E::Names(limit), reply)?,
+        R::Names(empty)
+    );
+    let reply = p::encode_attribute_result(E::Value(limit), R::Value(vec![]))?;
+    assert_eq!(
+        p::decode_attribute_result(E::Value(limit), reply)?,
+        R::Value(vec![])
+    );
+    for payload in [
+        b"user.a\0user.a\0".as_slice(),
+        b"user.b\0user.a\0",
+        b"\xff\0",
+        b"a",
+        b"\0",
+        &[b'a'; 21],
+    ] {
+        let reply = p::Reply {
+            result: Some(p::Value::Names(p::Empty {})),
+            data: payload.to_vec(),
+        };
+        assert!(p::decode_attribute_result(E::Names(limit), reply).is_err());
+    }
+    let reply = p::Reply {
+        result: Some(p::Value::Bytes(p::Empty {})),
+        data: vec![7; 21],
+    };
+    assert!(p::decode_attribute_result(E::Value(limit), reply).is_err());
+    let reply = p::Reply {
+        result: Some(p::Value::Names(p::Empty {})),
+        data: vec![0; p::MAX_ATTRIBUTE_NAMES_BYTES + 1],
+    };
+    assert!(matches!(
+        p::validate_reply(&reply),
+        Err(p::CodecError::TooLarge)
+    ));
+    assert!(p::decode_attribute_result(E::Names(NonZeroUsize::MAX), reply).is_err());
     Ok(())
 }
 

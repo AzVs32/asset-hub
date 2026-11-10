@@ -1,6 +1,7 @@
 //! Exact portable attribute values; no request/response error classification.
 use super::{
-    BackendFailure, Operation, PathExpr, PathLookup, SymlinkAction, lookup::ExistingTarget,
+    BackendFailure, ContractViolation, Operation, PathExpr, PathLookup, SymlinkAction,
+    lookup::ExistingTarget,
 };
 use getset::Getters;
 use std::num::NonZeroUsize;
@@ -113,6 +114,28 @@ impl AttributeAction {
     pub fn set_xattr(name: XattrName, value: Vec<u8>, mode: XattrWriteMode) -> Self {
         Self::SetXattr { name, value, mode }
     }
+    pub fn operation(&self) -> Operation {
+        match self {
+            AttributeAction::GetPermissions => Operation::GetPermissions,
+            AttributeAction::SetPermissions(_) => Operation::SetPermissions,
+            AttributeAction::ListXattrs { .. } => Operation::ListXattrs,
+            AttributeAction::GetXattr { .. } => Operation::GetXattr,
+            AttributeAction::SetXattr { .. } => Operation::SetXattr,
+            AttributeAction::RemoveXattr(_) => Operation::RemoveXattr,
+        }
+    }
+
+    /// The expected result alternative and the request's bound on its contents.
+    pub fn expectation(&self) -> AttributeExpectation {
+        match self {
+            Self::GetPermissions => AttributeExpectation::Permissions,
+            Self::ListXattrs { max_bytes, .. } => AttributeExpectation::Names(*max_bytes),
+            Self::GetXattr { max_bytes, .. } => AttributeExpectation::Value(*max_bytes),
+            Self::SetPermissions(_) | Self::SetXattr { .. } | Self::RemoveXattr(_) => {
+                AttributeExpectation::Unit
+            }
+        }
+    }
 }
 
 /// An attribute request addresses the final directory entry itself.
@@ -139,18 +162,47 @@ impl AttributeRequest {
     }
 
     pub fn operation(&self) -> Operation {
-        match self.action {
-            AttributeAction::GetPermissions => Operation::GetPermissions,
-            AttributeAction::SetPermissions(_) => Operation::SetPermissions,
-            AttributeAction::ListXattrs { .. } => Operation::ListXattrs,
-            AttributeAction::GetXattr { .. } => Operation::GetXattr,
-            AttributeAction::SetXattr { .. } => Operation::SetXattr,
-            AttributeAction::RemoveXattr(_) => Operation::RemoveXattr,
-        }
+        self.action.operation()
     }
 
     pub fn lookup(&self) -> PathLookup<'_> {
         PathLookup::new(&self.path, SymlinkAction::Preserve, ExistingTarget::Any)
+    }
+}
+
+/// A completed attribute operation. Empty binary data and an empty list are valid.
+#[derive(Debug, Eq, PartialEq)]
+pub enum AttributeResult {
+    Permissions(Permissions),
+    Names(XattrList),
+    Value(Vec<u8>),
+    Unit,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AttributeExpectation {
+    Permissions,
+    Names(NonZeroUsize),
+    Value(NonZeroUsize),
+    Unit,
+}
+
+impl AttributeExpectation {
+    pub fn validate(self, result: &AttributeResult) -> Result<(), ContractViolation> {
+        let valid = match (self, result) {
+            (Self::Permissions, AttributeResult::Permissions(_))
+            | (Self::Unit, AttributeResult::Unit) => true,
+            (Self::Names(limit), AttributeResult::Names(names)) => {
+                names.encoded_len() <= limit.get()
+            }
+            (Self::Value(limit), AttributeResult::Value(value)) => value.len() <= limit.get(),
+            _ => false,
+        };
+        if valid {
+            Ok(())
+        } else {
+            Err(ContractViolation::InvalidAttributes)
+        }
     }
 }
 
@@ -181,6 +233,9 @@ impl XattrList {
             }
         }
         Ok(Self(names))
+    }
+    pub fn encoded_len(&self) -> usize {
+        self.0.iter().map(|name| name.as_str().len() + 1).sum()
     }
     pub fn names(&self) -> &[XattrName] {
         &self.0
