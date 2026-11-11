@@ -1,7 +1,7 @@
 //! Bounded directory bindings for backends that pin native directory handles.
 use ah_vfs_storage::{
-    BackendFailure, DirectoryIdentity, DirectorySelection, Failure, Operation, StorageError,
-    StoragePath,
+    BackendFailure, DirectoryIdentity, DirectorySelection, Failure, Operation, Rejection,
+    StorageError, StoragePath,
 };
 use std::{collections::VecDeque, sync::Mutex};
 
@@ -37,11 +37,15 @@ impl<H> DirectoryBindings<H> {
         let mut bindings = self.bindings.lock().map_err(|_| lock_error())?;
         let identity = if let Some(index) = bindings
             .iter()
-            .position(|item| item.selection.address() == &address)
+            .rposition(|item| item.selection.address() == &address)
         {
             let previous = &bindings[index];
             let identity = same(&previous.handle, &handle)?.then(|| previous.selection.identity());
-            bindings.remove(index);
+            // Keep a replaced incarnation until verification or eviction. An
+            // in-flight operation can then distinguish replacement from expiry.
+            if identity.is_some() {
+                bindings.remove(index);
+            }
             identity
         } else {
             None
@@ -62,10 +66,13 @@ impl<H> DirectoryBindings<H> {
         Ok(selection)
     }
 
+    /// A changed selection conflicts during the initial operation. Resuming an
+    /// earlier page requires its original directory, so its cursor expires.
     pub fn verify(
         &self,
         selection: &DirectorySelection,
         handle: &H,
+        resuming: bool,
         same: impl FnOnce(&H, &H) -> Result<bool, StorageError>,
     ) -> Result<(), StorageError> {
         let mut bindings = self.bindings.lock().map_err(|_| lock_error())?;
@@ -79,6 +86,13 @@ impl<H> DirectoryBindings<H> {
             {
                 bindings.push_back(binding);
                 return Ok(());
+            }
+            if !resuming {
+                return Err(StorageError::without_effects(
+                    Operation::List,
+                    Failure::Rejected(Rejection::Conflict),
+                    None,
+                ));
             }
         }
         Err(StorageError::without_effects(

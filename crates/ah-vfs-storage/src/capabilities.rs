@@ -168,6 +168,19 @@ impl AttributeSupport {
     }
 }
 
+/// The guarantee against replacement of the final name before a mutation.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum MutationBinding {
+    /// The parent is fixed and the final slot is checked before the mutation.
+    /// Another writer can replace that slot between the check and the effect.
+    #[default]
+    ParentPinned,
+    /// The final slot is checked atomically with the effect. A mismatch is
+    /// rejected as [`Rejection::Conflict`] before any effect occurs.
+    FinalSlotAtomic,
+}
+
 /// Driver-wide operation and guarantee declarations, shared by all instances.
 /// Composition is infallible because each supported mode carries its prerequisites.
 /// The default declaration supports no operations. Each `with_*` method
@@ -187,6 +200,7 @@ pub struct Capabilities {
     rename: RenameSupport,
     permissions: AttributeSupport,
     xattrs: AttributeSupport,
+    mutation_binding: MutationBinding,
 }
 impl Capabilities {
     pub fn with_stat(mut self, stat: bool) -> Self {
@@ -236,6 +250,11 @@ impl Capabilities {
 
     pub fn with_xattrs(mut self, xattrs: AttributeSupport) -> Self {
         self.xattrs = xattrs;
+        self
+    }
+
+    pub fn with_mutation_binding(mut self, mutation_binding: MutationBinding) -> Self {
+        self.mutation_binding = mutation_binding;
         self
     }
 

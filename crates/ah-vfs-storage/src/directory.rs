@@ -153,10 +153,10 @@ impl ListRequest {
         &self,
         selection: DirectorySelection,
     ) -> Result<BoundListRequest<'_>, BackendFailure> {
-        if let ListTarget::Continue(cursor) = &self.target {
-            if cursor.selection != selection {
-                return Err(BackendFailure::Stale);
-            }
+        if let ListTarget::Continue(cursor) = &self.target
+            && cursor.selection != selection
+        {
+            return Err(BackendFailure::Stale);
         }
         Ok(BoundListRequest {
             request: self,

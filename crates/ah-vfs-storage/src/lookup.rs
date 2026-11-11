@@ -1,12 +1,5 @@
 //! Lookup rules derived from a concrete operation request.
-use super::{
-    BackendFailure, EntryType, Failure, LookupStart, MAX_PATH_BYTES, MAX_PATH_EXPR_BYTES,
-    NameError, PathComponent, PathExpr, PathExprError, Rejection, StoragePath,
-};
-
-/// Maximum number of link expansions in one operation, across both operands
-/// of a rename and any links encountered inside other links' targets.
-pub const MAX_SYMLINK_EXPANSIONS: u8 = 40;
+use super::{EntryType, PathExpr, Rejection, StoragePath};
 
 /// The execution context selects a policy for links before the final component.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -26,7 +19,7 @@ pub enum SymlinkAction {
 }
 
 /// The exact bytes stored in a symbolic link. Reading a link preserves its
-/// contents even when they cannot be interpreted as a storage path operand.
+/// contents, including bytes that are invalid UTF-8.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LinkTarget(Vec<u8>);
 
@@ -42,96 +35,6 @@ impl LinkTarget {
     pub fn into_bytes(self) -> Vec<u8> {
         self.0
     }
-
-    /// Prepare a followed link's target. Interpret a relative target from the
-    /// containing directory's identity and an absolute target from the bound
-    /// instance root. `pending` contains all unvisited components after the
-    /// link, including suffixes from enclosing expansions.
-    /// Parse the stored bytes as the logical path grammar without native
-    /// separator conversion or name normalization. During the walk, apply
-    /// the same exact-name and native-limit rules as for the original operand.
-    ///
-    /// The returned expression is only the target segment. Walk it before
-    /// resuming the suffix, retaining its directory requirement and keeping
-    /// the boundary so missing target components cannot be created. Enforce
-    /// the directory requirement of the original operand at its own end.
-    ///
-    /// The expanded length counts the relative base address (if any), target
-    /// components and pending components, joined by single separators. It
-    /// excludes the leading and trailing slash, and counts dot components as
-    /// written before traversal. Each selected address is also length checked.
-    pub fn prepare_lookup(
-        &self,
-        containing_directory: &StoragePath,
-        pending: &[PathComponent],
-    ) -> Result<PathExpr, Failure> {
-        let too_long = Failure::Rejected(Rejection::PathTooLong);
-        if self.0.len() > MAX_PATH_EXPR_BYTES {
-            return Err(too_long);
-        }
-        let unrepresentable = Failure::Backend(BackendFailure::UnrepresentableLinkTarget);
-        let text = std::str::from_utf8(&self.0).map_err(|_| unrepresentable)?;
-        let target = PathExpr::parse(text).map_err(|error| match error {
-            PathExprError::TooLong | PathExprError::InvalidName(NameError::TooLong) => too_long,
-            PathExprError::Empty | PathExprError::InvalidName(_) => unrepresentable,
-        })?;
-
-        let mut length = match target.start() {
-            LookupStart::InstanceRoot => 0,
-            LookupStart::BaseDirectory => containing_directory.as_str().len(),
-        };
-        for component in target.components().iter().chain(pending) {
-            length += usize::from(length != 0) + component.encoded_len();
-            if length > MAX_PATH_BYTES {
-                return Err(too_long);
-            }
-        }
-        Ok(target)
-    }
-}
-
-/// The intermediate-link policy and expansion budget for one operation.
-/// Use one value for all walks in that operation, including rename's two
-/// operands. Following a cycle exhausts the same budget as any long chain.
-#[derive(Debug, Default)]
-pub struct SymlinkTraversal {
-    intermediate: IntermediateSymlinks,
-    followed: u8,
-}
-
-impl SymlinkTraversal {
-    pub fn new(intermediate: IntermediateSymlinks) -> Self {
-        Self {
-            intermediate,
-            followed: 0,
-        }
-    }
-
-    /// Decide what to do before reading a link's target. `pending` contains
-    /// all unvisited components from the effective walk. A directory assertion
-    /// such as a trailing slash is not a component. Apply the same decision
-    /// after expansion, including to links introduced by the target segment.
-    pub fn encounter(
-        &mut self,
-        lookup: PathLookup<'_>,
-        pending: &[PathComponent],
-    ) -> Result<SymlinkAction, Rejection> {
-        let action = if pending.is_empty() {
-            lookup.final_symlink()
-        } else {
-            match self.intermediate {
-                IntermediateSymlinks::FollowWithinInstance => SymlinkAction::FollowWithinInstance,
-                IntermediateSymlinks::Reject => return Err(Rejection::SymlinkNotAllowed),
-            }
-        };
-        if action == SymlinkAction::FollowWithinInstance {
-            if self.followed == MAX_SYMLINK_EXPANSIONS {
-                return Err(Rejection::TooManySymlinks);
-            }
-            self.followed += 1;
-        }
-        Ok(action)
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -140,7 +43,6 @@ pub(super) enum ExistingTarget {
     Absent,
     Directory,
     RegularFile,
-    Symlink,
     NonDirectory,
 }
 
@@ -257,15 +159,11 @@ impl<'a> PathLookup<'a> {
                 EntryType::Directory => Err(Rejection::IsDirectory),
                 EntryType::Symlink | EntryType::Other => Err(Rejection::NotRegularFile),
             },
-            ExistingTarget::Symlink if entry_type != EntryType::Symlink => {
-                Err(Rejection::NotSymlink)
-            }
             ExistingTarget::NonDirectory if entry_type == EntryType::Directory => {
                 Err(Rejection::IsDirectory)
             }
             ExistingTarget::Any
             | ExistingTarget::Directory
-            | ExistingTarget::Symlink
             | ExistingTarget::NonDirectory => Ok(()),
         }
     }

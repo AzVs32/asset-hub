@@ -6,7 +6,7 @@ use ah_vfs_storage::{
     ListRequest,
 };
 use ah_vfs_storage::{
-    Entry, IntermediateSymlinks, LinkTarget, ReadLinkRequest, ReadRequest, StatRequest,
+    Entry, IntermediateSymlinks, LinkTarget, PathExpr, ReadLinkRequest, ReadRequest, StatRequest,
     StoragePath, WriteRequest,
 };
 use ah_vfs_storage::{Failure, Operation, Rejection, StorageError};
@@ -55,13 +55,23 @@ pub trait Storage: Send + Sync {
         unsupported(Operation::Stat)
     }
 
-    /// Read the exact stored bytes of the selected link.
-    fn read_link(
+    /// Resolve an operand while preserving its final link and retain the backend's binding.
+    fn bind_link(
         &self,
-        _request: ReadLinkRequest,
+        _operand: PathExpr,
         _context: LookupContext,
-    ) -> StorageFuture<'_, LinkTarget> {
+    ) -> StorageFuture<'_, Box<dyn BoundLink>> {
         unsupported(Operation::ReadLink)
+    }
+
+    /// Resolve and read one link within the binding created for this operation.
+    fn read_link(&self, operand: PathExpr, context: LookupContext) -> StorageFuture<'_, LinkTarget> {
+        Box::pin(async move {
+            let binding = self.bind_link(operand, context).await?;
+            binding
+                .read(ReadLinkRequest::new(binding.path().clone()))
+                .await
+        })
     }
 
     /// Resolve the initial operand or independently verify the cursor's directory.
@@ -142,6 +152,16 @@ pub trait Storage: Send + Sync {
     ) -> StorageFuture<'_, Entry> {
         unsupported(Operation::Rename)
     }
+}
+
+/// One backend-selected link and its namespace observations. Callers cannot
+/// attach this binding to a different storage handle or address.
+pub trait BoundLink: Send + Sync {
+    fn path(&self) -> &StoragePath;
+
+    /// Read from the bound link and verify the observed namespace. A request
+    /// with a different address is a caller contract violation.
+    fn read(&self, request: ReadLinkRequest) -> StorageFuture<'_, LinkTarget>;
 }
 
 /// A backend file read session retained for the lifetime of the stream.

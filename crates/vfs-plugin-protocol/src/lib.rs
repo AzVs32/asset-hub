@@ -1,6 +1,6 @@
 //! Shared protobuf messages, validation and VFS protocol semantics.
 pub mod wire {
-    include!(concat!(env!("OUT_DIR"), "/assethub.vfs.v11.rs"));
+    include!(concat!(env!("OUT_DIR"), "/assethub.vfs.v12.rs"));
 }
 pub use wire::*;
 pub use wire::{reply::Result as Value, request::Operation, storage_call::Operation as StorageOp};
@@ -16,9 +16,9 @@ pub use attributes::{
 pub use codec::*;
 pub use directory::*;
 pub use lookup::{
-    LookupValueError, decode_create_directory, decode_lookup, decode_read, decode_read_link,
+    LookupValueError, decode_bind_link, decode_create_directory, decode_lookup, decode_read,
     decode_remove, decode_rename, decode_stat, decode_write, encode_create_directory,
-    encode_link_target, encode_lookup, encode_read, encode_read_link, encode_remove, encode_rename,
+    encode_bind_link, encode_link_target, encode_lookup, encode_read, encode_remove, encode_rename,
     encode_stat, encode_write,
 };
 pub use values::{
@@ -30,7 +30,7 @@ pub const FILE_DESCRIPTOR_SET: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "
 /// JSON values at application/configuration boundaries, never a wire message.
 pub type JsonObject = std::collections::BTreeMap<String, serde_json::Value>;
 
-pub const PROTOCOL_MAJOR: u32 = 11;
+pub const PROTOCOL_MAJOR: u32 = 12;
 pub const PROTOCOL_MINOR: u32 = 0;
 pub const MAX_CONTROL_BYTES: usize = 1024 * 1024;
 pub const MAX_DATA_BYTES: usize = 8 * 1024 * 1024;
@@ -183,9 +183,16 @@ impl Operation {
                 | Self::WriterChunk(_)
                 | Self::Commit(_)
                 | Self::Abort(_)
+                | Self::ReadBoundLink(_)
                 | Self::Release(_)
         )
     }
+    /// Whether the reply can allocate a new resource in this session.
+    pub fn allocates_resource(&self) -> bool {
+        matches!(self, Self::Open(_) | Self::Read(_) | Self::Write(_))
+            || matches!(self, Self::Storage(call) if matches!(call.operation, Some(StorageOp::BindLink(_))))
+    }
+
     /// Check the result alternative before exposing a transport response.
     pub fn accepts_reply(&self, value: &Value) -> bool {
         match self {
@@ -203,6 +210,7 @@ impl Operation {
             Self::Write(_) => matches!(value, Value::Writer(_)),
             Self::ReaderNext(_) => matches!(value, Value::Chunk(_)),
             Self::Commit(_) => matches!(value, Value::Entry(_)),
+            Self::ReadBoundLink(_) => matches!(value, Value::Bytes(_)),
             Self::Storage(call) => match &call.operation {
                 Some(StorageOp::Stat(_) | StorageOp::CreateDirectory(_) | StorageOp::Rename(_)) => {
                     matches!(value, Value::Entry(_))
@@ -211,9 +219,8 @@ impl Operation {
                 Some(StorageOp::SelectDirectory(_)) => matches!(value, Value::SelectedDirectory(_)),
                 Some(StorageOp::GetPermissions(_)) => matches!(value, Value::Permissions(_)),
                 Some(StorageOp::ListXattrs(_)) => matches!(value, Value::Names(_)),
-                Some(StorageOp::GetXattr(_) | StorageOp::ReadLink(_)) => {
-                    matches!(value, Value::Bytes(_))
-                }
+                Some(StorageOp::GetXattr(_)) => matches!(value, Value::Bytes(_)),
+                Some(StorageOp::BindLink(_)) => matches!(value, Value::BoundLink(_)),
                 Some(
                     StorageOp::Remove(_)
                     | StorageOp::SetPermissions(_)
@@ -234,7 +241,7 @@ impl StorageOp {
         use ah_vfs_storage::Operation as D;
         match self {
             Self::Stat(_) => D::Stat,
-            Self::ReadLink(_) => D::ReadLink,
+            Self::BindLink(_) => D::ReadLink,
             Self::List(_) | Self::SelectDirectory(_) => D::List,
             Self::CreateDirectory(_) => D::CreateDirectory,
             Self::Remove(_) => D::Remove,
@@ -254,6 +261,7 @@ impl Operation {
         match self {
             Self::Storage(call) => call.operation.as_ref().map(StorageOp::storage_operation),
             Self::Read(_) | Self::ReaderNext(_) => Some(D::Read),
+            Self::ReadBoundLink(_) => Some(D::ReadLink),
             Self::Write(_) | Self::WriterChunk(_) | Self::Commit(_) | Self::Abort(_) => {
                 Some(D::Write)
             }

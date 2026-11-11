@@ -11,8 +11,8 @@ use ah_vfs::application::port::{
 use ah_vfs::domain::DriverKey;
 use ah_vfs::domain::namespace::ChildMountPolicy;
 use ah_vfs_storage::{
-    AttributeSupport, Capabilities, DirectorySupport, ReadSupport, RenameSupport, WriteModes,
-    WriteSupport,
+    AttributeSupport, Capabilities, DirectorySupport, MutationBinding, ReadSupport, RenameSupport,
+    WriteModes, WriteSupport,
 };
 
 use std::{
@@ -36,6 +36,7 @@ impl LinuxLocalDriver {
             .with_directories(DirectorySupport::hierarchical(true, true))
             .with_remove(true)
             .with_rename(RenameSupport::Both)
+            .with_mutation_binding(MutationBinding::ParentPinned)
             .with_permissions(AttributeSupport::ReadWrite)
             .with_xattrs(AttributeSupport::ReadWrite)
     }

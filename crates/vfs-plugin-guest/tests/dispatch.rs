@@ -95,16 +95,18 @@ impl GuestStorage for Store {
     ) -> Result<ah_vfs_storage::Entry> {
         direct_stat(request, base, links, |_| entry(0))
     }
-    fn read_link(
+    fn bind_link(
         &self,
-        request: &ah_vfs_storage::ReadLinkRequest,
+        operand: &PathExpr,
         base: &StoragePath,
         links: IntermediateSymlinks,
-    ) -> Result<ah_vfs_storage::LinkTarget> {
-        assert_eq!(request.path().to_string(), "../opaque");
+    ) -> Result<Link> {
+        assert_eq!(operand.to_string(), "../opaque");
         assert_eq!(base.as_str(), "work/sub");
         assert_eq!(links, IntermediateSymlinks::Reject);
-        Ok(ah_vfs_storage::LinkTarget::new(vec![0xff, b'/']))
+        let path = StoragePath::parse("work/opaque")
+            .map_err(|_| p::Failure::new(p::FailureCode::InvalidRequest))?;
+        Ok(Link::new(OpaqueLink(path)))
     }
     fn read(
         &self,
@@ -501,25 +503,56 @@ fn storage_failure(error: StorageError) -> p::Failure {
     vfs_plugin_guest::api::Failure::from(error).into()
 }
 
+struct OpaqueLink(StoragePath);
+impl GuestLink for OpaqueLink {
+    fn path(&self) -> &StoragePath {
+        &self.0
+    }
+
+    fn read(&self, request: ah_vfs_storage::ReadLinkRequest) -> Result<ah_vfs_storage::LinkTarget> {
+        assert_eq!(request.path(), &self.0);
+        Ok(ah_vfs_storage::LinkTarget::new(vec![0xff, b'/']))
+    }
+}
+
 #[test]
 fn read_link_uses_the_typed_guest_port_and_preserves_opaque_bytes() -> TestResult {
     let mut dispatcher = setup()?;
     let storage = open(&mut dispatcher, false)?;
-    let request = ah_vfs_storage::ReadLinkRequest::new(PathExpr::parse("../opaque")?);
+    let operand = PathExpr::parse("../opaque")?;
     let reply = call(
         &mut dispatcher,
         Op::Storage(p::StorageCall {
             handle: storage,
-            operation: Some(p::StorageOp::ReadLink(p::encode_read_link(
-                &request,
+            operation: Some(p::StorageOp::BindLink(p::encode_bind_link(
+                &operand,
                 &StoragePath::parse("work/sub")?,
                 IntermediateSymlinks::Reject,
             ))),
         }),
         vec![],
     )?;
+    let Some(Value::BoundLink(link)) = reply.result else {
+        return Err("expected link binding".into());
+    };
+    let reply = call(&mut dispatcher, Op::ReadBoundLink(p::Handle { handle: link.handle }), vec![])?;
     assert!(matches!(reply.result, Some(Value::Bytes(_))));
     assert_eq!(reply.data, [0xff, b'/']);
+    call(&mut dispatcher, Op::Release(p::ResourceRef {
+        kind: p::ResourceKind::Link.into(),
+        handle: link.handle,
+    }), vec![])?;
+    let request = p::encode_request(
+        "generation",
+        &Op::ReadBoundLink(p::Handle { handle: link.handle }),
+        vec![],
+    )?;
+    let failure = p::decode_reply(&dispatcher.call(&request))?.err().ok_or("released binding worked")?;
+    assert_eq!(failure, storage_failure(StorageError::without_effects(
+        Operation::ReadLink,
+        Failure::Backend(BackendFailure::Stale),
+        None,
+    )));
     Ok(())
 }
 

@@ -401,7 +401,7 @@ impl Client {
             ah_vfs_storage::ListTarget::Continue(cursor) => {
                 let metadata = self
                     .stat(cursor.selection().address().as_str())
-                    .map_err(|error| self.list_stale(error))?;
+                    .map_err(|error| self.list_replaced(error, true))?;
                 if metadata.entry.entry_type() != EntryType::Directory {
                     return Err(context.failure(Failure::Backend(BackendFailure::Stale)));
                 }
@@ -423,15 +423,14 @@ impl Client {
         Ok(selection)
     }
 
-    fn list_stale(&self, error: api::Failure) -> api::Failure {
+    fn list_replaced(&self, error: api::Failure, resuming: bool) -> api::Failure {
         if error.storage_error().is_some_and(|error| {
             matches!(
                 error.failure(),
                 Failure::Rejected(Rejection::NotFound | Rejection::NotDirectory)
             )
         }) {
-            self.context
-                .failure(Failure::Backend(BackendFailure::Stale))
+            self.context.failure(list_replacement_failure(resuming))
         } else {
             error
         }
@@ -444,14 +443,15 @@ impl Client {
     ) -> Result<ah_vfs_storage::DirectoryPage> {
         let context = &self.context;
         let invalid = || context.failure(Failure::Contract(ContractViolation::InvalidPage));
-        let stale = || context.failure(Failure::Backend(BackendFailure::Stale));
+        let resuming = bound.after().is_some();
+        let replaced = || context.failure(list_replacement_failure(resuming));
         let selection = bound.selection();
         let mut parent = false;
         let mut seen = std::collections::BTreeSet::new();
         let mut children = BTreeMap::new();
         for metadata in self
             .propfind(selection.address().as_str(), 1)
-            .map_err(|error| self.list_stale(error))?
+            .map_err(|error| self.list_replaced(error, resuming))?
         {
             if metadata.entry.path() == selection.address() {
                 if parent {
@@ -461,7 +461,7 @@ impl Client {
                     || directory_identity(generation, metadata.resource_id.as_deref())
                         != Some(selection.identity())
                 {
-                    return Err(stale());
+                    return Err(replaced());
                 }
                 parent = true;
                 continue;
@@ -672,7 +672,7 @@ impl Client {
                             self.stat(address.as_str()).map_err(|error| {
                                 if is_missing(&error) {
                                     if created {
-                                        stale()
+                                        context.failure(Failure::Backend(BackendFailure::Other))
                                     } else {
                                         reject(Rejection::Unsupported)
                                     }
@@ -820,6 +820,14 @@ fn directory_identity(
     Some(ah_vfs_storage::DirectoryIdentity::from_bytes(
         hash[..16].try_into().ok()?,
     ))
+}
+
+fn list_replacement_failure(resuming: bool) -> Failure {
+    if resuming {
+        Failure::Backend(BackendFailure::Stale)
+    } else {
+        Failure::Rejected(Rejection::Conflict)
+    }
 }
 
 fn is_missing(error: &api::Failure) -> bool {

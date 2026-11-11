@@ -116,7 +116,12 @@ struct State {
 impl State {
     fn resource(&self, op: &Op, kind: p::ResourceKind, handle: u64) -> Result<(), DriverError> {
         let resource = self.resources.get(&handle).ok_or_else(|| {
-            c::call_error(op, Failure::Backend(BackendFailure::Closed), false, None)
+            let reason = if kind == p::ResourceKind::Link {
+                BackendFailure::Stale
+            } else {
+                BackendFailure::Closed
+            };
+            c::call_error(op, Failure::Backend(reason), false, None)
         })?;
         if resource.kind != kind {
             return Err(c::protocol_violation());
@@ -230,6 +235,9 @@ impl State {
             Op::ReaderNext(p::Handle { handle }) => {
                 self.resource(&op, p::ResourceKind::Reader, *handle)?
             }
+            Op::ReadBoundLink(p::Handle { handle }) => {
+                self.resource(&op, p::ResourceKind::Link, *handle)?
+            }
             Op::WriterChunk(p::Handle { handle }) => {
                 self.resource(&op, p::ResourceKind::Writer, *handle)?
             }
@@ -249,8 +257,7 @@ impl State {
             }
             _ => {}
         }
-        if matches!(op, Op::Open(_) | Op::Read(_) | Op::Write(_))
-            && self.resources.len() >= p::MAX_RESOURCES
+        if op.allocates_resource() && self.resources.len() >= p::MAX_RESOURCES
         {
             return Err(c::call_error(
                 &op,
@@ -278,10 +285,12 @@ impl State {
             Value::Description(description) => description.generation = self.generation.clone(),
             Value::Storage(p::Storage { handle, .. })
             | Value::Reader(p::Handle { handle })
-            | Value::Writer(p::Handle { handle }) => {
+            | Value::Writer(p::Handle { handle })
+            | Value::BoundLink(p::BoundLink { handle, .. }) => {
                 let kind = match op {
                     Op::Open(_) => p::ResourceKind::Storage,
                     Op::Read(_) => p::ResourceKind::Reader,
+                    Op::Storage(_) => p::ResourceKind::Link,
                     _ => p::ResourceKind::Writer,
                 };
                 if *handle <= self.next {

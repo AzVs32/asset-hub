@@ -24,16 +24,6 @@ pub enum PathComponent {
     ParentDirectory,
 }
 
-impl PathComponent {
-    pub(super) fn encoded_len(&self) -> usize {
-        match self {
-            Self::Name(name) => name.as_str().len(),
-            Self::CurrentDirectory => 1,
-            Self::ParentDirectory => 2,
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 #[non_exhaustive]
 pub enum PathExprError {

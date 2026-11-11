@@ -84,12 +84,12 @@ pub mod api {
                 ),
             )
         }
-        fn read_link(
+        fn bind_link(
             &self,
-            _request: &ah_vfs_storage::ReadLinkRequest,
+            _operand: &ah_vfs_storage::PathExpr,
             _base: &ah_vfs_storage::StoragePath,
             _links: ah_vfs_storage::IntermediateSymlinks,
-        ) -> Result<ah_vfs_storage::LinkTarget> {
+        ) -> Result<Link> {
             Err(
                 ErrorContext::storage(ah_vfs_storage::Operation::ReadLink).failure(
                     ah_vfs_storage::Failure::Rejected(ah_vfs_storage::Rejection::Unsupported),
@@ -182,6 +182,16 @@ pub mod api {
     pub trait GuestReader {
         fn next(&self) -> Result<Option<Vec<u8>>>;
     }
+    pub trait GuestLink {
+        fn path(&self) -> &ah_vfs_storage::StoragePath;
+        fn read(&self, request: ah_vfs_storage::ReadLinkRequest) -> Result<ah_vfs_storage::LinkTarget>;
+    }
+    pub struct Link(pub(crate) Box<dyn GuestLink>);
+    impl Link {
+        pub fn new(value: impl GuestLink + 'static) -> Self {
+            Self(Box::new(value))
+        }
+    }
     pub trait GuestWriter {
         fn write(&self, data: Vec<u8>) -> Result<()>;
         fn commit(&self) -> Result<ah_vfs_storage::Entry>;
@@ -210,6 +220,7 @@ enum Resource {
     Storage(api::Storage),
     Reader(api::Reader),
     Writer(api::Writer),
+    Link(api::Link),
 }
 impl Resource {
     fn kind(&self) -> p::ResourceKind {
@@ -217,6 +228,7 @@ impl Resource {
             Self::Storage(_) => p::ResourceKind::Storage,
             Self::Reader(_) => p::ResourceKind::Reader,
             Self::Writer(_) => p::ResourceKind::Writer,
+            Self::Link(_) => p::ResourceKind::Link,
         }
     }
 }
@@ -260,7 +272,7 @@ impl<D: api::Guest> Dispatcher<D> {
                 if operation.may_publish() {
                     context.dispatched();
                 }
-                allocates = matches!(operation, Op::Open(_) | Op::Read(_) | Op::Write(_));
+                allocates = operation.allocates_resource();
                 self.execute(&generation, operation, data)
             });
         let allocated = if allocates {
@@ -270,7 +282,8 @@ impl<D: api::Guest> Dispatcher<D> {
                         Some(
                             Value::Storage(p::Storage { handle, .. })
                             | Value::Reader(p::Handle { handle })
-                            | Value::Writer(p::Handle { handle }),
+                            | Value::Writer(p::Handle { handle })
+                            | Value::BoundLink(p::BoundLink { handle, .. }),
                         ),
                     ..
                 }) => Some(*handle),
@@ -544,13 +557,24 @@ impl<D: api::Guest> Dispatcher<D> {
             }
             Op::Storage(p::StorageCall {
                 handle,
-                operation: Some(p::StorageOp::ReadLink(wire)),
+                operation: Some(p::StorageOp::BindLink(wire)),
             }) => {
-                let (request, base, links) = p::decode_read_link(wire)
+                let (operand, base, links) = p::decode_bind_link(wire)
                     .map_err(|_| p::Failure::new(p::FailureCode::InvalidRequest))?;
-                let target = self
-                    .storage(&context, handle)?
-                    .read_link(&request, &base, links)?;
+                self.capacity(&context)?;
+                let link = self.storage(&context, handle)?.bind_link(&operand, &base, links)?;
+                let path = link.0.path().as_str().into();
+                let handle = self.insert(Resource::Link(link));
+                Value::BoundLink(p::BoundLink { handle, path })
+            }
+            Op::ReadBoundLink(p::Handle { handle }) => {
+                let Some(Resource::Link(link)) = self.resources.get(&handle) else {
+                    return Err(context.failure(ah_vfs_storage::Failure::Backend(
+                        ah_vfs_storage::BackendFailure::Stale,
+                    )));
+                };
+                let request = ah_vfs_storage::ReadLinkRequest::new(link.0.path().clone());
+                let target = link.0.read(request)?;
                 return p::encode_link_target(target)
                     .map_err(|reason| context.failure(ah_vfs_storage::Failure::Rejected(reason)));
             }

@@ -109,8 +109,8 @@ impl Storage for WindowsLocalStorage {
                 }
                 ListTarget::Continue(cursor) => {
                     let selection = cursor.selection();
-                    let dir = lookup::reopen_listing_directory(&root, selection)?;
-                    bindings.verify(selection, &dir, lookup::same_directory)?;
+                    let dir = lookup::reopen_listing_directory(&root, selection, true)?;
+                    bindings.verify(selection, &dir, true, lookup::same_directory)?;
                     Ok(selection.clone())
                 }
             }
@@ -122,19 +122,20 @@ impl Storage for WindowsLocalStorage {
         bound: &'a BoundListRequest<'_>,
     ) -> StorageFuture<'a, DirectoryPage> {
         let request = bound.request().clone();
+        let resuming = bound.after().is_some();
         let selection = bound.selection().clone();
         let root = self.dir.clone();
         let bindings = self.directory_bindings.clone();
         Box::pin(blocking(Operation::List, false, move || {
-            let dir = lookup::reopen_listing_directory(&root, &selection)?;
-            bindings.verify(&selection, &dir, lookup::same_directory)?;
+            let dir = lookup::reopen_listing_directory(&root, &selection, resuming)?;
+            bindings.verify(&selection, &dir, resuming, lookup::same_directory)?;
             let bound = request
                 .bind_selection(selection)
                 .map_err(|_| lookup::list_stale())?;
             let page = fs::list_entries(&dir, &bound)?;
-            let current = lookup::reopen_listing_directory(&root, bound.selection())?;
+            let current = lookup::reopen_listing_directory(&root, bound.selection(), resuming)?;
             if !lookup::same_directory(&dir, &current)? {
-                return Err(lookup::list_stale());
+                return Err(lookup::list_replaced(resuming));
             }
             Ok(page)
         }))

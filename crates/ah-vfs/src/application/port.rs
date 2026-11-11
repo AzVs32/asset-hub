@@ -93,6 +93,24 @@
 //! resource scope without renewal or expiry. Abandoned writes are discarded,
 //! never published. A lost commit response carries MutationOutcome::Unknown. Transfers preserve backpressure and never
 //! buffer an entire file merely to bridge transports.
+//!
+//! ## Mutation guarantees
+//!
+//! With `FinalSlotAtomic`, the backend checks the observed final name and
+//! applies the mutation atomically. A mismatch returns `Conflict` with
+//! `Unchanged`. With `ParentPinned`, the effect remains relative to the fixed
+//! parent and the backend checks the final slot before dispatch. Replacement
+//! between that check and the effect can change which entry is modified. In
+//! particular, rename can move an entry of a different type. After dispatch,
+//! uncertain effects require `Unknown`.
+//!
+//! In either mode, no-replace rename, create-new publication and single-level
+//! directory creation check destination absence atomically. An occupied slot
+//! returns `AlreadyExists` or `Conflict` with `Unchanged`.
+//!
+//! A generation or resource binding that has expired returns `Stale`. Acquire
+//! fresh bindings before restarting the operation. For a pre-effect `Conflict`,
+//! resolve the operands again on the existing generation before retrying.
 
 mod driver;
 mod mount_repository;
@@ -101,7 +119,9 @@ mod storage;
 pub use driver::{Driver, DriverFuture};
 pub use mount_repository::{MountRepository, MountRepositoryFuture};
 pub use storage::validate_storage_extensions;
-pub use storage::{LookupContext, Storage, StorageFileReader, StorageFileWriter, StorageFuture};
+pub use storage::{
+    BoundLink, LookupContext, Storage, StorageFileReader, StorageFileWriter, StorageFuture,
+};
 
 mod storage_attributes;
 pub use storage_attributes::StorageAttributes;

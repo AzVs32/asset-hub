@@ -29,6 +29,7 @@ struct Resources {
     storage: Option<Slot<Arc<dyn Storage>>>,
     readers: HashMap<u64, Slot<Reader>>,
     writers: HashMap<u64, Slot<Writer>>,
+    links: HashMap<u64, Slot<Arc<dyn BoundLink>>>,
 }
 impl Resources {
     fn kind(&self, handle: u64) -> Option<p::ResourceKind> {
@@ -38,12 +39,17 @@ impl Resources {
             Some(p::ResourceKind::Reader)
         } else if self.writers.contains_key(&handle) {
             Some(p::ResourceKind::Writer)
+        } else if self.links.contains_key(&handle) {
+            Some(p::ResourceKind::Link)
         } else {
             None
         }
     }
     fn allocate(&mut self, operation: Operation) -> Result<u64, DriverError> {
-        if usize::from(self.storage.is_some()) + self.readers.len() + self.writers.len()
+        if usize::from(self.storage.is_some())
+            + self.readers.len()
+            + self.writers.len()
+            + self.links.len()
             >= p::MAX_RESOURCES
         {
             return Err(StorageError::without_effects(
@@ -657,9 +663,32 @@ impl Session {
                     p::ResourceKind::Writer => {
                         resources.writers.remove(&handle);
                     }
+                    p::ResourceKind::Link => {
+                        resources.links.remove(&handle);
+                    }
                     _ => return Err(LifecycleError::new(LifecycleFailure::InvalidRequest).into()),
                 }
                 Value::Unit(p::Empty {})
+            }
+            Op::ReadBoundLink(p::Handle { handle }) => {
+                let op = Operation::ReadLink;
+                let link = self
+                    .resources
+                    .lock()
+                    .await
+                    .links
+                    .get(&handle)
+                    .map(|slot| slot.value.clone())
+                    .ok_or_else(|| StorageError::without_effects(
+                        op,
+                        Failure::Backend(BackendFailure::Stale),
+                        None,
+                    ))?;
+                let request = ah_vfs_storage::ReadLinkRequest::new(link.path().clone());
+                let target = link.read(request).await?;
+                return p::encode_link_target(target).map_err(|reason| {
+                    StorageError::without_effects(op, Failure::Rejected(reason), None).into()
+                });
             }
             _ => return Err(LifecycleError::new(LifecycleFailure::InvalidRequest).into()),
         };
@@ -686,17 +715,29 @@ impl Session {
                 };
                 Value::Entry(c::entry(operation, s.stat_entry(request, context).await?)?)
             }
-            p::StorageOp::ReadLink(request) => {
-                let (request, working_directory, intermediate_symlinks) =
-                    p::decode_read_link(request).map_err(invalid_lookup)?;
+            p::StorageOp::BindLink(request) => {
+                let (operand, working_directory, intermediate_symlinks) =
+                    p::decode_bind_link(request).map_err(invalid_lookup)?;
                 let context = LookupContext {
                     working_directory,
                     intermediate_symlinks,
                 };
-                let target = s.read_link(request, context).await?;
-                return p::encode_link_target(target).map_err(|reason| {
-                    StorageError::without_effects(operation, Failure::Rejected(reason), None).into()
+                let capacity = self.generation.reserve().map_err(|source| {
+                    StorageError::without_effects(
+                        operation,
+                        Failure::Backend(BackendFailure::CapacityExceeded),
+                        Some(Box::new(source)),
+                    )
+                })?;
+                let link = s.bind_link(operand, context).await?;
+                let path = link.path().as_str().into();
+                let mut resources = self.resources.lock().await;
+                let handle = resources.allocate(operation)?;
+                resources.links.insert(handle, Slot {
+                    value: Arc::from(link),
+                    _capacity: capacity,
                 });
+                Value::BoundLink(p::BoundLink { handle, path })
             }
             p::StorageOp::SelectDirectory(wire) => {
                 let (request, working_directory, intermediate_symlinks) =

@@ -180,6 +180,11 @@ const CAUSES: &[(&str, &str, d::Failure)] = &[
     ),
     (
         "contract",
+        "invalid-binding",
+        d::Failure::Contract(d::ContractViolation::InvalidBinding),
+    ),
+    (
+        "contract",
         "invalid-entry",
         d::Failure::Contract(d::ContractViolation::InvalidEntry),
     ),

@@ -3,6 +3,7 @@
 pub mod application;
 pub mod domain;
 pub mod infrastructure;
+pub mod resolve;
 
 #[cfg(test)]
 extern crate self as ah_vfs;

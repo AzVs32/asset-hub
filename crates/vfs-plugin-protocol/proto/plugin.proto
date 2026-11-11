@@ -1,5 +1,5 @@
 syntax = "proto3";
-package assethub.vfs.v11;
+package assethub.vfs.v12;
 
 // The sole plugin message schema, shared by gRPC and the WASM call export.
 // Request/Reply control fields are limited to 1 MiB, data to 8 MiB. Missing
@@ -33,7 +33,7 @@ enum Capability {
   CAPABILITY_RENAME_NEW = 13; CAPABILITY_RENAME_REPLACE = 14;
   CAPABILITY_PERMISSIONS_READ = 15; CAPABILITY_PERMISSIONS_WRITE = 16;
   CAPABILITY_XATTRS_READ = 17; CAPABILITY_XATTRS_WRITE = 18;
-  CAPABILITY_READ_LINK = 19;
+  CAPABILITY_READ_LINK = 19; CAPABILITY_FINAL_SLOT_ATOMIC = 20;
 }
 enum EntryKind {
   ENTRY_KIND_UNSPECIFIED = 0; ENTRY_KIND_FILE = 1; ENTRY_KIND_DIR = 2;
@@ -42,6 +42,7 @@ enum EntryKind {
 enum ResourceKind {
   RESOURCE_KIND_UNSPECIFIED = 0; RESOURCE_KIND_STORAGE = 1;
   RESOURCE_KIND_READER = 2; RESOURCE_KIND_WRITER = 3;
+  RESOURCE_KIND_LINK = 4;
 }
 enum XattrWriteMode {
   XATTR_WRITE_MODE_UNSPECIFIED = 0; XATTR_WRITE_MODE_UPSERT = 1;
@@ -92,7 +93,7 @@ message Failure {
   StorageFailure storage = 4;
 }
 message Description {
-  uint32 major = 1; uint32 minor = 2; // This schema uses major 11, minor 0.
+  uint32 major = 1; uint32 minor = 2; // This schema uses major 12, minor 0.
   // Feature identifiers: streams.chunked.v1.
   // Unknown required identifiers reject loading; optional ones grant no support.
   repeated string required_features = 3;
@@ -135,7 +136,8 @@ message Lookup {
   IntermediateLink intermediate_links = 3;
 }
 message Stat { Lookup lookup = 1; FinalLink final_link = 2; }
-message ReadLink { Lookup lookup = 1; }
+message BindLink { Lookup lookup = 1; }
+message BoundLink { uint64 handle = 1; string path = 2; }
 message DirectorySelection { string address = 1; bytes identity = 2; }
 message DirectoryCheckpoint { DirectorySelection selection = 1; string after = 2; }
 // Selection is a separate exchange from enumeration. A resume uses only its checkpoint.
@@ -173,7 +175,7 @@ message StorageCall {
     Lookup get_permissions = 15;
     SetPermissions set_permissions = 16; ListXattrs list_xattrs = 17;
     GetXattr get_xattr = 18; SetXattr set_xattr = 19; RemoveXattr remove_xattr = 20;
-    ReadLink read_link = 21;
+    BindLink bind_link = 21;
     SelectDirectory select_directory = 22;
   }
 }
@@ -203,6 +205,7 @@ message Request {
     Open open = 8; StorageCall storage = 9; Read read = 10; Write write = 11;
     Handle reader_next = 12; Handle writer_chunk = 13; Handle commit = 14;
     Handle abort = 15; ResourceRef release = 16;
+    Handle read_bound_link = 17;
   }
 }
 message Prepared { Object config = 1; Object details = 2; }
@@ -226,15 +229,16 @@ message Reply {
     Entry entry = 8; Page page = 9; Permissions permissions = 10; Empty names = 11;
     Empty bytes = 12; Chunk chunk = 13; Empty unit = 14; Failure failure = 15;
     DirectorySelection selected_directory = 16;
+    BoundLink bound_link = 17;
   }
 }
 service Plugin {
   // Driver metadata, initialization, configuration preparation only.
   // Storage resources can only be opened and used through Session.
   rpc Invoke(Request) returns (Reply);
-  // One duplex stream owns one Storage and every child reader/writer. Its first
+  // One duplex stream owns one Storage and every child reader, writer and link binding. Its first
   // request is Open. Subsequent requests are Storage/Read/Write/ReaderNext/
-  // WriterChunk/Commit/Abort/Release, with exactly one ordered Reply per request.
+  // WriterChunk/Commit/Abort/ReadBoundLink/Release, with one ordered Reply per request.
   // Requests are serialized within a session; separate Storage sessions run
   // independently. Cancelling an in-flight request closes its entire session,
   // since an uncertain response must never be matched to another request.

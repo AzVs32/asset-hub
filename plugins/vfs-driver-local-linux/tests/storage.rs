@@ -853,7 +853,7 @@ async fn lookup_policy_controls_links_without_escaping_the_instance() -> TestRes
     let target = f
         .storage
         .read_link(
-            ah_vfs_storage::ReadLinkRequest::new(ah_vfs_storage::PathExpr::parse("/dangling")?),
+            ah_vfs_storage::PathExpr::parse("/dangling")?,
             Default::default(),
         )
         .await?;
@@ -1147,6 +1147,37 @@ async fn recursive_creation_follows_existing_links_without_creating_dangling_tar
         .err()
         .ok_or("existing link overwritten")?;
     assert_eq!(error.failure(), Failure::Rejected(Rejection::AlreadyExists));
+    assert_eq!(error.outcome(), MutationOutcome::Unchanged);
+    Ok(())
+}
+
+#[tokio::test]
+async fn replacing_a_directory_during_the_initial_list_conflicts() -> TestResult {
+    use ah_vfs_storage::{ListRequest, ListTarget, MutationOutcome, PageSize};
+
+    let f = fixture().await?;
+    std::fs::create_dir(f.root.join("selected"))?;
+    let request = ListRequest::new(
+        ListTarget::Path(path("selected")?.to_rooted_expr()),
+        PageSize::DEFAULT,
+    );
+    let selected = f
+        .storage
+        .select_directory(&request, Default::default())
+        .await?;
+    let bound = request.bind_selection(selected)?;
+    std::fs::rename(f.root.join("selected"), f.root.join("old"))?;
+    std::fs::create_dir(f.root.join("selected"))?;
+    f.storage
+        .select_directory(&request, Default::default())
+        .await?;
+    let error = f
+        .storage
+        .list_page(&bound)
+        .await
+        .err()
+        .ok_or("listing accepted a replaced directory")?;
+    assert_eq!(error.failure(), Failure::Rejected(Rejection::Conflict));
     assert_eq!(error.outcome(), MutationOutcome::Unchanged);
     Ok(())
 }

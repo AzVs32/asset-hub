@@ -15,6 +15,11 @@
 //! identities, persistence and wire formats belong to those outer layers.
 //! Optional attributes remain separate from basic metadata.
 //!
+//! A [`ReadLinkRequest`] addresses the link itself with a canonical
+//! [`StoragePath`]. The backend returns its exact bytes without following it.
+//! If the observed slot has changed before the read, the request fails with
+//! [`Rejection::Conflict`].
+//!
 //! # Logical names and native storage
 //! An [`EntryName`] or [`XattrName`] is identified by its original UTF-8 bytes.
 //! `Report` and `report` are distinct, as are `é` and `e\u{301}`. The
@@ -75,106 +80,6 @@
 //! decoding an authoritative native name via [`EntryName::from_backend_bytes`]
 //! or [`XattrName::from_backend_bytes`]. Logical value and page validation
 //! cannot prove native spelling, atomicity or agreement with direct lookup.
-//!
-//! # Path operands and lookup
-//! Before any lookup or side effect, the execution port captures the selected
-//! instance generation and its root directory identity. If an operand is
-//! relative, it also captures the session's working-directory identity in that
-//! instance. This is a directory binding, rather than a saved path to reopen or
-//! the process working directory. A working directory is unnecessary for an
-//! all-absolute request. Rename resolves the source first and uses the same
-//! bindings and link budget for both operands. An invalidated generation or a
-//! starting directory that no longer belongs to the bound namespace fails as
-//! [`BackendFailure::Stale`]. Traversal denied by the confinement policy fails
-//! as [`Rejection::AccessDenied`]. An adapter unable to enforce the binding or the
-//! required lookup rules rejects the operation as [`Rejection::Unsupported`].
-//!
-//! [`PathExpr`] removes repeated separators but retains navigation components
-//! and the trailing directory requirement. Start at the bound root for `/`, or
-//! at the bound working directory for a relative operand. Walk left to right.
-//! Every nonfinal component must yield a searchable directory. `.` retains the
-//! current directory and `..` selects its actual parent within the instance.
-//! At the bound root, `..` retains the root. For example, `missing/../a` fails
-//! at `missing` in an ordinary lookup. A non-directory prefix fails as
-//! [`Rejection::NotDirectory`] and denied search as [`Rejection::AccessDenied`].
-//! Apply a trailing slash at the end of its segment. It requires a directory
-//! and does not change how the final link is handled.
-//!
-//! The executor uses one [`SymlinkTraversal`] for the operation. A link is
-//! intermediate if any component remains in the effective walk, including
-//! suffixes waiting after a nested expansion. Otherwise the request's final
-//! policy applies. A preserved link is selected directly, so `readlink link/`
-//! fails as `NotDirectory` when `link` is a symbolic link. A followed link
-//! consumes one expansion before reading its target. The 41st follow fails as
-//! [`Rejection::TooManySymlinks`], including when the walk is cyclic.
-//!
-//! ReadLink returns a [`LinkTarget`] with the exact stored bytes. To follow it,
-//! use [`LinkTarget::prepare_lookup`] to parse and check the target and pending
-//! suffix against the length bound. Walk the returned segment before resuming
-//! the suffix. Absolute targets use the same instance root and relative targets
-//! use the link's containing directory. Reapply the link policy on every
-//! encounter. A target segment's own trailing slash must be satisfied even if
-//! the original operand has no trailing slash. Use
-//! [`PathExpr::check_directory_requirement`] when completing that segment.
-//! ReadLink does not validate or normalize the stored text. On follow, a byte
-//! sequence without a valid logical path representation fails as
-//! [`BackendFailure::UnrepresentableLinkTarget`]. Native path syntax, such as
-//! a drive prefix or backslash separators, is never rewritten. Logical length
-//! violations fail as [`Rejection::PathTooLong`], including when joining a
-//! component to a selected address would exceed [`MAX_PATH_BYTES`]. Once parsed,
-//! target components obey the same exact-name and native-limit rules as any
-//! other operand.
-//!
-//! Keep target segments distinct from original operand components and use
-//! [`PathLookup::check_missing_name`] at an absent name. An absent name in a
-//! followed target fails as `NotFound`. In the original operand, only
-//! recursive directory creation may create missing intermediate names. At a
-//! missing final name, apply the request's missing-target rule and, for write
-//! and rename, its destination validation. Never create through a dangling
-//! link. A preserved dangling link remains an existing entry for operations
-//! such as ReadLink, Remove and Rename.
-//!
-//! [`PathLookup`] supplies pure checks on the selected address and kind. The
-//! adapter must apply them to the same bound entry or parent-and-name slot used
-//! by the operation, using handles, transactions or equivalent protection. At
-//! staged publication, preserve the bound parent and atomically revalidate the
-//! expected destination identity or absence. A detected replacement before
-//! effects is [`Rejection::Conflict`]. Account separately for uncertain effects
-//! after dispatch, including partial recursive creation. A [`StoragePath`] is
-//! an address, and [`StoragePath::to_rooted_expr`] starts a fresh lookup from
-//! the root. Neither supplies a durable entry binding across operations.
-//! [`RenameRequest::decide_destination`] distinguishes an unchanged same-slot
-//! replacement from a move. Only a distinct directory destination must be empty.
-//!
-//! ```
-//! use ah_vfs_storage::{ListRequest, ListTarget, LookupStart, PageSize, PathExpr, SymlinkAction};
-//! let request = ListRequest::new(
-//!     ListTarget::Path(PathExpr::parse("../docs//archive/")?),
-//!     PageSize::DEFAULT,
-//! );
-//! let lookup = request.lookup().ok_or("initial lookup")?;
-//! assert_eq!(lookup.path().start(), LookupStart::BaseDirectory);
-//! assert_eq!(lookup.final_symlink(), SymlinkAction::FollowWithinInstance);
-//! assert!(lookup.requires_directory());
-//! # Ok::<(), Box<dyn std::error::Error>>(())
-//! ```
-//!
-//! For example, with working directory `/work/sub` and `/work/link` pointing to
-//! `../a/`, `../link//../file` visits `/work`, `/a`, then `/` before selecting
-//! `/file`. The target's `../` starts at `/work`, not `/work/sub`. At `/`, a
-//! further `..` stays at `/`. If `/a` is a file, the target segment fails with
-//! `NotDirectory` before resuming the original operand.
-//!
-//! ```
-//! use ah_vfs_storage::{LinkTarget, LookupStart, PathComponent, PathExpr, Rejection, StoragePath};
-//! let parent = StoragePath::parse("work")?;
-//! let suffix = PathExpr::parse("../file")?;
-//! let target = LinkTarget::new(b"../a/".to_vec()).prepare_lookup(&parent, suffix.components())?;
-//! assert_eq!(target.start(), LookupStart::BaseDirectory);
-//! assert_eq!(target.components().first(), Some(&PathComponent::ParentDirectory));
-//! assert_eq!(target.check_directory_requirement(false), Err(Rejection::NotDirectory));
-//! # Ok::<(), Box<dyn std::error::Error>>(())
-//! ```
 //!
 //! # Failure model
 //! Value errors describe construction failures without guessing input provenance.
@@ -247,6 +152,10 @@
 //! Writes carry nonempty modes; directory guarantees carry a directory model;
 //! writable attributes include reading. These combinations are valid by construction.
 //! Each capability update returns a valid declaration.
+//! [`MutationBinding`] declares whether final-slot checks are atomic with
+//! mutation. An observed mismatch before effects is `Conflict` with
+//! `Unchanged`. No-replace rename, create-new publication and single-directory
+//! creation check destination absence atomically at either guarantee level.
 //!
 //! ```
 //! use ah_vfs_storage::{
@@ -561,8 +470,8 @@ pub use attributes::{
     PermissionsError, XattrList, XattrListError, XattrName, XattrNameError, XattrWriteMode,
 };
 pub use capabilities::{
-    AttributeSupport, Capabilities, DirectorySupport, ReadSupport, RenameSupport, WriteModes,
-    WriteSupport,
+    AttributeSupport, Capabilities, DirectorySupport, MutationBinding, ReadSupport, RenameSupport,
+    WriteModes, WriteSupport,
 };
 pub use directory::{
     BoundListRequest, DirectoryCursor, DirectoryIdentity, DirectoryPage, DirectoryPageError,
@@ -571,10 +480,7 @@ pub use directory::{
 pub use entry::{Entry, EntryError, EntryType};
 pub use error::StorageError;
 pub use failure::{BackendFailure, ContractViolation, Failure, MutationOutcome, Rejection};
-pub use lookup::{
-    IntermediateSymlinks, LinkTarget, MAX_SYMLINK_EXPANSIONS, MissingName, PathLookup,
-    SymlinkAction, SymlinkTraversal,
-};
+pub use lookup::{IntermediateSymlinks, LinkTarget, MissingName, PathLookup, SymlinkAction};
 pub use path_expr::{LookupStart, MAX_PATH_EXPR_BYTES, PathComponent, PathExpr, PathExprError};
 pub use request::{
     CreateDirectoryMode, CreateDirectoryRequest, Operation, Publication, RangeError,

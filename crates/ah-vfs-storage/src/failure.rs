@@ -92,6 +92,8 @@ pub enum ContractViolation {
     InvalidDeclaration,
     #[error("adapter response is malformed or unexpected")]
     InvalidResponse,
+    #[error("request does not match its backend binding")]
+    InvalidBinding,
     #[error("adapter returned invalid entry metadata")]
     InvalidEntry,
     #[error("adapter returned an invalid directory page")]

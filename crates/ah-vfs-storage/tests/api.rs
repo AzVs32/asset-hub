@@ -84,7 +84,7 @@ fn generic_helpers_compose_public_constructors() -> Result {
         PathExpr::parse(input).map(construct)
     }
 
-    let link = from_operand("work/link", ReadLinkRequest::new)?;
+    let link = ReadLinkRequest::new(StoragePath::parse("work/link")?);
     assert_eq!(link.path().to_string(), "work/link");
     let remove = from_operand("/work/file", |path| {
         RemoveRequest::new(path, RemoveKind::NonDirectory)

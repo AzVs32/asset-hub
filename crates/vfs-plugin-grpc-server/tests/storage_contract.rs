@@ -528,10 +528,14 @@ async fn formal_lookup_preserves_policy_instance_and_link_bytes() -> TestResult 
     )?;
     for (path, bytes) in [("opaque", b"\xff".as_slice()), ("dangling", b"missing")] {
         let reply = formal
-            .call(p::StorageOp::ReadLink(p::ReadLink {
+            .call(p::StorageOp::BindLink(p::BindLink {
                 lookup: Some(lookup(path, "", p::IntermediateLink::FollowIntermediate)),
             }))
             .await?;
+        let Some(p::Value::BoundLink(link)) = reply.result else {
+            return Err("expected bound link".into());
+        };
+        let reply = formal.invoke(p::Operation::ReadBoundLink(p::Handle { handle: link.handle })).await?;
         assert!(matches!(reply.result, Some(p::Value::Bytes(_))));
         assert_eq!(reply.data, bytes);
     }

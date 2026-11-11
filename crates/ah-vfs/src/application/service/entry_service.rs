@@ -12,7 +12,7 @@ use crate::domain::namespace::{Mount, MountTable, VirtualPath};
 use ah_vfs_storage::{AttributeAction, AttributeRequest, AttributeResult, EntryType, StoragePath};
 use ah_vfs_storage::{BackendFailure, DirectoryCursor, ListRequest, ListTarget};
 use ah_vfs_storage::{
-    Capabilities, LinkTarget, ReadLinkRequest, ReadRequest, RemoveRequest, RenameRequest,
+    Capabilities, LinkTarget, ReadRequest, RemoveRequest, RenameRequest,
     StatRequest, SymlinkAction, WriteRequest,
 };
 use ah_vfs_storage::{Failure, Operation, Rejection, StorageError};
@@ -147,7 +147,7 @@ impl EntryService {
         Self::require(Operation::ReadLink, capabilities.read_link())?;
         Ok(storage
             .read_link(
-                ReadLinkRequest::new(relative.to_rooted_expr()),
+                relative.to_rooted_expr(),
                 LookupContext::default(),
             )
             .await?)
@@ -204,7 +204,12 @@ impl EntryService {
                             Ok(entry) if entry.entry_type() == EntryType::Directory => {
                                 let selection = storage.select_directory(&request, context).await?;
                                 if selection.address() != &relative {
-                                    return Err(stale().into());
+                                    return Err(StorageError::without_effects(
+                                        Operation::List,
+                                        Failure::Rejected(Rejection::Conflict),
+                                        None,
+                                    )
+                                    .into());
                                 }
                                 Some(selection)
                             }

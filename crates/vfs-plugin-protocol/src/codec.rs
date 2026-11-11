@@ -160,7 +160,7 @@ fn check_json(value: &JsonValue, depth: usize) -> Result<()> {
 }
 fn check_resource(value: &ResourceRef) -> Result<()> {
     match ResourceKind::try_from(value.kind) {
-        Ok(ResourceKind::Storage | ResourceKind::Reader | ResourceKind::Writer) => Ok(()),
+        Ok(ResourceKind::Storage | ResourceKind::Reader | ResourceKind::Writer | ResourceKind::Link) => Ok(()),
         _ => Err(CodecError::InvalidData),
     }
 }
@@ -210,8 +210,8 @@ pub fn validate_request(request: &Request) -> Result<()> {
             StorageOp::List(request) => {
                 super::decode_list(request.clone()).map_err(|_| CodecError::InvalidData)?;
             }
-            StorageOp::ReadLink(request) => {
-                super::decode_read_link(request.clone()).map_err(|_| CodecError::InvalidData)?;
+            StorageOp::BindLink(request) => {
+                super::decode_bind_link(request.clone()).map_err(|_| CodecError::InvalidData)?;
             }
             attribute @ (StorageOp::GetPermissions(_)
             | StorageOp::SetPermissions(_)
@@ -230,6 +230,7 @@ pub fn validate_request(request: &Request) -> Result<()> {
             super::decode_write(write.clone()).map_err(|_| CodecError::InvalidData)?;
         }
         O::Release(v) => check_resource(v)?,
+        O::ReadBoundLink(v) if v.handle == 0 => return Err(CodecError::InvalidData),
         _ => {}
     }
     bound(request.encoded_len(), &request.data)
@@ -273,6 +274,11 @@ pub fn validate_reply(reply: &Reply) -> Result<()> {
             field(&v.info)?;
         }
         Value::Entry(v) => check_entry(v)?,
+        Value::BoundLink(v)
+            if v.handle == 0 || ah_vfs_storage::StoragePath::parse(&v.path).is_err() =>
+        {
+            return Err(CodecError::InvalidData);
+        }
         Value::Page(v) => {
             field(&v.reported)?;
             field(&v.completion)?;

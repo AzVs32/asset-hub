@@ -1,7 +1,10 @@
 #![cfg(target_os = "linux")]
 //! End-to-end checks use the actual native plugin executable and a TCP channel.
 use ah_vfs::application::driver_error::LifecycleFailure;
-use ah_vfs_storage::{BackendFailure, Failure, MutationOutcome, Operation};
+use ah_vfs_storage::{
+    BackendFailure, ContractViolation, Failure, MutationOutcome, Operation, PathExpr,
+    ReadLinkRequest, Rejection,
+};
 mod common;
 use ah_vfs::application::driver_catalog::DriverCatalog;
 use ah_vfs::application::dto::*;
@@ -64,6 +67,99 @@ async fn storage(
         .open(registry.open_context(instance.id).await?)
         .await?)
 }
+
+#[tokio::test]
+async fn slot_conflict_preserves_the_generation_and_disconnect_invalidates_it() -> Result {
+    let records = common::pool().await?;
+    let mut process = Process::start("127.0.0.1:0")?;
+    let driver = process.driver().await?;
+    let mut catalog = DriverCatalog::new();
+    catalog.register(driver.clone(), Default::default()).await?;
+    let root = tempfile::tempdir()?;
+    let storage = storage(driver.as_ref(), root.path(), records).await?;
+    let mut writer = storage
+        .write_file(
+            ah_vfs_storage::WriteRequest::new(
+                StoragePath::parse("occupied")?.to_rooted_expr(),
+                ah_vfs_storage::WriteMode::CreateNew,
+                ah_vfs_storage::Publication::Staged,
+            ),
+            Default::default(),
+        )
+        .await?;
+    writer.write_chunk(b"private").await?;
+    std::fs::write(root.path().join("occupied"), b"other writer")?;
+    let error = writer
+        .commit()
+        .await
+        .err()
+        .ok_or("occupied slot was overwritten")?;
+    assert_eq!(error.failure(), Failure::Rejected(Rejection::Conflict));
+    assert_eq!(error.outcome(), MutationOutcome::Unchanged);
+    assert_eq!(std::fs::read(root.path().join("occupied"))?, b"other writer");
+
+    let stat = ah_vfs_storage::StatRequest::new(
+        StoragePath::root().to_rooted_expr(),
+        ah_vfs_storage::SymlinkAction::Preserve,
+    );
+    storage.stat_entry(stat.clone(), Default::default()).await?;
+    process.child.kill()?;
+    process.child.wait()?;
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while !storage.is_stale() {
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        }
+    })
+    .await?;
+    let error = storage
+        .stat_entry(stat, Default::default())
+        .await
+        .err()
+        .ok_or("retired generation accepted a request")?;
+    assert_eq!(error.failure(), Failure::Backend(BackendFailure::Stale));
+    assert_eq!(error.outcome(), MutationOutcome::Unchanged);
+    Ok(())
+}
+
+#[tokio::test]
+async fn bound_link_rechecks_the_original_slot_over_grpc() -> Result {
+    let records = common::pool().await?;
+    let mut process = Process::start("127.0.0.1:0")?;
+    let driver = process.driver().await?;
+    let mut catalog = DriverCatalog::new();
+    catalog.register(driver.clone(), Default::default()).await?;
+    let root = tempfile::tempdir()?;
+    std::os::unix::fs::symlink("before", root.path().join("link"))?;
+    let storage = storage(driver.as_ref(), root.path(), records).await?;
+    let operand = PathExpr::parse("/link")?;
+    let old = storage.bind_link(operand.clone(), Default::default()).await?;
+    let request = ReadLinkRequest::new(StoragePath::parse("link")?);
+    assert_eq!(old.read(request.clone()).await?.as_bytes(), b"before");
+    let wrong = ReadLinkRequest::new(StoragePath::parse("other")?);
+    let error = old.read(wrong).await.err().ok_or("accepted a different address")?;
+    assert_eq!(error.failure(), Failure::Contract(ContractViolation::InvalidBinding));
+
+    std::fs::rename(root.path().join("link"), root.path().join("original"))?;
+    std::os::unix::fs::symlink("after", root.path().join("link"))?;
+    let error = old.read(request.clone()).await.err().ok_or("accepted the replaced link")?;
+    assert_eq!(error.failure(), Failure::Rejected(Rejection::Conflict));
+    assert_eq!(error.outcome(), MutationOutcome::Unchanged);
+    let current = storage.bind_link(operand, Default::default()).await?;
+    assert_eq!(current.read(request.clone()).await?.as_bytes(), b"after");
+
+    process.child.kill()?;
+    process.child.wait()?;
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while !storage.is_stale() {
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        }
+    }).await?;
+    let error = current.read(request).await.err().ok_or("accepted a retired binding")?;
+    assert_eq!(error.failure(), Failure::Backend(BackendFailure::Stale));
+    assert_eq!(error.outcome(), MutationOutcome::Unchanged);
+    Ok(())
+}
+
 #[tokio::test]
 async fn native_process_passes_shared_storage_contracts_over_grpc() -> Result {
     let records = common::pool().await?;

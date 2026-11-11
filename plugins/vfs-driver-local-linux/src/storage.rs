@@ -2,13 +2,13 @@
 
 use ah_vfs::application::port::{DirectoryBindings, LookupContext};
 use ah_vfs::application::port::{
-    Storage, StorageAttributes, StorageFileReader, StorageFileWriter, StorageFuture,
+    BoundLink, Storage, StorageAttributes, StorageFileReader, StorageFileWriter, StorageFuture,
 };
 use ah_vfs_storage::{
     BackendFailure, BoundListRequest, DirectoryPage, DirectorySelection, Failure, ListRequest,
     ListTarget, Operation, StorageError,
 };
-use ah_vfs_storage::{Entry, LinkTarget, ReadLinkRequest, ReadRequest, StatRequest, WriteRequest};
+use ah_vfs_storage::{Entry, PathExpr, ReadRequest, StatRequest, WriteRequest};
 
 use cap_std::fs::Dir;
 use std::num::NonZeroUsize;
@@ -93,14 +93,14 @@ impl Storage for LinuxLocalStorage {
         }))
     }
 
-    fn read_link(
+    fn bind_link(
         &self,
-        request: ReadLinkRequest,
+        operand: PathExpr,
         context: LookupContext,
-    ) -> StorageFuture<'_, LinkTarget> {
+    ) -> StorageFuture<'_, Box<dyn BoundLink>> {
         let dir = self.dir.clone();
         Box::pin(blocking(Operation::ReadLink, false, move || {
-            lookup::read_link(&dir, request.lookup(), context)
+            Ok(Box::new(lookup::bind_link(dir, operand, context)?) as Box<dyn BoundLink>)
         }))
     }
 
@@ -124,8 +124,8 @@ impl Storage for LinuxLocalStorage {
                 }
                 ListTarget::Continue(cursor) => {
                     let selection = cursor.selection();
-                    let dir = lookup::reopen_listing_directory(&root, selection)?;
-                    bindings.verify(selection, &dir, lookup::same_directory)?;
+                    let dir = lookup::reopen_listing_directory(&root, selection, true)?;
+                    bindings.verify(selection, &dir, true, lookup::same_directory)?;
                     Ok(selection.clone())
                 }
             }
@@ -137,19 +137,20 @@ impl Storage for LinuxLocalStorage {
         bound: &'a BoundListRequest<'_>,
     ) -> StorageFuture<'a, DirectoryPage> {
         let request = bound.request().clone();
+        let resuming = bound.after().is_some();
         let selection = bound.selection().clone();
         let root = self.dir.clone();
         let bindings = self.directory_bindings.clone();
         Box::pin(blocking(Operation::List, false, move || {
-            let dir = lookup::reopen_listing_directory(&root, &selection)?;
-            bindings.verify(&selection, &dir, lookup::same_directory)?;
+            let dir = lookup::reopen_listing_directory(&root, &selection, resuming)?;
+            bindings.verify(&selection, &dir, resuming, lookup::same_directory)?;
             let bound = request
                 .bind_selection(selection)
                 .map_err(|_| lookup::list_stale())?;
             let page = fs::list_entries(&dir, &bound)?;
-            let current = lookup::reopen_listing_directory(&root, bound.selection())?;
+            let current = lookup::reopen_listing_directory(&root, bound.selection(), resuming)?;
             if !lookup::same_directory(&dir, &current)? {
-                return Err(lookup::list_stale());
+                return Err(lookup::list_replaced(resuming));
             }
             Ok(page)
         }))

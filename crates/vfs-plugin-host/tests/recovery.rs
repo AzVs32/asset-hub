@@ -182,7 +182,7 @@ impl SessionTransport for Peer {
                     })
                 }
                 Op::Storage(p::StorageCall {
-                    operation: Some(p::StorageOp::ReadLink(link)),
+                    operation: Some(p::StorageOp::BindLink(link)),
                     ..
                 }) => {
                     let (operand, base, links) = p::decode_lookup(link.lookup)
@@ -190,11 +190,15 @@ impl SessionTransport for Peer {
                     assert_eq!(operand.to_string(), "../link");
                     assert_eq!(base.as_str(), "docs/sub");
                     assert_eq!(links, ah_vfs_storage::IntermediateSymlinks::Reject);
-                    return Ok(p::Reply {
-                        result: Some(Value::Bytes(p::Empty {})),
-                        data: vec![0xff, b'/'],
-                    });
+                    Value::BoundLink(p::BoundLink {
+                        handle: self.next.fetch_add(1, Ordering::SeqCst),
+                        path: "docs/link".into(),
+                    })
                 }
+                Op::ReadBoundLink(_) => return Ok(p::Reply {
+                    result: Some(Value::Bytes(p::Empty {})),
+                    data: vec![0xff, b'/'],
+                }),
                 Op::Read(_) => Value::Reader(p::Handle {
                     handle: self.next.fetch_add(1, Ordering::SeqCst),
                 }),
@@ -495,7 +499,7 @@ async fn host_forwards_bound_lookup_context_and_preserves_link_bytes() -> Result
     let storage = open(&driver).await?;
     let target = storage
         .read_link(
-            ah_vfs_storage::ReadLinkRequest::new(ah_vfs_storage::PathExpr::parse("../link")?),
+            ah_vfs_storage::PathExpr::parse("../link")?,
             LookupContext {
                 working_directory: StoragePath::parse("docs/sub")?,
                 intermediate_symlinks: ah_vfs_storage::IntermediateSymlinks::Reject,

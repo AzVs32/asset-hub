@@ -2,8 +2,8 @@
 use crate as p;
 use ah_vfs_storage::{
     AttributeSupport, Capabilities, ContractViolation, DirectorySupport, Entry, EntryError,
-    EntryType, PathError, Publication, ReadSupport, RenameMode, RenameSupport, StoragePath,
-    WriteMode, WriteModes, WriteSupport,
+    EntryType, MutationBinding, PathError, Publication, ReadSupport, RenameMode, RenameSupport,
+    StoragePath, WriteMode, WriteModes, WriteSupport,
 };
 use std::{
     collections::BTreeSet,
@@ -19,6 +19,10 @@ pub fn encode_capabilities(c: Capabilities) -> Vec<i32> {
         (c.read_link(), p::Capability::ReadLink),
         (c.directories().can_create(), p::Capability::CreateDir),
         (c.remove(), p::Capability::Remove),
+        (
+            c.mutation_binding() == MutationBinding::FinalSlotAtomic,
+            p::Capability::FinalSlotAtomic,
+        ),
         (c.directories().persistent_empty(), p::Capability::EmptyDirs),
         (
             write.supports(WriteMode::CreateNew, Publication::Staged),
@@ -133,7 +137,12 @@ pub fn decode_capabilities(names: &[i32]) -> Result<Capabilities, ContractViolat
         .with_remove(has(C::Remove))
         .with_rename(rename)
         .with_permissions(attrs(C::PermissionsRead, C::PermissionsWrite))
-        .with_xattrs(attrs(C::XattrsRead, C::XattrsWrite)))
+        .with_xattrs(attrs(C::XattrsRead, C::XattrsWrite))
+        .with_mutation_binding(if has(C::FinalSlotAtomic) {
+            MutationBinding::FinalSlotAtomic
+        } else {
+            MutationBinding::ParentPinned
+        }))
 }
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]

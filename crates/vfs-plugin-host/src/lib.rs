@@ -13,7 +13,7 @@ use ah_vfs_storage::{
     AttributeRequest, AttributeResult, AttributeSupport, BoundListRequest, DirectoryPage,
     DirectorySelection, Entry, ListRequest, StoragePath,
 };
-use ah_vfs_storage::{LinkTarget, ReadLinkRequest, ReadRequest, StatRequest, WriteRequest};
+use ah_vfs_storage::{LinkTarget, PathExpr, ReadLinkRequest, ReadRequest, StatRequest, WriteRequest};
 use std::{
     collections::HashSet,
     future::Future,
@@ -607,11 +607,11 @@ impl Storage for RemoteStorage {
         })
     }
 
-    fn read_link(
+    fn bind_link(
         &self,
-        request: ReadLinkRequest,
+        operand: PathExpr,
         context: LookupContext,
-    ) -> StorageFuture<'_, LinkTarget> {
+    ) -> StorageFuture<'_, Box<dyn BoundLink>> {
         Box::pin(async move {
             let op = Operation::ReadLink;
             if !self.driver_info.capabilities().read_link() {
@@ -621,22 +621,45 @@ impl Storage for RemoteStorage {
                     None,
                 ));
             }
-            let lookup = p::encode_lookup(
-                request.path(),
-                &context.working_directory,
-                context.intermediate_symlinks,
-            );
+            let stat = StatRequest::new(operand.clone(), ah_vfs_storage::SymlinkAction::Preserve);
+            let expected = expected_lookup_address(stat.lookup(), &context);
             let reply = self
                 .call(
-                    p::StorageOp::ReadLink(p::ReadLink {
-                        lookup: Some(lookup),
-                    }),
+                    p::StorageOp::BindLink(p::encode_bind_link(
+                        &operand,
+                        &context.working_directory,
+                        context.intermediate_symlinks,
+                    )),
                     vec![],
                 )
                 .await?;
             match reply.result {
-                Some(Value::Bytes(_)) if reply.data.len() <= p::MAX_DATA_BYTES => {
-                    Ok(LinkTarget::new(reply.data))
+                Some(Value::BoundLink(p::BoundLink { handle, path })) => {
+                    let resource = Resource::new(
+                        self.resource.runtime.clone(),
+                        p::ResourceKind::Link,
+                        handle,
+                    )
+                    .map_err(|error| {
+                        if error.lifecycle_error().is_some_and(|error| {
+                            error.failure() == LifecycleFailure::Stale
+                        }) {
+                            StorageError::without_effects(
+                                op,
+                                Failure::Backend(BackendFailure::Stale),
+                                Some(Box::new(error)),
+                            )
+                        } else {
+                            convert::storage_error(op, false, error)
+                        }
+                    })?;
+                    let path = StoragePath::parse(&path).map_err(|source| {
+                        convert::storage_protocol_violation_with_source(op, source)
+                    })?;
+                    if expected.is_some_and(|expected| expected != path) {
+                        return Err(bad_response(op, false));
+                    }
+                    Ok(Box::new(RemoteLink { resource, path }) as Box<dyn BoundLink>)
                 }
                 _ => Err(bad_response(op, false)),
             }
@@ -907,6 +930,43 @@ impl Storage for RemoteStorage {
 fn closed(operation: Operation) -> StorageError {
     StorageError::without_effects(operation, Failure::Backend(BackendFailure::Closed), None)
 }
+struct RemoteLink {
+    resource: Resource,
+    path: StoragePath,
+}
+
+impl BoundLink for RemoteLink {
+    fn path(&self) -> &StoragePath {
+        &self.path
+    }
+
+    fn read(&self, request: ReadLinkRequest) -> StorageFuture<'_, LinkTarget> {
+        Box::pin(async move {
+            let op = Operation::ReadLink;
+            if request.path() != &self.path {
+                return Err(StorageError::without_effects(
+                    op,
+                    Failure::Contract(ContractViolation::InvalidBinding),
+                    None,
+                ));
+            }
+            let reply = self
+                .resource
+                .runtime
+                .call(
+                    Op::ReadBoundLink(p::Handle { handle: self.resource.handle }),
+                    vec![],
+                )
+                .await
+                .map_err(|error| convert::storage_error(op, false, error))?;
+            match reply.result {
+                Some(Value::Bytes(_)) => Ok(LinkTarget::new(reply.data)),
+                _ => Err(bad_response(op, false)),
+            }
+        })
+    }
+}
+
 struct RemoteReader {
     resource: Option<Resource>,
     eof: bool,

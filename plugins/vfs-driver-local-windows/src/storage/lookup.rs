@@ -398,7 +398,11 @@ fn create_child(
             *created = true;
             let (file, metadata) = open(op, dir, name)?;
             if !metadata.is_dir() || fs::reparse(&metadata) {
-                return Err(stale(op));
+                return Err(StorageError::after_dispatch(
+                    op,
+                    Failure::Backend(BackendFailure::Other),
+                    None,
+                ));
             }
             Ok((file, metadata))
         }
@@ -599,9 +603,18 @@ pub(super) fn list_stale() -> StorageError {
     stale(Operation::List)
 }
 
+pub(super) fn list_replaced(resuming: bool) -> StorageError {
+    if resuming {
+        list_stale()
+    } else {
+        rejected(Operation::List, Rejection::Conflict)
+    }
+}
+
 pub(super) fn reopen_listing_directory(
     root: &Dir,
     selection: &ah_vfs_storage::DirectorySelection,
+    resuming: bool,
 ) -> Result<Dir, StorageError> {
     use ah_vfs_storage::{IntermediateSymlinks, StatRequest};
     let context = LookupContext {
@@ -621,9 +634,10 @@ pub(super) fn reopen_listing_directory(
                     Rejection::NotFound
                         | Rejection::NotDirectory
                         | Rejection::SymlinkNotAllowed
-                        | Rejection::Unsupported
                 )
             ) {
+                list_replaced(resuming)
+            } else if resuming && error.failure() == Failure::Rejected(Rejection::Unsupported) {
                 list_stale()
             } else {
                 error

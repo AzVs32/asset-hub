@@ -1,7 +1,7 @@
 use ah_vfs::application::driver_error::LifecycleFailure;
 use ah_vfs_storage::{
-    AttributeSupport, Capabilities, DirectorySupport, ReadSupport, RenameSupport, WriteModes,
-    WriteSupport,
+    AttributeSupport, Capabilities, DirectorySupport, MutationBinding, ReadSupport, RenameSupport,
+    WriteModes, WriteSupport,
 };
 use std::error::Error;
 use vfs_plugin_codec::decode_capabilities;
@@ -54,5 +54,21 @@ fn valid_capabilities_round_trip_and_unknown_optional_values_do_not_enable_featu
         assert_eq!(decode_capabilities(&wire)?, declared);
     }
     assert_eq!(decode_capabilities(&[i32::MAX])?, Capabilities::default());
+    Ok(())
+}
+
+#[test]
+fn mutation_binding_round_trips_through_plugin_declarations() -> Result<(), Box<dyn Error>> {
+    for binding in [MutationBinding::ParentPinned, MutationBinding::FinalSlotAtomic] {
+        let declared = Capabilities::default().with_mutation_binding(binding);
+        assert_eq!(
+            decode_capabilities(&p::encode_capabilities(declared))?,
+            declared
+        );
+    }
+    assert_eq!(
+        Capabilities::default().mutation_binding(),
+        MutationBinding::ParentPinned
+    );
     Ok(())
 }

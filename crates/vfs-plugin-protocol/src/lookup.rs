@@ -257,28 +257,20 @@ pub fn decode_rename(
     ))
 }
 
-pub fn encode_read_link(
-    request: &ah_vfs_storage::ReadLinkRequest,
+pub fn encode_bind_link(
+    operand: &PathExpr,
     base: &StoragePath,
     links: IntermediateSymlinks,
-) -> super::ReadLink {
-    super::ReadLink {
-        lookup: Some(encode_lookup(request.path(), base, links)),
+) -> super::BindLink {
+    super::BindLink {
+        lookup: Some(encode_lookup(operand, base, links)),
     }
 }
 
-pub fn decode_read_link(
-    value: super::ReadLink,
-) -> Result<
-    (
-        ah_vfs_storage::ReadLinkRequest,
-        StoragePath,
-        IntermediateSymlinks,
-    ),
-    LookupValueError,
-> {
-    let (operand, base, links) = decode_lookup(value.lookup)?;
-    Ok((ah_vfs_storage::ReadLinkRequest::new(operand), base, links))
+pub fn decode_bind_link(
+    value: super::BindLink,
+) -> Result<(PathExpr, StoragePath, IntermediateSymlinks), LookupValueError> {
+    decode_lookup(value.lookup)
 }
 
 /// Encode the opaque link bytes without a second allocation.

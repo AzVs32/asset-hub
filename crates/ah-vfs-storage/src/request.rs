@@ -118,16 +118,20 @@ impl StatRequest {
 #[derive(Clone, Debug, Eq, PartialEq, Getters)]
 pub struct ReadLinkRequest {
     #[getset(get = "pub")]
-    path: PathExpr,
+    path: StoragePath,
 }
 
 impl ReadLinkRequest {
-    pub fn new(path: PathExpr) -> Self {
+    pub fn new(path: StoragePath) -> Self {
         Self { path }
     }
 
-    pub fn lookup(&self) -> PathLookup<'_> {
-        PathLookup::new(&self.path, SymlinkAction::Preserve, ExistingTarget::Symlink)
+    pub fn check_target(&self, kind: EntryType) -> Result<(), Rejection> {
+        if kind == EntryType::Symlink {
+            Ok(())
+        } else {
+            Err(Rejection::NotSymlink)
+        }
     }
 }
 

@@ -1,6 +1,6 @@
 use crate::Capacity;
 use ah_vfs::application::port::LookupContext;
-use ah_vfs::application::port::{Storage, StorageFileReader, StorageFileWriter, StorageFuture};
+use ah_vfs::application::port::{BoundLink, Storage, StorageFileReader, StorageFileWriter, StorageFuture};
 use ah_vfs_storage::{
     BackendFailure, ContractViolation, Failure, Operation, Rejection, StorageError,
 };
@@ -8,7 +8,7 @@ use ah_vfs_storage::{
     BoundListRequest, DirectoryPage, DirectorySelection, ListRequest, WriteRequest,
 };
 use ah_vfs_storage::{
-    Entry, EntryType, LinkTarget, ReadLinkRequest, ReadRequest, StatRequest, StoragePath,
+    Entry, EntryType, PathExpr, ReadRequest, StatRequest, StoragePath,
 };
 use std::{
     collections::BTreeMap,
@@ -102,7 +102,7 @@ impl Drop for Blob {
 enum EntryData {
     Dir(Arc<ah_vfs_storage::DirectoryIdentity>),
     File(Arc<Blob>),
-    Link(ah_vfs_storage::LinkTarget),
+    Link(Arc<ah_vfs_storage::LinkTarget>),
 }
 
 #[derive(Clone)]
@@ -226,12 +226,14 @@ impl Storage for MemoryStorage {
         Box::pin(async move { self.stat_selected(&request, context) })
     }
 
-    fn read_link(
+    fn bind_link(
         &self,
-        request: ReadLinkRequest,
+        operand: PathExpr,
         context: LookupContext,
-    ) -> StorageFuture<'_, LinkTarget> {
-        Box::pin(async move { self.read_link_selected(&request, context) })
+    ) -> StorageFuture<'_, Box<dyn BoundLink>> {
+        Box::pin(async move {
+            Ok(Box::new(self.bind_selected_link(operand, context)?) as Box<dyn BoundLink>)
+        })
     }
 
     fn select_directory<'a>(
