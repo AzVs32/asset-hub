@@ -2,13 +2,14 @@
 
 use ah_vfs::application::port::{DirectoryBindings, LookupContext};
 use ah_vfs::application::port::{
-    BoundLink, Storage, StorageAttributes, StorageFileReader, StorageFileWriter, StorageFuture,
+    OperationLookup, Storage, StorageAttributes, StorageFileReader, StorageFileWriter,
+    StorageFuture,
 };
 use ah_vfs_storage::{
     BackendFailure, BoundListRequest, DirectoryPage, DirectorySelection, Failure, ListRequest,
     ListTarget, Operation, StorageError,
 };
-use ah_vfs_storage::{Entry, PathExpr, ReadRequest, StatRequest, WriteRequest};
+use ah_vfs_storage::{Entry, ReadRequest, StatRequest, WriteRequest};
 
 use cap_std::fs::Dir;
 use std::num::NonZeroUsize;
@@ -93,15 +94,17 @@ impl Storage for LinuxLocalStorage {
         }))
     }
 
-    fn bind_link(
-        &self,
-        operand: PathExpr,
-        context: LookupContext,
-    ) -> StorageFuture<'_, Box<dyn BoundLink>> {
-        let dir = self.dir.clone();
-        Box::pin(blocking(Operation::ReadLink, false, move || {
-            Ok(Box::new(lookup::bind_link(dir, operand, context)?) as Box<dyn BoundLink>)
-        }))
+    fn begin_lookup(&self, operation: Operation) -> StorageFuture<'_, Box<dyn OperationLookup>> {
+        Box::pin(async move {
+            if operation != Operation::ReadLink {
+                return Err(StorageError::without_effects(
+                    operation,
+                    Failure::Rejected(ah_vfs_storage::Rejection::Unsupported),
+                    None,
+                ));
+            }
+            Ok(Box::new(lookup::LocalLookup::new(self.dir.clone())) as Box<dyn OperationLookup>)
+        })
     }
 
     fn select_directory<'a>(

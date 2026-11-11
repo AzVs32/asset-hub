@@ -74,7 +74,7 @@
 //!
 //! ## Resource lifetime
 //!
-//! Each storage/reader/writer resource belongs to one authenticated registration
+//! Each storage, reader, writer and lookup resource belongs to one authenticated registration
 //! and its owning WASM Store or gRPC Storage session. Resource IDs cannot be reused
 //! within that scope or rebound across scopes. Proxies retain their runtime
 //! independently of the catalog and MountRuntime. Unregistering prevents new routing; graceful
@@ -82,6 +82,12 @@
 //! A crash cannot preserve remote resources: old proxies fail with StaleHandle
 //! or Unavailable, cached storage is invalidated, and new opens use the new
 //! generation. Existing streams are never silently reopened or replayed.
+//!
+//! A ReadLink lookup issues a root observation and binds each child by parent
+//! observation and exact name. The host resolves link targets and supplies a
+//! canonical request for the final read. Observation IDs belong to the lookup
+//! that issued them. Unknown or retired lookup or observation IDs return
+//! `Stale`. Replaced slots detected in a live lookup return `Conflict`.
 //!
 //! Reader EOF is sticky. Cancellation of an in-flight next call may close the
 //! reader because byte consumption can be uncertain. Once execution starts, writer
@@ -95,6 +101,10 @@
 //! buffer an entire file merely to bridge transports.
 //!
 //! ## Mutation guarantees
+//!
+//! On open, the storage implementation's guarantee must match the driver
+//! declaration. This check compares the two declarations without probing a
+//! mutation.
 //!
 //! With `FinalSlotAtomic`, the backend checks the observed final name and
 //! applies the mutation atomically. A mismatch returns `Conflict` with
@@ -120,7 +130,8 @@ pub use driver::{Driver, DriverFuture};
 pub use mount_repository::{MountRepository, MountRepositoryFuture};
 pub use storage::validate_storage_extensions;
 pub use storage::{
-    BoundLink, LookupContext, Storage, StorageFileReader, StorageFileWriter, StorageFuture,
+    BoundLink, LookupContext, LookupScope, ObservedEntry, OperationLookup, Storage,
+    StorageFileReader, StorageFileWriter, StorageFuture,
 };
 
 mod storage_attributes;

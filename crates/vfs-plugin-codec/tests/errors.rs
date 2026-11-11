@@ -237,6 +237,21 @@ fn dispatch_evidence_round_trips_independently_of_the_failure_cause() -> Result 
     Ok(())
 }
 #[test]
+fn a_request_with_the_wrong_binding_has_a_caller_failure() -> Result {
+    let failure = StorageError::without_effects(Operation::ReadLink, Failure::InvalidBinding, None);
+    let mut wire = p::encode_storage_error(&failure)?;
+    assert_eq!(wire.family, "caller");
+    assert_eq!(wire.reason, "invalid-binding");
+    let decoded = p::decode_storage_error(wire.clone())?;
+    assert_eq!(decoded.failure(), Failure::InvalidBinding);
+    assert_eq!(decoded.outcome(), ah_vfs_storage::MutationOutcome::Unchanged);
+
+    wire.family = "contract".into();
+    assert!(p::decode_storage_error(wire).is_err());
+    Ok(())
+}
+
+#[test]
 fn unknown_failure_tags_and_read_mutation_outcomes_are_rejected() -> Result {
     let error = StorageError::without_effects(
         Operation::Read,

@@ -1,16 +1,20 @@
 //! Handle-bound metadata and link lookup on Linux.
 use super::{blocking, fs};
-use ah_vfs::application::port::{BoundLink, LookupContext, StorageFuture};
+use ah_vfs::application::port::{
+    LookupContext, LookupScope, ObservedEntry, OperationLookup, StorageFuture,
+};
 use ah_vfs::resolve::{LookupPort, Resolver};
 use ah_vfs_storage::{
-    BackendFailure, ContractViolation, CreateDirectoryRequest, Entry, EntryName, EntryType,
-    Failure, LinkTarget, LookupStart, Operation, PathExpr, PathLookup, ReadLinkRequest, Rejection,
-    StatRequest, StorageError, StoragePath, SymlinkAction,
+    BackendFailure, CreateDirectoryRequest, Entry, EntryName, EntryType, Failure, LinkTarget,
+    LookupStart, Operation, PathLookup, Rejection, StorageError, StoragePath, SymlinkAction,
 };
 use cap_std::fs::{Dir, File};
 use rustix::fs::{Mode, OFlags, ResolveFlags, fstat, mkdirat, openat2, readlinkat};
 use rustix::io::Errno;
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, Mutex},
+};
 
 fn failure(operation: Operation, reason: Failure) -> StorageError {
     StorageError::without_effects(operation, reason, None)
@@ -38,52 +42,96 @@ pub(super) fn stat(
     Ok(Walk::select(root, lookup, context, Operation::Stat)?.entry)
 }
 
-pub(super) fn bind_link(
+pub(super) struct LocalLookup {
     root: Arc<Dir>,
-    operand: PathExpr,
-    context: LookupContext,
-) -> Result<LocalLink, StorageError> {
-    let op = Operation::ReadLink;
-    let stat = StatRequest::new(operand, SymlinkAction::Preserve);
-    let mut walk = Walk::new(&root, stat.lookup(), op);
-    let selected = walk.resolve(&context)?;
-    ReadLinkRequest::new(selected.entry.path().clone())
-        .check_target(selected.entry.entry_type())
-        .map_err(|reason| rejected(op, reason))?;
-    let observed = walk.bound;
-    Ok(LocalLink {
-        root,
-        selected,
-        observed: Arc::new(observed),
-    })
+    scope: LookupScope,
+    observed: Arc<Mutex<BTreeMap<StoragePath, Arc<File>>>>,
 }
 
-pub(super) struct LocalLink {
-    root: Arc<Dir>,
-    selected: Selected,
-    observed: Arc<BTreeMap<StoragePath, Arc<File>>>,
+impl LocalLookup {
+    pub(super) fn new(root: Arc<Dir>) -> Self {
+        Self {
+            root,
+            scope: LookupScope::default(),
+            observed: Arc::default(),
+        }
+    }
 }
 
-impl BoundLink for LocalLink {
-    fn path(&self) -> &StoragePath {
-        self.selected.entry.path()
+impl OperationLookup for LocalLookup {
+    fn operation(&self) -> Operation {
+        Operation::ReadLink
     }
 
-    fn read(&self, request: ReadLinkRequest) -> StorageFuture<'_, LinkTarget> {
+    fn root(&mut self) -> StorageFuture<'_, ObservedEntry> {
         let root = self.root.clone();
-        let selected = self.selected.clone();
-        let observed = self.observed.clone();
-        Box::pin(blocking(Operation::ReadLink, false, move || {
-            let op = Operation::ReadLink;
-            if request.path() != selected.entry.path() {
-                return Err(failure(
-                    op,
-                    Failure::Contract(ContractViolation::InvalidBinding),
-                ));
+        Box::pin(async move {
+            let op = self.operation();
+            let selected = blocking(op, false, move || {
+                let path = StoragePath::root();
+                let file = open_observed(&root, &path, op)?;
+                observe_selected(op, &mut BTreeMap::new(), path, file)
+            })
+            .await?;
+            Ok(self.scope.bind(selected.entry.clone(), selected))
+        })
+    }
+
+    fn observe<'a>(
+        &'a mut self,
+        parent: &'a ObservedEntry,
+        name: &'a EntryName,
+    ) -> StorageFuture<'a, ObservedEntry> {
+        Box::pin(async move {
+            let op = self.operation();
+            let parent = self
+                .scope
+                .get::<Selected>(parent)
+                .ok_or_else(|| stale(op))?
+                .clone();
+            if parent.entry.entry_type() != EntryType::Directory {
+                return Err(rejected(op, Rejection::NotDirectory));
             }
-            let target = link_bytes(op, &selected.file)?;
-            verify_observations(&root, &observed, op)?;
-            Ok(target)
+            let path = parent
+                .entry
+                .path()
+                .join(name)
+                .map_err(|_| rejected(op, Rejection::PathTooLong))?;
+            let name = name.as_str().to_owned();
+            let observed = self.observed.clone();
+            let selected = blocking(op, false, move || {
+                let file = open_child(op, &parent, &name)?;
+                let mut observed = observed
+                    .lock()
+                    .map_err(|_| failure(op, Failure::Backend(BackendFailure::Other)))?;
+                observe_selected(op, &mut observed, path, file)
+            })
+            .await?;
+            Ok(self.scope.bind(selected.entry.clone(), selected))
+        })
+    }
+
+    fn read_link<'a>(&'a self, entry: &'a ObservedEntry) -> StorageFuture<'a, LinkTarget> {
+        Box::pin(async move {
+            let op = self.operation();
+            let selected = self.scope.get::<Selected>(entry).ok_or_else(|| stale(op))?;
+            if selected.entry.entry_type() != EntryType::Symlink {
+                return Err(rejected(op, Rejection::NotSymlink));
+            }
+            let file = selected.file.clone();
+            blocking(op, false, move || link_bytes(op, &file)).await
+        })
+    }
+
+    fn verify(&self) -> StorageFuture<'_, ()> {
+        let root = self.root.clone();
+        let observed = self.observed.clone();
+        let op = self.operation();
+        Box::pin(blocking(op, false, move || {
+            let observed = observed
+                .lock()
+                .map_err(|_| failure(op, Failure::Backend(BackendFailure::Other)))?;
+            verify_observations(&root, &observed, op)
         }))
     }
 }
@@ -134,16 +182,8 @@ pub(super) fn create_dir(
     request: &CreateDirectoryRequest,
     context: LookupContext,
 ) -> Result<Entry, StorageError> {
-    let op = Operation::CreateDirectory;
-    let mut walk = Walk::new(root, request.lookup(), op);
-    let result = walk.resolve(&context).map(|selected| selected.entry);
-    result.map_err(|error| {
-        if walk.created {
-            StorageError::after_dispatch(op, error.failure(), Some(Box::new(error)))
-        } else {
-            error
-        }
-    })
+    Walk::select(root, request.lookup(), context, Operation::CreateDirectory)
+        .map(|selected| selected.entry)
 }
 
 struct Slot {
@@ -349,7 +389,6 @@ struct Walk<'a, 'r> {
     root: &'a Dir,
     lookup: PathLookup<'r>,
     op: Operation,
-    created: bool,
     // Keep the handles used to resolve the operand, even when navigation
     // leaves a directory or follows a link. Revalidate before returning.
     bound: BTreeMap<StoragePath, Arc<File>>,
@@ -370,7 +409,6 @@ impl<'a, 'r> Walk<'a, 'r> {
             root,
             lookup,
             op,
-            created: false,
             bound: BTreeMap::new(),
         }
     }
@@ -383,14 +421,12 @@ impl<'a, 'r> Walk<'a, 'r> {
         let selected = Resolver::new(op, context.intermediate_symlinks)
             .walk(self, lookup, directories)?
             .require_entry(op)?;
-        // Single can create only the final component. Its successful creation
-        // has already satisfied the absent-target policy.
-        if !self.created || lookup.final_symlink() != SymlinkAction::Preserve {
+        if op != Operation::CreateDirectory {
             lookup
                 .check_existing_target(selected.entry.path(), selected.entry.entry_type())
                 .map_err(|reason| rejected(op, reason))?;
+            self.verify_bound()?;
         }
-        self.verify_bound()?;
         Ok(selected)
     }
 
@@ -454,15 +490,8 @@ impl<'a, 'r> Walk<'a, 'r> {
         path: StoragePath,
         name: &str,
     ) -> Result<Selected, StorageError> {
-        let fd = openat2(
-            parent.file.as_ref(),
-            name,
-            OFlags::PATH | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-            Mode::empty(),
-            ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
-        )
-        .map_err(|cause| fs::error(self.op, cause.into()))?;
-        self.selected(path, File::from_std(fd.into()))
+        let file = open_child(self.op, parent, name)?;
+        self.selected(path, file)
     }
 
     fn create_child(
@@ -482,18 +511,18 @@ impl<'a, 'r> Walk<'a, 'r> {
             | Mode::WOTH
             | Mode::XOTH;
         match mkdirat(parent.file.as_ref(), name, mode) {
-            Ok(()) => {
-                self.created = true;
-                let selected = self.child(parent, path, name)?;
-                if selected.entry.entry_type() != EntryType::Directory {
-                    return Err(failure(self.op, Failure::Backend(BackendFailure::Other)));
-                }
-                Ok(selected)
-            }
-            Err(Errno::EXIST) if self.lookup.final_symlink() == SymlinkAction::Preserve => {
-                Err(rejected(self.op, Rejection::AlreadyExists))
-            }
-            Err(Errno::EXIST) => self.child(parent, path, name),
+            Ok(()) => self
+                .child(parent, path, name)
+                .and_then(|selected| {
+                    if selected.entry.entry_type() != EntryType::Directory {
+                        return Err(failure(self.op, Failure::Backend(BackendFailure::Other)));
+                    }
+                    Ok(selected)
+                })
+                .map_err(|error| {
+                    StorageError::after_dispatch(self.op, error.failure(), Some(Box::new(error)))
+                }),
+            Err(Errno::EXIST) => Err(rejected(self.op, Rejection::AlreadyExists)),
             Err(
                 cause @ (Errno::NOENT
                 | Errno::NOTDIR
@@ -511,28 +540,49 @@ impl<'a, 'r> Walk<'a, 'r> {
     }
 
     fn selected(&mut self, path: StoragePath, file: File) -> Result<Selected, StorageError> {
-        let file = Arc::new(file);
-        let metadata = file.metadata().map_err(|cause| fs::error(self.op, cause))?;
-        let entry = fs::entry(self.op, path, metadata)?;
-        if !entry.path().is_root() {
-            match self.bound.entry(entry.path().clone()) {
-                std::collections::btree_map::Entry::Vacant(slot) => {
-                    slot.insert(file.clone());
-                }
-                std::collections::btree_map::Entry::Occupied(slot)
-                    if identity(self.op, slot.get())? != identity(self.op, &file)? =>
-                {
-                    return Err(rejected(self.op, Rejection::Conflict));
-                }
-                _ => {}
-            }
-        }
-        Ok(Selected { entry, file })
+        observe_selected(self.op, &mut self.bound, path, file)
     }
 
     fn verify_bound(&self) -> Result<(), StorageError> {
         verify_observations(self.root, &self.bound, self.op)
     }
+}
+
+fn open_child(op: Operation, parent: &Selected, name: &str) -> Result<File, StorageError> {
+    let fd = openat2(
+        parent.file.as_ref(),
+        name,
+        OFlags::PATH | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+        ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+    )
+    .map_err(|cause| fs::error(op, cause.into()))?;
+    Ok(File::from_std(fd.into()))
+}
+
+fn observe_selected(
+    op: Operation,
+    observed: &mut BTreeMap<StoragePath, Arc<File>>,
+    path: StoragePath,
+    file: File,
+) -> Result<Selected, StorageError> {
+    let metadata = file.metadata().map_err(|cause| fs::error(op, cause))?;
+    let entry = fs::entry(op, path, metadata)?;
+    let file = Arc::new(file);
+    let file = if entry.path().is_root() {
+        file
+    } else {
+        match observed.entry(entry.path().clone()) {
+            std::collections::btree_map::Entry::Vacant(slot) => slot.insert(file).clone(),
+            std::collections::btree_map::Entry::Occupied(slot) => {
+                if identity(op, slot.get())? != identity(op, &file)? {
+                    return Err(rejected(op, Rejection::Conflict));
+                }
+                slot.get().clone()
+            }
+        }
+    };
+    Ok(Selected { entry, file })
 }
 
 impl LookupPort for Walk<'_, '_> {
@@ -542,7 +592,7 @@ impl LookupPort for Walk<'_, '_> {
         &binding.entry
     }
 
-    fn observe_child(
+    async fn observe_child(
         &mut self,
         parent: &Selected,
         address: StoragePath,
@@ -551,17 +601,21 @@ impl LookupPort for Walk<'_, '_> {
         self.child(parent, address, name.as_str())
     }
 
-    fn read_bound_link(&self, entry: &Selected) -> Result<LinkTarget, StorageError> {
+    async fn read_bound_link(&self, entry: &Selected) -> Result<LinkTarget, StorageError> {
         link_bytes(self.op, &entry.file)
     }
 
-    fn create_child(
+    async fn create_child(
         &mut self,
         parent: &Selected,
         address: StoragePath,
         name: &EntryName,
     ) -> Result<Selected, StorageError> {
         self.create_child(parent, address, name.as_str())
+    }
+
+    async fn verify_observations(&self) -> Result<(), StorageError> {
+        self.verify_bound()
     }
 }
 

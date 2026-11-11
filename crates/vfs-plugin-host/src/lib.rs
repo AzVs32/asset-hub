@@ -11,9 +11,9 @@ use ah_vfs::application::dto::*;
 use ah_vfs::application::port::*;
 use ah_vfs_storage::{
     AttributeRequest, AttributeResult, AttributeSupport, BoundListRequest, DirectoryPage,
-    DirectorySelection, Entry, ListRequest, StoragePath,
+    DirectorySelection, Entry, EntryName, ListRequest, MutationBinding, StoragePath,
 };
-use ah_vfs_storage::{LinkTarget, PathExpr, ReadLinkRequest, ReadRequest, StatRequest, WriteRequest};
+use ah_vfs_storage::{LinkTarget, ReadLinkRequest, ReadRequest, StatRequest, WriteRequest};
 use std::{
     collections::HashSet,
     future::Future,
@@ -561,6 +561,10 @@ impl Storage for RemoteStorage {
         (permissions.can_read() || xattrs.can_read()).then_some(self)
     }
 
+    fn mutation_binding(&self) -> MutationBinding {
+        self.driver_info.capabilities().mutation_binding()
+    }
+
     fn stat_entry(&self, request: StatRequest, context: LookupContext) -> StorageFuture<'_, Entry> {
         Box::pin(async move {
             let op = Operation::Stat;
@@ -607,64 +611,61 @@ impl Storage for RemoteStorage {
         })
     }
 
-    fn bind_link(
-        &self,
-        operand: PathExpr,
-        context: LookupContext,
-    ) -> StorageFuture<'_, Box<dyn BoundLink>> {
+    fn begin_lookup(&self, op: Operation) -> StorageFuture<'_, Box<dyn OperationLookup>> {
         Box::pin(async move {
-            let op = Operation::ReadLink;
-            if !self.driver_info.capabilities().read_link() {
+            if op != Operation::ReadLink || !self.driver_info.capabilities().read_link() {
                 return Err(StorageError::without_effects(
                     op,
                     Failure::Rejected(Rejection::Unsupported),
                     None,
                 ));
             }
-            let stat = StatRequest::new(operand.clone(), ah_vfs_storage::SymlinkAction::Preserve);
-            let expected = expected_lookup_address(stat.lookup(), &context);
             let reply = self
+                .resource
+                .runtime
                 .call(
-                    p::StorageOp::BindLink(p::encode_bind_link(
-                        &operand,
-                        &context.working_directory,
-                        context.intermediate_symlinks,
-                    )),
+                    Op::BeginLookup(p::Handle {
+                        handle: self.resource.handle,
+                    }),
                     vec![],
                 )
-                .await?;
-            match reply.result {
-                Some(Value::BoundLink(p::BoundLink { handle, path })) => {
-                    let resource = Resource::new(
-                        self.resource.runtime.clone(),
-                        p::ResourceKind::Link,
-                        handle,
+                .await
+                .map_err(|error| convert::storage_error(op, false, error))?;
+            let Some(Value::OpenedLookup(p::OpenedLookup { handle, root })) = reply.result else {
+                return Err(bad_response(op, false));
+            };
+            let resource = Resource::new(
+                self.resource.runtime.clone(),
+                p::ResourceKind::Lookup,
+                handle,
+            )
+            .map_err(|error| {
+                if error
+                    .lifecycle_error()
+                    .is_some_and(|error| error.failure() == LifecycleFailure::Stale)
+                {
+                    StorageError::without_effects(
+                        op,
+                        Failure::Backend(BackendFailure::Stale),
+                        Some(Box::new(error)),
                     )
-                    .map_err(|error| {
-                        if error.lifecycle_error().is_some_and(|error| {
-                            error.failure() == LifecycleFailure::Stale
-                        }) {
-                            StorageError::without_effects(
-                                op,
-                                Failure::Backend(BackendFailure::Stale),
-                                Some(Box::new(error)),
-                            )
-                        } else {
-                            convert::storage_error(op, false, error)
-                        }
-                    })?;
-                    let path = StoragePath::parse(&path).map_err(|source| {
-                        convert::storage_protocol_violation_with_source(op, source)
-                    })?;
-                    if expected.is_some_and(|expected| expected != path) {
-                        return Err(bad_response(op, false));
-                    }
-                    Ok(Box::new(RemoteLink { resource, path }) as Box<dyn BoundLink>)
+                } else {
+                    convert::storage_error(op, false, error)
                 }
-                _ => Err(bad_response(op, false)),
+            })?;
+            let scope = LookupScope::default();
+            let root = decode_observation(&scope, root.ok_or_else(|| bad_response(op, false))?)?;
+            if root.entry().entry_type() != ah_vfs_storage::EntryType::Directory {
+                return Err(bad_response(op, false));
             }
+            Ok(Box::new(RemoteLookup {
+                resource,
+                scope,
+                root,
+            }) as Box<dyn OperationLookup>)
         })
     }
+
     fn create_dir(
         &self,
         request: ah_vfs_storage::CreateDirectoryRequest,
@@ -930,38 +931,119 @@ impl Storage for RemoteStorage {
 fn closed(operation: Operation) -> StorageError {
     StorageError::without_effects(operation, Failure::Backend(BackendFailure::Closed), None)
 }
-struct RemoteLink {
+struct RemoteLookup {
     resource: Resource,
-    path: StoragePath,
+    scope: LookupScope,
+    root: ObservedEntry,
 }
 
-impl BoundLink for RemoteLink {
-    fn path(&self) -> &StoragePath {
-        &self.path
+fn decode_observation(
+    scope: &LookupScope,
+    observed: p::ObservedEntry,
+) -> Result<ObservedEntry, StorageError> {
+    let op = Operation::ReadLink;
+    let entry = observed.entry.ok_or_else(|| bad_response(op, false))?;
+    Ok(scope.bind(convert::decode_entry(op, entry)?, observed.id))
+}
+
+impl RemoteLookup {
+    fn id(&self, observation: &ObservedEntry) -> Result<u64, StorageError> {
+        self.scope.get::<u64>(observation).copied().ok_or_else(|| {
+            StorageError::without_effects(
+                Operation::ReadLink,
+                Failure::Backend(BackendFailure::Stale),
+                None,
+            )
+        })
     }
 
-    fn read(&self, request: ReadLinkRequest) -> StorageFuture<'_, LinkTarget> {
+    async fn call(&self, op: Op) -> Result<p::Reply, StorageError> {
+        self.resource
+            .runtime
+            .call(op, vec![])
+            .await
+            .map_err(|error| convert::storage_error(Operation::ReadLink, false, error))
+    }
+    async fn read(
+        &self,
+        link: &ObservedEntry,
+        final_slot: Option<p::LinkSlot>,
+    ) -> Result<LinkTarget, StorageError> {
+        let reply = self
+            .call(Op::ReadObservedLink(p::ReadObservedLink {
+                lookup: self.resource.handle,
+                entry: self.id(link)?,
+                final_slot,
+            }))
+            .await?;
+        match reply.result {
+            Some(Value::Bytes(_)) => Ok(LinkTarget::new(reply.data)),
+            _ => Err(bad_response(Operation::ReadLink, false)),
+        }
+    }
+}
+
+impl OperationLookup for RemoteLookup {
+    fn operation(&self) -> Operation {
+        Operation::ReadLink
+    }
+
+    fn root(&mut self) -> StorageFuture<'_, ObservedEntry> {
+        Box::pin(async move { Ok(self.root.clone()) })
+    }
+
+    fn observe<'a>(
+        &'a mut self,
+        parent: &'a ObservedEntry,
+        name: &'a EntryName,
+    ) -> StorageFuture<'a, ObservedEntry> {
         Box::pin(async move {
-            let op = Operation::ReadLink;
-            if request.path() != &self.path {
-                return Err(StorageError::without_effects(
-                    op,
-                    Failure::Contract(ContractViolation::InvalidBinding),
-                    None,
-                ));
-            }
+            let parent = self.id(parent)?;
             let reply = self
-                .resource
-                .runtime
-                .call(
-                    Op::ReadBoundLink(p::Handle { handle: self.resource.handle }),
-                    vec![],
-                )
-                .await
-                .map_err(|error| convert::storage_error(op, false, error))?;
+                .call(Op::ObserveChild(p::ObserveChild {
+                    lookup: self.resource.handle,
+                    parent,
+                    name: name.as_str().into(),
+                }))
+                .await?;
             match reply.result {
-                Some(Value::Bytes(_)) => Ok(LinkTarget::new(reply.data)),
-                _ => Err(bad_response(op, false)),
+                Some(Value::ObservedEntry(observed)) => decode_observation(&self.scope, observed),
+                _ => Err(bad_response(Operation::ReadLink, false)),
+            }
+        })
+    }
+
+    fn read_link<'a>(&'a self, link: &'a ObservedEntry) -> StorageFuture<'a, LinkTarget> {
+        Box::pin(self.read(link, None))
+    }
+
+    fn execute_read_link<'a>(
+        &'a self,
+        parent: &'a ObservedEntry,
+        name: &'a EntryName,
+        link: &'a ObservedEntry,
+        request: ReadLinkRequest,
+    ) -> StorageFuture<'a, LinkTarget> {
+        Box::pin(async move {
+            let slot = p::LinkSlot {
+                parent: self.id(parent)?,
+                name: name.as_str().into(),
+                path: request.path().as_str().into(),
+            };
+            self.read(link, Some(slot)).await
+        })
+    }
+
+    fn verify(&self) -> StorageFuture<'_, ()> {
+        Box::pin(async move {
+            let reply = self
+                .call(Op::VerifyLookup(p::Handle {
+                    handle: self.resource.handle,
+                }))
+                .await?;
+            match reply.result {
+                Some(Value::Unit(_)) => Ok(()),
+                _ => Err(bad_response(Operation::ReadLink, false)),
             }
         })
     }

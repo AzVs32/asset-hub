@@ -4,7 +4,9 @@ use super::{
     file_reader::MemoryFileReader, file_writer::MemoryFileWriter,
 };
 use crate::Capacity;
-use ah_vfs::application::port::{BoundLink, LookupContext, StorageFuture};
+use ah_vfs::application::port::{
+    LookupContext, LookupScope, ObservedEntry, OperationLookup, StorageFuture,
+};
 use ah_vfs::resolve::{LookupPort, Resolution, Resolver};
 use ah_vfs_storage::*;
 use std::{
@@ -65,28 +67,6 @@ impl MemoryStorage {
         let mut nodes = self.lock(op)?;
         let path = select_with_context(&mut nodes, request.lookup(), &context, op)?;
         metadata(path.clone(), existing(&nodes, &path, op)?, op)
-    }
-
-    pub(super) fn bind_selected_link(
-        &self,
-        operand: PathExpr,
-        context: LookupContext,
-    ) -> Result<MemoryLink, StorageError> {
-        let op = Operation::ReadLink;
-        let mut nodes = self.lock(op)?;
-        let stat = StatRequest::new(operand, SymlinkAction::Preserve);
-        let mut namespace = LookupNamespace::new(&mut nodes, op);
-        let mut resolver = Resolver::new(op, context.intermediate_symlinks);
-        let path = namespace.select(&mut resolver, stat.lookup(), &context.working_directory)?;
-        let EntryData::Link(target) = &existing(namespace.nodes, &path, op)?.data else {
-            return Err(rejected(op, Rejection::NotSymlink));
-        };
-        Ok(MemoryLink {
-            shared: self.shared.clone(),
-            path,
-            target: target.clone(),
-            observed: namespace.observed,
-        })
     }
 
     pub(super) fn open_reader(
@@ -174,25 +154,11 @@ impl MemoryStorage {
         let mut nodes = self.lock(op)?;
         let mut namespace = LookupNamespace::new(&mut nodes, op);
         let lookup = request.lookup();
-        let directories = namespace.directories(lookup.path().start(), &context.working_directory)?;
-        let result = Resolver::new(op, context.intermediate_symlinks)
+        let directories =
+            namespace.directories(lookup.path().start(), &context.working_directory)?;
+        Resolver::new(op, context.intermediate_symlinks)
             .walk(&mut namespace, lookup, directories)
             .and_then(|result| result.require_entry(op))
-            .and_then(|entry| {
-                if !namespace.created || request.mode() == CreateDirectoryMode::Recursive {
-                    lookup
-                        .check_existing_target(entry.path(), entry.entry_type())
-                        .map_err(|reason| rejected(op, reason))?;
-                }
-                Ok(entry)
-            });
-        result.map_err(|error| {
-            if namespace.created {
-                StorageError::after_dispatch(op, error.failure(), Some(Box::new(error)))
-            } else {
-                error
-            }
-        })
     }
 
     pub(super) fn remove(
@@ -391,18 +357,11 @@ fn select_with_context(
 struct LookupNamespace<'a> {
     nodes: &'a mut Nodes,
     operation: Operation,
-    created: bool,
-    observed: BTreeMap<StoragePath, EntryData>,
 }
 
 impl<'a> LookupNamespace<'a> {
     fn new(nodes: &'a mut Nodes, operation: Operation) -> Self {
-        Self {
-            nodes,
-            operation,
-            created: false,
-            observed: BTreeMap::new(),
-        }
+        Self { nodes, operation }
     }
 
     fn directories(&mut self, start: LookupStart, base: &StoragePath) -> Result<Vec<Entry>, StorageError> {
@@ -427,9 +386,6 @@ impl<'a> LookupNamespace<'a> {
 
     fn observe_at(&mut self, address: StoragePath) -> Result<Entry, StorageError> {
         let node = existing(self.nodes, &address, self.operation)?;
-        if self.operation == Operation::ReadLink {
-            self.observed.insert(address.clone(), node.data.clone());
-        }
         metadata(address, node, self.operation)
     }
 
@@ -460,7 +416,7 @@ impl LookupPort for LookupNamespace<'_> {
         binding
     }
 
-    fn observe_child(
+    async fn observe_child(
         &mut self,
         _parent: &Entry,
         address: StoragePath,
@@ -469,14 +425,14 @@ impl LookupPort for LookupNamespace<'_> {
         self.observe_at(address)
     }
 
-    fn read_bound_link(&self, entry: &Entry) -> Result<LinkTarget, StorageError> {
+    async fn read_bound_link(&self, entry: &Entry) -> Result<LinkTarget, StorageError> {
         match &existing(self.nodes, entry.path(), self.operation)?.data {
             EntryData::Link(target) => Ok(target.as_ref().clone()),
             _ => Err(rejected(self.operation, Rejection::NotSymlink)),
         }
     }
 
-    fn create_child(
+    async fn create_child(
         &mut self,
         _parent: &Entry,
         address: StoragePath,
@@ -485,48 +441,127 @@ impl LookupPort for LookupNamespace<'_> {
         let MapEntry::Vacant(slot) = self.nodes.entry(address.as_str().to_owned()) else {
             return Err(rejected(self.operation, Rejection::AlreadyExists));
         };
-        self.created = true;
-        metadata(address, slot.insert(MemoryEntry::dir()), self.operation)
+        let directory = MemoryEntry::dir();
+        let entry = metadata(address, &directory, self.operation)?;
+        slot.insert(directory);
+        Ok(entry)
     }
 }
 
-pub(super) struct MemoryLink {
+pub(super) struct MemoryLookup {
     shared: Arc<Shared>,
-    path: StoragePath,
-    target: Arc<LinkTarget>,
+    scope: LookupScope,
     observed: BTreeMap<StoragePath, EntryData>,
 }
 
-impl BoundLink for MemoryLink {
-    fn path(&self) -> &StoragePath {
-        &self.path
+impl MemoryLookup {
+    pub(super) fn new(shared: Arc<Shared>) -> Self {
+        Self {
+            shared,
+            scope: LookupScope::default(),
+            observed: BTreeMap::new(),
+        }
+    }
+}
+
+fn same_entry(left: &EntryData, right: &EntryData) -> bool {
+    match (left, right) {
+        (EntryData::Dir(left), EntryData::Dir(right)) => Arc::ptr_eq(left, right),
+        (EntryData::File(left), EntryData::File(right)) => Arc::ptr_eq(left, right),
+        (EntryData::Link(left), EntryData::Link(right)) => Arc::ptr_eq(left, right),
+        _ => false,
+    }
+}
+
+fn bind_observation(
+    scope: &LookupScope,
+    observed: &mut BTreeMap<StoragePath, EntryData>,
+    address: StoragePath,
+    node: &MemoryEntry,
+    op: Operation,
+) -> Result<ObservedEntry, StorageError> {
+    let entry = metadata(address.clone(), node, op)?;
+    match observed.entry(address) {
+        MapEntry::Vacant(slot) => {
+            slot.insert(node.data.clone());
+        }
+        MapEntry::Occupied(slot) if !same_entry(slot.get(), &node.data) => {
+            return Err(rejected(op, Rejection::Conflict));
+        }
+        _ => {}
+    }
+    Ok(scope.bind(entry, node.data.clone()))
+}
+
+impl OperationLookup for MemoryLookup {
+    fn operation(&self) -> Operation {
+        Operation::ReadLink
     }
 
-    fn read(&self, request: ReadLinkRequest) -> StorageFuture<'_, LinkTarget> {
+    fn root(&mut self) -> StorageFuture<'_, ObservedEntry> {
         Box::pin(async move {
-            let op = Operation::ReadLink;
-            if request.path() != &self.path {
-                return Err(StorageError::without_effects(
-                    op,
-                    Failure::Contract(ContractViolation::InvalidBinding),
-                    None,
-                ));
+            let op = self.operation();
+            let nodes = self.shared.lock(op)?;
+            let address = StoragePath::root();
+            let node = existing(&nodes, &address, op)?;
+            bind_observation(&self.scope, &mut self.observed, address, node, op)
+        })
+    }
+
+    fn observe<'a>(
+        &'a mut self,
+        parent: &'a ObservedEntry,
+        name: &'a EntryName,
+    ) -> StorageFuture<'a, ObservedEntry> {
+        Box::pin(async move {
+            let op = self.operation();
+            let expected = self
+                .scope
+                .get::<EntryData>(parent)
+                .ok_or_else(|| stale(op))?;
+            if !matches!(expected, EntryData::Dir(_)) {
+                return Err(rejected(op, Rejection::NotDirectory));
             }
+            let address = parent
+                .entry()
+                .path()
+                .join(name)
+                .map_err(|_| rejected(op, Rejection::PathTooLong))?;
+            let nodes = self.shared.lock(op)?;
+            if !nodes
+                .get(parent.entry().path().as_str())
+                .is_some_and(|node| same_entry(expected, &node.data))
+            {
+                return Err(rejected(op, Rejection::Conflict));
+            }
+            let child = existing(&nodes, &address, op)?;
+            bind_observation(&self.scope, &mut self.observed, address, child, op)
+        })
+    }
+
+    fn read_link<'a>(&'a self, link: &'a ObservedEntry) -> StorageFuture<'a, LinkTarget> {
+        Box::pin(async move {
+            let op = self.operation();
+            match self.scope.get::<EntryData>(link).ok_or_else(|| stale(op))? {
+                EntryData::Link(target) => Ok(target.as_ref().clone()),
+                _ => Err(rejected(op, Rejection::NotSymlink)),
+            }
+        })
+    }
+
+    fn verify(&self) -> StorageFuture<'_, ()> {
+        Box::pin(async move {
+            let op = self.operation();
             let nodes = self.shared.lock(op)?;
             for (path, observed) in &self.observed {
-                let matches = nodes.get(path.as_str()).is_some_and(|entry| {
-                    match (&entry.data, observed) {
-                        (EntryData::Dir(left), EntryData::Dir(right)) => Arc::ptr_eq(left, right),
-                        (EntryData::File(left), EntryData::File(right)) => Arc::ptr_eq(left, right),
-                        (EntryData::Link(left), EntryData::Link(right)) => Arc::ptr_eq(left, right),
-                        _ => false,
-                    }
-                });
-                if !matches {
+                if !nodes
+                    .get(path.as_str())
+                    .is_some_and(|node| same_entry(observed, &node.data))
+                {
                     return Err(rejected(op, Rejection::Conflict));
                 }
             }
-            Ok(self.target.as_ref().clone())
+            Ok(())
         })
     }
 }

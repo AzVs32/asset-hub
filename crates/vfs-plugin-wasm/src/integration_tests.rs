@@ -126,6 +126,24 @@ fn denied(result: std::result::Result<String, DriverError>) -> Result {
     Ok(())
 }
 #[tokio::test]
+async fn host_follows_an_intermediate_link_in_a_real_component() -> Result {
+    let Some(bytes) = component() else {
+        return Ok(());
+    };
+    let driver = driver(bytes, Default::default()).await?;
+    let storage = driver
+        .open(OpenContext::new(
+            InstanceId::parse("one")?,
+            Default::default(),
+        ))
+        .await?;
+    let operand = ah_vfs_storage::PathExpr::parse("/alias/link")?;
+    let bytes = ah_vfs::resolve::read_link(storage.as_ref(), operand, Default::default()).await?;
+    assert_eq!(bytes.as_bytes(), b"\xff/");
+    Ok(())
+}
+
+#[tokio::test]
 async fn default_grants_deny_environment_files_and_network_and_keep_std_clock_random() -> Result {
     let Some(bytes) = component() else {
         return Ok(());

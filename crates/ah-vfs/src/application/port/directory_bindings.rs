@@ -10,9 +10,10 @@ struct Binding<H> {
     handle: H,
 }
 
-/// Keep native directory objects alive while their identities can be resumed.
-/// Each opened instance owns its registry. Eviction expires the least recently
-/// used binding and any outstanding cursors for it.
+/// Keep native directory objects alive for pagination. All callers sharing an
+/// opened instance share its registry. Eviction expires the least recently
+/// used binding and any outstanding cursors for it, regardless of the caller.
+/// Dropping the instance expires all of its bindings.
 pub struct DirectoryBindings<H> {
     bindings: Mutex<VecDeque<Binding<H>>>,
 }

@@ -18,6 +18,7 @@ const OPERATIONS: &[(&str, d::Operation)] = &[
     ("remove-xattr", d::Operation::RemoveXattr),
 ];
 const CAUSES: &[(&str, &str, d::Failure)] = &[
+    ("caller", "invalid-binding", d::Failure::InvalidBinding),
     (
         "rejected",
         "not-found",
@@ -177,11 +178,6 @@ const CAUSES: &[(&str, &str, d::Failure)] = &[
         "contract",
         "invalid-response",
         d::Failure::Contract(d::ContractViolation::InvalidResponse),
-    ),
-    (
-        "contract",
-        "invalid-binding",
-        d::Failure::Contract(d::ContractViolation::InvalidBinding),
     ),
     (
         "contract",

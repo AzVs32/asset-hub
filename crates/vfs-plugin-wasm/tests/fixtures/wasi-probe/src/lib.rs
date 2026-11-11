@@ -1,7 +1,7 @@
 //! Real Rust component for host authorization and execution integration tests.
 use ah_vfs_storage::{
-    Capabilities, Entry, EntryType, Failure, IntermediateSymlinks, Operation, Rejection,
-    StatRequest, StoragePath,
+    BackendFailure, Capabilities, Entry, EntryName, EntryType, Failure, IntermediateSymlinks,
+    LinkTarget, Operation, Rejection, StatRequest, StoragePath,
 };
 use std::num::NonZeroUsize;
 use vfs_plugin_guest::api::{self, Description, Guest, GuestStorage};
@@ -125,7 +125,7 @@ impl Guest for Probe {
             name: "WASI integration probe".into(),
             version: "1.0.0".into(),
             child_mounts: false,
-            capabilities: Capabilities::default().with_stat(true),
+            capabilities: Capabilities::default().with_stat(true).with_read_link(true),
             required_features: vec![],
             required_host_capabilities: vec![],
             settings_schema: None,
@@ -164,6 +164,10 @@ impl GuestStorage for Probe {
         NonZeroUsize::new(1024).unwrap_or(NonZeroUsize::MIN)
     }
 
+    fn begin_lookup(&self) -> api::Result<api::Lookup> {
+        Ok(api::Lookup::new(LinkLookup))
+    }
+
     fn stat(
         &self,
         request: &StatRequest,
@@ -181,5 +185,48 @@ impl GuestStorage for Probe {
                 ))
             })
         })
+    }
+}
+
+struct LinkLookup;
+
+fn link_failure(failure: Failure) -> api::Failure {
+    api::ErrorContext::storage(Operation::ReadLink).failure(failure)
+}
+
+impl api::GuestLookup for LinkLookup {
+    fn root(&mut self) -> api::Result<(u64, Entry)> {
+        let entry = Entry::new(StoragePath::root(), EntryType::Directory, None)
+            .map_err(|_| p::Failure::new(p::FailureCode::InvalidRequest))?;
+        Ok((1, entry))
+    }
+
+    fn observe(&mut self, parent: u64, name: &EntryName) -> api::Result<(u64, Entry)> {
+        let (id, path, kind) = match (parent, name.as_str()) {
+            (1, "alias") => (2, "alias", EntryType::Symlink),
+            (1, "dir") => (3, "dir", EntryType::Directory),
+            (3, "link") => (4, "dir/link", EntryType::Symlink),
+            (1 | 3, _) => return Err(link_failure(Failure::Rejected(Rejection::NotFound))),
+            (2 | 4, _) => return Err(link_failure(Failure::Rejected(Rejection::NotDirectory))),
+            _ => return Err(link_failure(Failure::Backend(BackendFailure::Stale))),
+        };
+        let path = StoragePath::parse(path)
+            .map_err(|_| p::Failure::new(p::FailureCode::InvalidRequest))?;
+        let entry = Entry::new(path, kind, None)
+            .map_err(|_| p::Failure::new(p::FailureCode::InvalidRequest))?;
+        Ok((id, entry))
+    }
+
+    fn read_link(&self, entry: u64) -> api::Result<LinkTarget> {
+        match entry {
+            2 => Ok(LinkTarget::new(b"dir".to_vec())),
+            4 => Ok(LinkTarget::new(vec![0xff, b'/'])),
+            1 | 3 => Err(link_failure(Failure::Rejected(Rejection::NotSymlink))),
+            _ => Err(link_failure(Failure::Backend(BackendFailure::Stale))),
+        }
+    }
+
+    fn verify(&self) -> api::Result<()> {
+        Ok(())
     }
 }

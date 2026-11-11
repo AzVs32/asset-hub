@@ -200,7 +200,7 @@ fn bounds_apply_to_control_data_and_nested_configuration() {
 fn exported_descriptor_contains_the_complete_language_independent_contract() -> Result {
     let descriptor = prost_types::FileDescriptorSet::decode(p::FILE_DESCRIPTOR_SET)?;
     let file = descriptor.file.first().ok_or("schema")?;
-    assert_eq!(file.package.as_deref(), Some("assethub.vfs.v12"));
+    assert_eq!(file.package.as_deref(), Some("assethub.vfs.v13"));
     let storage_info = file
         .message_type
         .iter()
@@ -220,8 +220,20 @@ fn exported_descriptor_contains_the_complete_language_independent_contract() -> 
         .find(|m| m.name.as_deref() == Some("Request"))
         .ok_or("Request")?;
     assert_eq!(request.oneof_decl.len(), 1);
-    assert_eq!(request.field.len(), 17);
-    assert!(request.field.iter().any(|field| field.name.as_deref() == Some("read_bound_link")));
+    assert_eq!(request.field.len(), 20);
+    for name in [
+        "begin_lookup",
+        "observe_child",
+        "read_observed_link",
+        "verify_lookup",
+    ] {
+        assert!(
+            request
+                .field
+                .iter()
+                .any(|field| field.name.as_deref() == Some(name))
+        );
+    }
     assert!(
         request
             .field
@@ -234,17 +246,24 @@ fn exported_descriptor_contains_the_complete_language_independent_contract() -> 
         .find(|m| m.name.as_deref() == Some("Reply"))
         .ok_or("Reply")?;
     assert_eq!(reply.oneof_decl.len(), 1);
-    for field in ["description", "storage", "entry", "failure", "bound_link"] {
+    for field in [
+        "description",
+        "storage",
+        "entry",
+        "failure",
+        "opened_lookup",
+        "observed_entry",
+    ] {
         assert!(reply.field.iter().any(|f| f.name.as_deref() == Some(field)));
     }
     for method in &file.service.first().ok_or("Plugin")?.method {
         assert_eq!(
             method.input_type.as_deref(),
-            Some(".assethub.vfs.v12.Request")
+            Some(".assethub.vfs.v13.Request")
         );
         assert_eq!(
             method.output_type.as_deref(),
-            Some(".assethub.vfs.v12.Reply")
+            Some(".assethub.vfs.v13.Reply")
         );
     }
     Ok(())

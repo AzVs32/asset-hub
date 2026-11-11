@@ -4,7 +4,7 @@ use ah_vfs_storage::{
 };
 
 #[test]
-fn virtual_page_size_and_serialized_checkpoint_are_bounded()
+fn virtual_page_size_and_cursor_address_are_bounded()
 -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(DirQuery::default().size, PageSize::DEFAULT);
     assert!(PageSize::new(0).is_err());

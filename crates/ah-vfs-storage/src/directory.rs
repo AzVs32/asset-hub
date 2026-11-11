@@ -79,8 +79,10 @@ impl DirectorySelection {
     }
 }
 
-/// A continuation produced by a checked page. Its exclusive name and selected
-/// directory travel together.
+/// A position in a live directory listing, identified by the selected
+/// directory and an exclusive name. It is usable while the backend can
+/// verify the selection in the same generation. An expired selection
+/// returns [`BackendFailure::Stale`] when the cursor is used.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DirectoryCursor {
     selection: DirectorySelection,
@@ -88,8 +90,9 @@ pub struct DirectoryCursor {
 }
 
 impl DirectoryCursor {
-    /// Restore a serialized checkpoint. Execution must independently verify the
-    /// directory binding before using the name as a continuation.
+    /// Construct a continuation from a directory selection and an exclusive
+    /// name. This checks the combined address length. The executor must
+    /// independently verify the live selection before enumerating a page.
     pub fn from_checkpoint(
         selection: DirectorySelection,
         after: EntryName,

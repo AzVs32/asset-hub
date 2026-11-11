@@ -63,7 +63,8 @@ pub(super) enum MissingPolicy {
 }
 
 /// A borrowed view of an operation's path operand and lookup requirements.
-/// The execution port binds the instance and working directory before walking.
+/// For a relative operand, the executor selects a starting directory from the
+/// base address supplied for this operation.
 ///
 /// Walk components in order. Apply the directory requirement of the operand
 /// even when the operation preserves the final link. Check the address and

@@ -22,7 +22,8 @@ use ah_vfs_storage::{
     AttributeAction, AttributeRequest, AttributeResult, Entry, Permissions, StoragePath, XattrName,
 };
 use ah_vfs_storage::{
-    AttributeSupport, Capabilities, ReadRange, ReadSupport, WriteMode, WriteModes, WriteSupport,
+    AttributeSupport, Capabilities, MutationBinding, ReadRange, ReadSupport, WriteMode, WriteModes,
+    WriteSupport,
 };
 use std::{
     error::Error,
@@ -405,6 +406,40 @@ impl Storage for PermissionStorage {
     fn attributes(&self) -> Option<&dyn StorageAttributes> {
         Some(&self.0)
     }
+}
+
+struct AtomicMutationStorage;
+
+impl Storage for AtomicMutationStorage {
+    fn chunk_size(&self) -> NonZeroUsize {
+        NonZeroUsize::MIN
+    }
+
+    fn mutation_binding(&self) -> MutationBinding {
+        MutationBinding::FinalSlotAtomic
+    }
+}
+
+#[test]
+fn opened_storage_must_match_the_declared_mutation_binding() -> TestResult {
+    let parent_pinned = Capabilities::default().with_remove(true);
+    let atomic = parent_pinned.with_mutation_binding(MutationBinding::FinalSlotAtomic);
+    let default_storage = TestStorage {
+        calls: Arc::new(AtomicUsize::new(0)),
+    };
+    validate_storage_extensions(parent_pinned, &default_storage)?;
+    validate_storage_extensions(atomic, &AtomicMutationStorage)?;
+    for (declared, storage) in [
+        (atomic, &default_storage as &dyn Storage),
+        (parent_pinned, &AtomicMutationStorage as &dyn Storage),
+    ] {
+        let error = validate_storage_extensions(declared, storage)
+            .err()
+            .ok_or("mismatched mutation binding accepted")?;
+        assert_eq!(error.failure(), LifecycleFailure::InvalidDeclaration);
+    }
+    assert_eq!(default_storage.calls.load(Ordering::SeqCst), 0);
+    Ok(())
 }
 
 #[test]

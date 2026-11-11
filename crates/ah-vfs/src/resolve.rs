@@ -1,115 +1,245 @@
-//! Resolve operands against a single backend operation's pinned entries.
+//! Resolve path operands using one backend operation's bindings.
 //!
-//! The backend observes one name at a time without following links. This
-//! module owns navigation, traversal policy and the link expansion budget.
+//! [`Resolver`] walks components in order through the no-follow primitives in
+//! [`LookupPort`]. Absolute operands start at the backend root. For relative
+//! operands, [`LookupContext`] supplies a base address resolved for this call.
+//! A later call resolves that address again and can select a replacement
+//! directory. Within one walk, `.` retains the directory and `..` moves up the
+//! bound chain, stopping at the root. A trailing slash requires a directory
+//! and leaves the final-link policy unchanged.
 //!
-//! # Path operands and lookup
-//! Before any lookup or side effect, the execution port captures the selected
-//! instance generation and its root directory identity. If an operand is
-//! relative, it also captures the session's working-directory identity in that
-//! instance. This is a directory binding, rather than a saved path to reopen or
-//! the process working directory. A working directory is unnecessary for an
-//! all-absolute request. Rename resolves the source first and uses the same
-//! bindings and link budget for both operands. An invalidated generation or a
-//! starting directory that no longer belongs to the bound namespace fails as
-//! [`BackendFailure::Stale`]. Traversal denied by the confinement policy fails
-//! as [`Rejection::AccessDenied`]. An adapter unable to enforce the binding or the
-//! required lookup rules rejects the operation as [`Rejection::Unsupported`].
+//! [`SymlinkTraversal`] applies the link policy to the effective suffix and
+//! tracks one expansion budget across the operation, including both operands
+//! of a rename. [`prepare_link_target`] interprets a relative target from the
+//! link's parent and an absolute target from the root. A missing name in an
+//! expanded target fails the walk. Only recursive directory creation can
+//! create missing intermediate names in the original operand. A later
+//! failure after a successful creation reports an `Unknown` outcome.
 //!
-//! [`PathExpr`] removes repeated separators but retains navigation components
-//! and the trailing directory requirement. Start at the bound root for `/`, or
-//! at the bound working directory for a relative operand. Walk left to right.
-//! Every nonfinal component must yield a searchable directory. `.` retains the
-//! current directory and `..` selects its actual parent within the instance.
-//! At the bound root, `..` retains the root. For example, `missing/../a` fails
-//! at `missing` in an ordinary lookup. A non-directory prefix fails as
-//! [`Rejection::NotDirectory`] and denied search as [`Rejection::AccessDenied`].
-//! Apply a trailing slash at the end of its segment. It requires a directory
-//! and does not change how the final link is handled.
-//!
-//! The executor uses one [`SymlinkTraversal`] for the operation. A link is
-//! intermediate if any component remains in the effective walk, including
-//! suffixes waiting after a nested expansion. Otherwise the request's final
-//! policy applies. A preserved link is selected directly, so `readlink link/`
-//! fails as `NotDirectory` when `link` is a symbolic link. A followed link
-//! consumes one expansion before reading its target. The 41st follow fails as
-//! [`Rejection::TooManySymlinks`], including when the walk is cyclic.
-//!
-//! ReadLink returns a [`LinkTarget`] with the exact stored bytes. To follow it,
-//! use [`prepare_link_target`] to parse and check the target and pending
-//! suffix against the length bound. Walk the returned segment before resuming
-//! the suffix. Absolute targets use the same instance root and relative targets
-//! use the link's containing directory. Reapply the link policy on every
-//! encounter. A target segment's own trailing slash must be satisfied even if
-//! the original operand has no trailing slash. Use
-//! [`PathExpr::check_directory_requirement`] when completing that segment.
-//! ReadLink does not validate or normalize the stored text. On follow, a byte
-//! sequence without a valid logical path representation fails as
-//! [`BackendFailure::UnrepresentableLinkTarget`]. Native path syntax, such as
-//! a drive prefix or backslash separators, is never rewritten. Logical length
-//! violations fail as [`Rejection::PathTooLong`], including when joining a
-//! component to a selected address would exceed [`MAX_PATH_BYTES`]. Once parsed,
-//! target components obey the same exact-name and native-limit rules as any
-//! other operand.
-//!
-//! Keep target segments distinct from original operand components and use
-//! [`PathLookup::check_missing_name`] at an absent name. An absent name in a
-//! followed target fails as `NotFound`. In the original operand, only
-//! recursive directory creation may create missing intermediate names. At a
-//! missing final name, apply the request's missing-target rule and, for write
-//! and rename, its destination validation. Never create through a dangling
-//! link. A preserved dangling link remains an existing entry for operations
-//! such as ReadLink, Remove and Rename.
-//!
-//! [`PathLookup`] supplies pure checks on the selected address and kind. The
-//! adapter must apply them to the same bound entry or parent-and-name slot used
-//! by the operation, using handles, transactions or equivalent protection. At
-//! staged publication, preserve the bound parent and verify the expected
-//! destination identity or absence under the declared mutation guarantee.
-//! A detected replacement before effects is [`Rejection::Conflict`]. Account separately for uncertain effects
-//! after dispatch, including partial recursive creation. A [`StoragePath`] is
-//! an address, and [`StoragePath::to_rooted_expr`] starts a fresh lookup from
-//! the root. Neither supplies a durable entry binding across operations.
-//! [`RenameRequest::decide_destination`](ah_vfs_storage::RenameRequest::decide_destination) distinguishes an unchanged same-slot
-//! replacement from a move. Only a distinct directory destination must be empty.
+//! [`read_link`] resolves an operand in the VFS and reads the selected link's
+//! exact stored bytes. [`bind_link`] retains the same observations for a
+//! later read. The backend verifies the bound slot for the canonical request.
+//! A mismatch in a live generation returns `Conflict`. An invalidated
+//! scope returns `Stale`.
 //!
 //! ```
-//! use ah_vfs_storage::{ListRequest, ListTarget, LookupStart, PageSize, PathExpr, SymlinkAction};
-//! let request = ListRequest::new(
-//!     ListTarget::Path(PathExpr::parse("../docs//archive/")?),
-//!     PageSize::DEFAULT,
-//! );
-//! let lookup = request.lookup().ok_or("initial lookup")?;
-//! assert_eq!(lookup.path().start(), LookupStart::BaseDirectory);
-//! assert_eq!(lookup.final_symlink(), SymlinkAction::FollowWithinInstance);
-//! assert!(lookup.requires_directory());
-//! # Ok::<(), Box<dyn std::error::Error>>(())
-//! ```
+//! use ah_vfs::application::port::{LookupContext, Storage};
+//! use ah_vfs::resolve::read_link;
+//! use ah_vfs_storage::PathExpr;
 //!
-//! For example, with working directory `/work/sub` and `/work/link` pointing to
-//! `../a/`, `../link//../file` visits `/work`, `/a`, then `/` before selecting
-//! `/file`. The target's `../` starts at `/work`, not `/work/sub`. At `/`, a
-//! further `..` stays at `/`. If `/a` is a file, the target segment fails with
-//! `NotDirectory` before resuming the original operand.
-//!
-//! ```
-//! use ah_vfs::resolve::prepare_link_target;
-//! use ah_vfs_storage::{LinkTarget, LookupStart, PathComponent, PathExpr, Rejection, StoragePath};
-//! let parent = StoragePath::parse("work")?;
-//! let suffix = PathExpr::parse("../file")?;
-//! let target = prepare_link_target(&LinkTarget::new(b"../a/".to_vec()), &parent, suffix.components())?;
-//! assert_eq!(target.start(), LookupStart::BaseDirectory);
-//! assert_eq!(target.components().first(), Some(&PathComponent::ParentDirectory));
-//! assert_eq!(target.check_directory_requirement(false), Err(Rejection::NotDirectory));
-//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! async fn read_alias(storage: &dyn Storage) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+//!     let operand = PathExpr::parse("/docs/alias")?;
+//!     let target = read_link(storage, operand, LookupContext::default()).await?;
+//!     Ok(target.into_bytes())
+//! }
 //! ```
 
-use ah_vfs_storage::{
-    BackendFailure, Entry, EntryName, EntryType, Failure, IntermediateSymlinks, LinkTarget,
-    LookupStart, MAX_PATH_BYTES, MAX_PATH_EXPR_BYTES, MissingName, NameError, Operation,
-    PathComponent, PathExpr, PathExprError, PathLookup, Rejection, StorageError, StoragePath,
-    SymlinkAction,
+use crate::application::port::{
+    BoundLink, LookupContext, ObservedEntry, OperationLookup, Storage, StorageFuture,
 };
+use ah_vfs_storage::{
+    BackendFailure, ContractViolation, Entry, EntryName, EntryType, Failure, IntermediateSymlinks,
+    LinkTarget, LookupStart, MAX_PATH_BYTES, MAX_PATH_EXPR_BYTES, MissingName, MutationOutcome,
+    NameError, Operation, PathComponent, PathExpr, PathExprError, PathLookup, ReadLinkRequest,
+    Rejection, StatRequest, StorageError, StoragePath, SymlinkAction,
+};
+use std::{
+    future::{Future, ready},
+    pin::pin,
+    task::{Context, Poll, Waker},
+};
+
+/// Resolve a link operand on the caller side and retain the operation scope.
+pub async fn bind_link(
+    storage: &dyn Storage,
+    operand: PathExpr,
+    context: LookupContext,
+) -> Result<Box<dyn BoundLink>, StorageError> {
+    let op = Operation::ReadLink;
+    let mut backend = storage.begin_lookup(op).await?;
+    if backend.operation() != op {
+        return Err(lookup_error(
+            op,
+            Failure::Contract(ContractViolation::InvalidResponse),
+        ));
+    }
+    let root = backend.root().await?;
+    if !root.entry().path().is_root() || root.entry().entry_type() != EntryType::Directory {
+        return Err(lookup_error(
+            op,
+            Failure::Contract(ContractViolation::InvalidEntry),
+        ));
+    }
+    let mut lookup = HostLookup(backend.as_mut());
+    let mut directories = vec![HostEntry {
+        observed: root,
+        slot: None,
+    }];
+    if operand.start() == LookupStart::BaseDirectory {
+        let stale = || lookup_error(op, Failure::Backend(BackendFailure::Stale));
+        for name in context.working_directory.entry_names() {
+            let parent = directories.last().ok_or_else(stale)?;
+            let address = parent
+                .observed
+                .entry()
+                .path()
+                .join(&name)
+                .map_err(|_| stale())?;
+            let directory =
+                lookup
+                    .observe_child(parent, address, &name)
+                    .await
+                    .map_err(|error| match error.failure() {
+                        Failure::Rejected(
+                            Rejection::NotFound
+                            | Rejection::NotDirectory
+                            | Rejection::SymlinkNotAllowed,
+                        ) => stale(),
+                        _ => error,
+                    })?;
+            if directory.observed.entry().entry_type() != EntryType::Directory {
+                return Err(stale());
+            }
+            directories.push(directory);
+        }
+    }
+    let request = StatRequest::new(operand, SymlinkAction::Preserve);
+    let entry = Resolver::new(op, context.intermediate_symlinks)
+        .walk_async(&mut lookup, request.lookup(), directories)
+        .await?
+        .require_entry(op)?;
+    ReadLinkRequest::new(entry.observed.entry().path().clone())
+        .check_target(entry.observed.entry().entry_type())
+        .map_err(|reason| lookup_error(op, Failure::Rejected(reason)))?;
+    backend.verify().await?;
+    let slot = entry
+        .slot
+        .ok_or_else(|| lookup_error(op, Failure::Contract(ContractViolation::InvalidResponse)))?;
+    Ok(Box::new(ResolvedLink {
+        backend,
+        slot,
+        entry: entry.observed,
+    }))
+}
+
+/// Resolve and read one link without transmitting an operand to the backend.
+pub async fn read_link(
+    storage: &dyn Storage,
+    operand: PathExpr,
+    context: LookupContext,
+) -> Result<LinkTarget, StorageError> {
+    let binding = bind_link(storage, operand, context).await?;
+    binding
+        .read(ReadLinkRequest::new(binding.path().clone()))
+        .await
+}
+
+#[derive(Clone)]
+struct HostEntry {
+    observed: ObservedEntry,
+    slot: Option<ObservedSlot>,
+}
+
+#[derive(Clone)]
+struct ObservedSlot {
+    parent: ObservedEntry,
+    name: EntryName,
+}
+
+struct ResolvedLink {
+    backend: Box<dyn OperationLookup>,
+    slot: ObservedSlot,
+    entry: ObservedEntry,
+}
+
+impl BoundLink for ResolvedLink {
+    fn path(&self) -> &StoragePath {
+        self.entry.entry().path()
+    }
+
+    fn read(&self, request: ReadLinkRequest) -> StorageFuture<'_, LinkTarget> {
+        Box::pin(async move {
+            if request.path() != self.path() {
+                return Err(lookup_error(
+                    Operation::ReadLink,
+                    Failure::InvalidBinding,
+                ));
+            }
+            self.backend
+                .execute_read_link(&self.slot.parent, &self.slot.name, &self.entry, request)
+                .await
+        })
+    }
+}
+
+struct HostLookup<'a>(&'a mut dyn OperationLookup);
+
+impl LookupPort for HostLookup<'_> {
+    type Binding = HostEntry;
+
+    fn entry(binding: &HostEntry) -> &Entry {
+        binding.observed.entry()
+    }
+
+    async fn observe_child(
+        &mut self,
+        parent: &HostEntry,
+        address: StoragePath,
+        name: &EntryName,
+    ) -> Result<HostEntry, StorageError> {
+        let observed = self.0.observe(&parent.observed, name).await?;
+        if observed.entry().path() != &address {
+            return Err(lookup_error(
+                self.0.operation(),
+                Failure::Contract(ContractViolation::InvalidEntry),
+            ));
+        }
+        Ok(HostEntry {
+            observed,
+            slot: Some(ObservedSlot {
+                parent: parent.observed.clone(),
+                name: name.clone(),
+            }),
+        })
+    }
+
+    async fn read_bound_link(&self, entry: &HostEntry) -> Result<LinkTarget, StorageError> {
+        self.0.read_link(&entry.observed).await
+    }
+
+    async fn create_child(
+        &mut self,
+        _parent: &HostEntry,
+        _address: StoragePath,
+        _name: &EntryName,
+    ) -> Result<HostEntry, StorageError> {
+        Err(lookup_error(
+            self.0.operation(),
+            Failure::Rejected(Rejection::Unsupported),
+        ))
+    }
+}
+
+fn lookup_error(operation: Operation, failure: Failure) -> StorageError {
+    StorageError::without_effects(operation, failure, None)
+}
+
+fn complete_immediately<T>(
+    operation: Operation,
+    future: impl Future<Output = Result<T, StorageError>>,
+) -> Result<T, StorageError> {
+    match pin!(future).poll(&mut Context::from_waker(Waker::noop())) {
+        Poll::Ready(result) => result,
+        Poll::Pending => {
+            let failure = Failure::Contract(ContractViolation::InvalidResponse);
+            Err(if operation.may_mutate() {
+                StorageError::after_dispatch(operation, failure, None)
+            } else {
+                StorageError::without_effects(operation, failure, None)
+            })
+        }
+    }
+}
 
 /// Maximum number of link expansions in one operation, across both operands
 /// of a rename and any links encountered inside other links' targets.
@@ -132,6 +262,19 @@ pub const MAX_SYMLINK_EXPANSIONS: u8 = 40;
 /// components and pending components, joined by single separators. It
 /// excludes the leading and trailing slash, and counts dot components as
 /// written before traversal. Each selected address is also length checked.
+///
+/// ```
+/// use ah_vfs::resolve::prepare_link_target;
+/// use ah_vfs_storage::{LinkTarget, LookupStart, PathComponent, PathExpr, Rejection, StoragePath};
+/// let parent = StoragePath::parse("work")?;
+/// let suffix = PathExpr::parse("../file")?;
+/// let link = LinkTarget::new(b"../a/".to_vec());
+/// let target = prepare_link_target(&link, &parent, suffix.components())?;
+/// assert_eq!(target.start(), LookupStart::BaseDirectory);
+/// assert_eq!(target.components().first(), Some(&PathComponent::ParentDirectory));
+/// assert_eq!(target.check_directory_requirement(false), Err(Rejection::NotDirectory));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub fn prepare_link_target(
     link: &LinkTarget,
     containing_directory: &StoragePath,
@@ -212,8 +355,8 @@ impl SymlinkTraversal {
 
 /// The backend primitives for one operation. Bindings come from this backend
 /// and may retain native handles. The walker only inspects their metadata.
-pub trait LookupPort {
-    type Binding: Clone;
+pub trait LookupPort: Send + Sync {
+    type Binding: Clone + Send + Sync;
 
     fn entry(binding: &Self::Binding) -> &Entry;
 
@@ -222,22 +365,36 @@ pub trait LookupPort {
         parent: &Self::Binding,
         address: StoragePath,
         name: &EntryName,
-    ) -> Result<Self::Binding, StorageError>;
+    ) -> impl Future<Output = Result<Self::Binding, StorageError>> + Send;
 
-    fn read_bound_link(&self, entry: &Self::Binding) -> Result<LinkTarget, StorageError>;
+    fn read_bound_link(
+        &self,
+        entry: &Self::Binding,
+    ) -> impl Future<Output = Result<LinkTarget, StorageError>> + Send;
 
+    /// Create one absent child. An occupied slot returns `AlreadyExists`.
+    /// If creation may have taken effect but the binding cannot be returned,
+    /// report the error with `StorageError::after_dispatch`.
     fn create_child(
         &mut self,
         parent: &Self::Binding,
         address: StoragePath,
         name: &EntryName,
-    ) -> Result<Self::Binding, StorageError>;
+    ) -> impl Future<Output = Result<Self::Binding, StorageError>> + Send;
+
+    /// Verify the observed bindings before a directory creation operation
+    /// returns. A backend holding the namespace lock may use the default.
+    fn verify_observations(&self) -> impl Future<Output = Result<(), StorageError>> + Send {
+        ready(Ok(()))
+    }
 }
 
-/// One operand walk budget. Rename uses the same walker for both operands.
+/// One operation's operand walks, traversal budget and visible directory effects.
+/// Rename uses the same resolver for both operands.
 pub struct Resolver {
     operation: Operation,
     links: SymlinkTraversal,
+    created_directories: usize,
 }
 
 /// A resolved slot. A missing final name is returned only when the operation's
@@ -265,23 +422,72 @@ impl Resolver {
         Self {
             operation,
             links: SymlinkTraversal::new(links),
+            created_directories: 0,
         }
     }
 
-    /// The backend supplies the root and, for a relative operand, the chain
-    /// of pinned directories to the starting directory.
+    /// The backend supplies bindings for the current operation. For a relative
+    /// operand, the chain runs from the root to the directory currently at the
+    /// supplied base address. Use this method with synchronous primitives
+    /// that complete on their first poll.
     pub fn walk<P: LookupPort>(
+        &mut self,
+        backend: &mut P,
+        lookup: PathLookup<'_>,
+        directories: Vec<P::Binding>,
+    ) -> Result<Resolution<P::Binding>, StorageError> {
+        complete_immediately(
+            self.operation,
+            self.walk_async(backend, lookup, directories),
+        )
+    }
+
+    /// Walk the same rules while allowing backend observations to await I/O.
+    pub async fn walk_async<P: LookupPort>(
         &mut self,
         backend: &mut P,
         lookup: PathLookup<'_>,
         mut directories: Vec<P::Binding>,
     ) -> Result<Resolution<P::Binding>, StorageError> {
-        self.segment(backend, lookup, lookup.path(), &mut directories, &[], false)
+        let result = async {
+            let resolved = self
+                .segment(backend, lookup, lookup.path(), &mut directories, &[], false)
+                .await?;
+            if self.operation != Operation::CreateDirectory {
+                return Ok(resolved);
+            }
+            let binding = resolved.require_entry(self.operation)?;
+            let entry = P::entry(&binding);
+            // Creating the final slot satisfies a single-level request's
+            // absent-target policy. A recursive request requires a directory.
+            if self.created_directories == 0 || lookup.final_symlink() != SymlinkAction::Preserve {
+                lookup
+                    .check_existing_target(entry.path(), entry.entry_type())
+                    .map_err(|reason| self.reject(reason))?;
+            }
+            backend.verify_observations().await?;
+            Ok(Resolution::Existing(binding))
+        }
+        .await;
+        result.map_err(|error| self.include_creation_effects(error))
     }
 
     /// Resolve the parent of a final name, keeping that name in the effective
     /// suffix so links in the parent operand use the intermediate policy.
+    /// Use this method with synchronous primitives.
     pub fn parent<P: LookupPort>(
+        &mut self,
+        backend: &mut P,
+        lookup: PathLookup<'_>,
+        directories: Vec<P::Binding>,
+    ) -> Result<(P::Binding, EntryName), StorageError> {
+        complete_immediately(
+            self.operation,
+            self.parent_async(backend, lookup, directories),
+        )
+    }
+
+    pub async fn parent_async<P: LookupPort>(
         &mut self,
         backend: &mut P,
         lookup: PathLookup<'_>,
@@ -290,7 +496,7 @@ impl Resolver {
         let (operand, name) = lookup
             .path()
             .split_final_name()
-            .ok_or_else(|| self.reject(Rejection::RootProtected))?;
+            .ok_or_else(|| self.include_creation_effects(self.reject(Rejection::RootProtected)))?;
         let parent = self
             .segment(
                 backend,
@@ -299,12 +505,14 @@ impl Resolver {
                 &mut directories,
                 &[PathComponent::Name(name.clone())],
                 false,
-            )?
-            .require_entry(self.operation)?;
+            )
+            .await
+            .and_then(|resolved| resolved.require_entry(self.operation))
+            .map_err(|error| self.include_creation_effects(error))?;
         Ok((parent, name.clone()))
     }
 
-    fn segment<P: LookupPort>(
+    async fn segment<P: LookupPort>(
         &mut self,
         backend: &mut P,
         lookup: PathLookup<'_>,
@@ -331,27 +539,48 @@ impl Resolver {
                         .join(name)
                         .map_err(|_| self.reject(Rejection::PathTooLong))?;
                     let remaining = &expression.components()[index + 1..];
-                    let mut selected = match backend.observe_child(parent, address.clone(), name) {
-                        Err(error) if error.failure() == Failure::Rejected(Rejection::NotFound) => {
-                            let missing = if in_link {
-                                MissingName::LinkTarget
-                            } else if remaining.is_empty() && suffix.is_empty() {
-                                MissingName::OperandFinal
-                            } else {
-                                MissingName::OperandIntermediate
-                            };
-                            match lookup.check_missing_name(&address, missing) {
-                                Ok(()) => {}
-                                Err(Rejection::NotFound) => return Err(error),
-                                Err(reason) => return Err(self.reject(reason)),
+                    let mut selected =
+                        match backend.observe_child(parent, address.clone(), name).await {
+                            Err(error)
+                                if error.failure() == Failure::Rejected(Rejection::NotFound)
+                                    && error.outcome() == MutationOutcome::Unchanged =>
+                            {
+                                let missing = if in_link {
+                                    MissingName::LinkTarget
+                                } else if remaining.is_empty() && suffix.is_empty() {
+                                    MissingName::OperandFinal
+                                } else {
+                                    MissingName::OperandIntermediate
+                                };
+                                match lookup.check_missing_name(&address, missing) {
+                                    Ok(()) => {}
+                                    Err(Rejection::NotFound) => return Err(error),
+                                    Err(reason) => return Err(self.reject(reason)),
+                                }
+                                if self.operation != Operation::CreateDirectory {
+                                    return Ok(Resolution::Missing(address));
+                                }
+                                match backend.create_child(parent, address.clone(), name).await {
+                                    Ok(binding) => {
+                                        self.created_directories += 1;
+                                        binding
+                                    }
+                                    Err(error)
+                                        if lookup.final_symlink()
+                                            == SymlinkAction::FollowWithinInstance
+                                            && error.failure()
+                                                == Failure::Rejected(Rejection::AlreadyExists)
+                                            && error.outcome() == MutationOutcome::Unchanged =>
+                                    {
+                                        // Recursive creation may use a directory created
+                                        // by another operation without claiming its effect.
+                                        backend.observe_child(parent, address, name).await?
+                                    }
+                                    Err(error) => return Err(error),
+                                }
                             }
-                            if self.operation != Operation::CreateDirectory {
-                                return Ok(Resolution::Missing(address));
-                            }
-                            backend.create_child(parent, address, name)?
-                        }
-                        result => result?,
-                    };
+                            result => result?,
+                        };
                     if P::entry(&selected).entry_type() == EntryType::Symlink {
                         let pending: Vec<_> = remaining.iter().chain(suffix).cloned().collect();
                         if self
@@ -360,12 +589,19 @@ impl Resolver {
                             .map_err(|reason| self.reject(reason))?
                             == SymlinkAction::FollowWithinInstance
                         {
-                            let link = backend.read_bound_link(&selected)?;
+                            let link = backend.read_bound_link(&selected).await?;
                             let target = prepare_link_target(&link, parent_address, &pending)
                                 .map_err(|reason| self.failure(reason))?;
-                            selected = self
-                                .segment(backend, lookup, &target, directories, &pending, true)?
-                                .require_entry(self.operation)?;
+                            selected = Box::pin(self.segment(
+                                backend,
+                                lookup,
+                                &target,
+                                directories,
+                                &pending,
+                                true,
+                            ))
+                            .await?
+                            .require_entry(self.operation)?;
                             if P::entry(&selected).entry_type() == EntryType::Directory {
                                 // The expanded walk already left this directory on the stack.
                                 continue;
@@ -401,5 +637,13 @@ impl Resolver {
 
     fn failure(&self, failure: Failure) -> StorageError {
         StorageError::without_effects(self.operation, failure, None)
+    }
+
+    fn include_creation_effects(&self, error: StorageError) -> StorageError {
+        if self.created_directories > 0 && error.outcome() == MutationOutcome::Unchanged {
+            StorageError::after_dispatch(self.operation, error.failure(), Some(Box::new(error)))
+        } else {
+            error
+        }
     }
 }

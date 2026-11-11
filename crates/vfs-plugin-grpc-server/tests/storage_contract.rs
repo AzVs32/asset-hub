@@ -528,14 +528,35 @@ async fn formal_lookup_preserves_policy_instance_and_link_bytes() -> TestResult 
     )?;
     for (path, bytes) in [("opaque", b"\xff".as_slice()), ("dangling", b"missing")] {
         let reply = formal
-            .call(p::StorageOp::BindLink(p::BindLink {
-                lookup: Some(lookup(path, "", p::IntermediateLink::FollowIntermediate)),
+            .invoke(p::Operation::BeginLookup(p::Handle {
+                handle: formal.handle,
             }))
             .await?;
-        let Some(p::Value::BoundLink(link)) = reply.result else {
-            return Err("expected bound link".into());
+        let Some(p::Value::OpenedLookup(lookup)) = reply.result else {
+            return Err("expected lookup binding".into());
         };
-        let reply = formal.invoke(p::Operation::ReadBoundLink(p::Handle { handle: link.handle })).await?;
+        let root = lookup.root.ok_or("expected root observation")?;
+        let reply = formal
+            .invoke(p::Operation::ObserveChild(p::ObserveChild {
+                lookup: lookup.handle,
+                parent: root.id,
+                name: path.into(),
+            }))
+            .await?;
+        let Some(p::Value::ObservedEntry(entry)) = reply.result else {
+            return Err("expected entry observation".into());
+        };
+        let reply = formal
+            .invoke(p::Operation::ReadObservedLink(p::ReadObservedLink {
+                lookup: lookup.handle,
+                entry: entry.id,
+                final_slot: Some(p::LinkSlot {
+                    parent: root.id,
+                    name: path.into(),
+                    path: path.into(),
+                }),
+            }))
+            .await?;
         assert!(matches!(reply.result, Some(p::Value::Bytes(_))));
         assert_eq!(reply.data, bytes);
     }

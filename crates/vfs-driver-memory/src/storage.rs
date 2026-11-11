@@ -1,15 +1,15 @@
 use crate::Capacity;
 use ah_vfs::application::port::LookupContext;
-use ah_vfs::application::port::{BoundLink, Storage, StorageFileReader, StorageFileWriter, StorageFuture};
+use ah_vfs::application::port::{
+    OperationLookup, Storage, StorageFileReader, StorageFileWriter, StorageFuture,
+};
 use ah_vfs_storage::{
     BackendFailure, ContractViolation, Failure, Operation, Rejection, StorageError,
 };
 use ah_vfs_storage::{
     BoundListRequest, DirectoryPage, DirectorySelection, ListRequest, WriteRequest,
 };
-use ah_vfs_storage::{
-    Entry, EntryType, PathExpr, ReadRequest, StatRequest, StoragePath,
-};
+use ah_vfs_storage::{Entry, EntryType, ReadRequest, StatRequest, StoragePath};
 use std::{
     collections::BTreeMap,
     num::NonZeroUsize,
@@ -226,13 +226,13 @@ impl Storage for MemoryStorage {
         Box::pin(async move { self.stat_selected(&request, context) })
     }
 
-    fn bind_link(
-        &self,
-        operand: PathExpr,
-        context: LookupContext,
-    ) -> StorageFuture<'_, Box<dyn BoundLink>> {
+    fn begin_lookup(&self, operation: Operation) -> StorageFuture<'_, Box<dyn OperationLookup>> {
         Box::pin(async move {
-            Ok(Box::new(self.bind_selected_link(operand, context)?) as Box<dyn BoundLink>)
+            if operation != Operation::ReadLink {
+                return Err(error(operation, Failure::Rejected(Rejection::Unsupported)));
+            }
+            Ok(Box::new(contract::MemoryLookup::new(self.shared.clone()))
+                as Box<dyn OperationLookup>)
         })
     }
 

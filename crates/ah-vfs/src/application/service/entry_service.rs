@@ -145,12 +145,12 @@ impl EntryService {
         }
         let (relative, storage, capabilities) = self.open(&table, path).await?;
         Self::require(Operation::ReadLink, capabilities.read_link())?;
-        Ok(storage
-            .read_link(
-                relative.to_rooted_expr(),
-                LookupContext::default(),
-            )
-            .await?)
+        Ok(crate::resolve::read_link(
+            storage.as_ref(),
+            relative.to_rooted_expr(),
+            LookupContext::default(),
+        )
+        .await?)
     }
 
     /// Merge live backend pages with the current virtual namespace.

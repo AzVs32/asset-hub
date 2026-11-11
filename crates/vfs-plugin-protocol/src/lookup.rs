@@ -257,22 +257,6 @@ pub fn decode_rename(
     ))
 }
 
-pub fn encode_bind_link(
-    operand: &PathExpr,
-    base: &StoragePath,
-    links: IntermediateSymlinks,
-) -> super::BindLink {
-    super::BindLink {
-        lookup: Some(encode_lookup(operand, base, links)),
-    }
-}
-
-pub fn decode_bind_link(
-    value: super::BindLink,
-) -> Result<(PathExpr, StoragePath, IntermediateSymlinks), LookupValueError> {
-    decode_lookup(value.lookup)
-}
-
 /// Encode the opaque link bytes without a second allocation.
 pub fn encode_link_target(
     target: ah_vfs_storage::LinkTarget,

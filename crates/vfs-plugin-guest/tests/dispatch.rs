@@ -1,6 +1,7 @@
 use ah_vfs_storage::{
     AttributeAction, AttributeRequest, AttributeResult, AttributeSupport, BackendFailure, Failure,
-    IntermediateSymlinks, Operation, PathExpr, Permissions, Rejection, StorageError, StoragePath,
+    IntermediateSymlinks, MutationBinding, Operation, PathExpr, Permissions, Rejection,
+    StorageError, StoragePath,
 };
 use std::cell::{Cell, RefCell};
 use vfs_plugin_guest::{Dispatcher, api::*};
@@ -9,6 +10,7 @@ type TestResult<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 std::thread_local! { static OPENS: Cell<usize> = const { Cell::new(0) }; static COMMITS: Cell<usize> = const { Cell::new(0) }; }
 std::thread_local! {
     static DECLARE_ATTRIBUTES: Cell<bool> = const { Cell::new(false) };
+    static DECLARE_MUTATION_BINDING: Cell<MutationBinding> = const { Cell::new(MutationBinding::ParentPinned) };
     static ATTRIBUTE_CALLS: Cell<usize> = const { Cell::new(0) };
 }
 struct Driver;
@@ -33,7 +35,8 @@ impl Guest for Driver {
                     AttributeSupport::Read
                 } else {
                     AttributeSupport::None
-                }),
+                })
+                .with_mutation_binding(DECLARE_MUTATION_BINDING.with(Cell::get)),
 
             settings_schema: None,
             instance_schema: None,
@@ -59,6 +62,8 @@ impl Guest for Driver {
         let config = p::json_object(config)?;
         OPENS.with(|v| v.set(v.get() + 1));
         Ok(Storage::new(Store {
+            final_slot_atomic: config.get("final_slot_atomic").and_then(|v| v.as_bool())
+                == Some(true),
             attributes: config
                 .get("attributes")
                 .and_then(|v| v.as_bool())
@@ -77,6 +82,7 @@ fn entry(size: u64) -> Result<ah_vfs_storage::Entry> {
         .map_err(|_| p::Failure::new(p::FailureCode::InvalidRequest).into())
 }
 struct Store {
+    final_slot_atomic: bool,
     attributes: bool,
     fail: bool,
 }
@@ -87,6 +93,13 @@ impl GuestStorage for Store {
     fn attributes(&self) -> Option<&dyn GuestAttributes> {
         self.attributes.then_some(self)
     }
+    fn mutation_binding(&self) -> MutationBinding {
+        if self.final_slot_atomic {
+            MutationBinding::FinalSlotAtomic
+        } else {
+            MutationBinding::ParentPinned
+        }
+    }
     fn stat(
         &self,
         request: &ah_vfs_storage::StatRequest,
@@ -95,18 +108,8 @@ impl GuestStorage for Store {
     ) -> Result<ah_vfs_storage::Entry> {
         direct_stat(request, base, links, |_| entry(0))
     }
-    fn bind_link(
-        &self,
-        operand: &PathExpr,
-        base: &StoragePath,
-        links: IntermediateSymlinks,
-    ) -> Result<Link> {
-        assert_eq!(operand.to_string(), "../opaque");
-        assert_eq!(base.as_str(), "work/sub");
-        assert_eq!(links, IntermediateSymlinks::Reject);
-        let path = StoragePath::parse("work/opaque")
-            .map_err(|_| p::Failure::new(p::FailureCode::InvalidRequest))?;
-        Ok(Link::new(OpaqueLink(path)))
+    fn begin_lookup(&self) -> Result<Lookup> {
+        Ok(Lookup::new(OpaqueLink))
     }
     fn read(
         &self,
@@ -503,56 +506,160 @@ fn storage_failure(error: StorageError) -> p::Failure {
     vfs_plugin_guest::api::Failure::from(error).into()
 }
 
-struct OpaqueLink(StoragePath);
-impl GuestLink for OpaqueLink {
-    fn path(&self) -> &StoragePath {
-        &self.0
+struct OpaqueLink;
+impl GuestLookup for OpaqueLink {
+    fn root(&mut self) -> Result<(u64, ah_vfs_storage::Entry)> {
+        let entry = ah_vfs_storage::Entry::new(
+            StoragePath::root(),
+            ah_vfs_storage::EntryType::Directory,
+            None,
+        )
+        .map_err(|_| p::Failure::new(p::FailureCode::InvalidRequest))?;
+        Ok((70, entry))
     }
 
-    fn read(&self, request: ah_vfs_storage::ReadLinkRequest) -> Result<ah_vfs_storage::LinkTarget> {
-        assert_eq!(request.path(), &self.0);
+    fn observe(
+        &mut self,
+        parent: u64,
+        name: &ah_vfs_storage::EntryName,
+    ) -> Result<(u64, ah_vfs_storage::Entry)> {
+        assert_eq!(parent, 70);
+        assert_eq!(name.as_str(), "opaque");
+        let path = StoragePath::root()
+            .join(name)
+            .map_err(|_| p::Failure::new(p::FailureCode::InvalidRequest))?;
+        let entry = ah_vfs_storage::Entry::new(path, ah_vfs_storage::EntryType::Symlink, None)
+            .map_err(|_| p::Failure::new(p::FailureCode::InvalidRequest))?;
+        Ok((71, entry))
+    }
+
+    fn read_link(&self, entry: u64) -> Result<ah_vfs_storage::LinkTarget> {
+        assert_eq!(entry, 71);
         Ok(ah_vfs_storage::LinkTarget::new(vec![0xff, b'/']))
+    }
+
+    fn verify(&self) -> Result<()> {
+        Ok(())
     }
 }
 
 #[test]
-fn read_link_uses_the_typed_guest_port_and_preserves_opaque_bytes() -> TestResult {
+fn read_link_uses_scoped_guest_observations_and_preserves_opaque_bytes() -> TestResult {
     let mut dispatcher = setup()?;
     let storage = open(&mut dispatcher, false)?;
-    let operand = PathExpr::parse("../opaque")?;
     let reply = call(
         &mut dispatcher,
-        Op::Storage(p::StorageCall {
-            handle: storage,
-            operation: Some(p::StorageOp::BindLink(p::encode_bind_link(
-                &operand,
-                &StoragePath::parse("work/sub")?,
-                IntermediateSymlinks::Reject,
-            ))),
+        Op::BeginLookup(p::Handle { handle: storage }),
+        vec![],
+    )?;
+    let Some(Value::OpenedLookup(lookup)) = reply.result else {
+        return Err("expected lookup binding".into());
+    };
+    let root = lookup.root.ok_or("expected root observation")?;
+    let reply = call(
+        &mut dispatcher,
+        Op::ObserveChild(p::ObserveChild {
+            lookup: lookup.handle,
+            parent: root.id,
+            name: "opaque".into(),
         }),
         vec![],
     )?;
-    let Some(Value::BoundLink(link)) = reply.result else {
-        return Err("expected link binding".into());
+    let Some(Value::ObservedEntry(entry)) = reply.result else {
+        return Err("expected entry observation".into());
     };
-    let reply = call(&mut dispatcher, Op::ReadBoundLink(p::Handle { handle: link.handle }), vec![])?;
+    let read = Op::ReadObservedLink(p::ReadObservedLink {
+        lookup: lookup.handle,
+        entry: entry.id,
+        final_slot: Some(p::LinkSlot {
+            parent: root.id,
+            name: "opaque".into(),
+            path: "opaque".into(),
+        }),
+    });
+    let reply = call(&mut dispatcher, read.clone(), vec![])?;
     assert!(matches!(reply.result, Some(Value::Bytes(_))));
     assert_eq!(reply.data, [0xff, b'/']);
-    call(&mut dispatcher, Op::Release(p::ResourceRef {
-        kind: p::ResourceKind::Link.into(),
-        handle: link.handle,
-    }), vec![])?;
-    let request = p::encode_request(
-        "generation",
-        &Op::ReadBoundLink(p::Handle { handle: link.handle }),
+    let reply = call(
+        &mut dispatcher,
+        Op::BeginLookup(p::Handle { handle: storage }),
         vec![],
     )?;
-    let failure = p::decode_reply(&dispatcher.call(&request))?.err().ok_or("released binding worked")?;
-    assert_eq!(failure, storage_failure(StorageError::without_effects(
+    let Some(Value::OpenedLookup(other)) = reply.result else {
+        return Err("expected another lookup binding".into());
+    };
+    let wrong_path = Op::ReadObservedLink(p::ReadObservedLink {
+        lookup: lookup.handle,
+        entry: entry.id,
+        final_slot: Some(p::LinkSlot {
+            parent: root.id,
+            name: "opaque".into(),
+            path: "other".into(),
+        }),
+    });
+    let request = p::encode_request("generation", &wrong_path, vec![])?;
+    assert_eq!(
+        p::decode_reply(&dispatcher.call(&request))?,
+        Err(storage_failure(StorageError::without_effects(
+            Operation::ReadLink,
+            Failure::InvalidBinding,
+            None,
+        ),))
+    );
+    let stale = storage_failure(StorageError::without_effects(
         Operation::ReadLink,
         Failure::Backend(BackendFailure::Stale),
         None,
-    )));
+    ));
+    let wrong_scope = Op::ReadObservedLink(p::ReadObservedLink {
+        lookup: other.handle,
+        entry: entry.id,
+        final_slot: None,
+    });
+    for (generation, op) in [("generation", &wrong_scope), ("retired", &read)] {
+        let request = p::encode_request(generation, op, vec![])?;
+        assert_eq!(
+            p::decode_reply(&dispatcher.call(&request))?,
+            Err(stale.clone())
+        );
+    }
+    call(
+        &mut dispatcher,
+        Op::Release(p::ResourceRef {
+            kind: p::ResourceKind::Lookup.into(),
+            handle: lookup.handle,
+        }),
+        vec![],
+    )?;
+    let request = p::encode_request("generation", &read, vec![])?;
+    assert_eq!(p::decode_reply(&dispatcher.call(&request))?, Err(stale));
+    Ok(())
+}
+
+#[test]
+fn guest_open_checks_the_implemented_mutation_binding() -> TestResult {
+    DECLARE_MUTATION_BINDING.with(|value| value.set(MutationBinding::FinalSlotAtomic));
+    let dispatcher = setup();
+    DECLARE_MUTATION_BINDING.with(|value| value.set(MutationBinding::ParentPinned));
+    let mut dispatcher = dispatcher?;
+    let request = Op::Open(p::Open {
+        id: "one".into(),
+        config: Some(p::Object::new()),
+    });
+    let bytes = p::encode_request("generation", &request, vec![])?;
+    assert_eq!(
+        p::decode_reply(&dispatcher.call(&bytes))?,
+        Err(p::Failure::new(p::FailureCode::LifecycleInvalidDeclaration))
+    );
+    let reply = call(
+        &mut dispatcher,
+        Op::Open(p::Open {
+            id: "one".into(),
+            config: Some(p::Object::from([("final_slot_atomic".into(), true.into())])),
+        }),
+        vec![],
+    )?;
+    assert!(matches!(reply.into_value()?, Value::Storage(_)));
     Ok(())
 }
 

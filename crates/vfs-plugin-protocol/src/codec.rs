@@ -160,7 +160,12 @@ fn check_json(value: &JsonValue, depth: usize) -> Result<()> {
 }
 fn check_resource(value: &ResourceRef) -> Result<()> {
     match ResourceKind::try_from(value.kind) {
-        Ok(ResourceKind::Storage | ResourceKind::Reader | ResourceKind::Writer | ResourceKind::Link) => Ok(()),
+        Ok(
+            ResourceKind::Storage
+            | ResourceKind::Reader
+            | ResourceKind::Writer
+            | ResourceKind::Lookup,
+        ) => Ok(()),
         _ => Err(CodecError::InvalidData),
     }
 }
@@ -210,9 +215,6 @@ pub fn validate_request(request: &Request) -> Result<()> {
             StorageOp::List(request) => {
                 super::decode_list(request.clone()).map_err(|_| CodecError::InvalidData)?;
             }
-            StorageOp::BindLink(request) => {
-                super::decode_bind_link(request.clone()).map_err(|_| CodecError::InvalidData)?;
-            }
             attribute @ (StorageOp::GetPermissions(_)
             | StorageOp::SetPermissions(_)
             | StorageOp::ListXattrs(_)
@@ -230,7 +232,24 @@ pub fn validate_request(request: &Request) -> Result<()> {
             super::decode_write(write.clone()).map_err(|_| CodecError::InvalidData)?;
         }
         O::Release(v) => check_resource(v)?,
-        O::ReadBoundLink(v) if v.handle == 0 => return Err(CodecError::InvalidData),
+        O::BeginLookup(v) | O::VerifyLookup(v) if v.handle == 0 => {
+            return Err(CodecError::InvalidData);
+        }
+        O::ObserveChild(v)
+            if v.lookup == 0
+                || v.parent == 0
+                || ah_vfs_storage::EntryName::parse(&v.name).is_err() =>
+        {
+            return Err(CodecError::InvalidData);
+        }
+        O::ReadObservedLink(v) => {
+            if v.lookup == 0 || v.entry == 0 {
+                return Err(CodecError::InvalidData);
+            }
+            if let Some(slot) = &v.final_slot {
+                super::decode_link_slot(slot).map_err(|_| CodecError::InvalidData)?;
+            }
+        }
         _ => {}
     }
     bound(request.encoded_len(), &request.data)
@@ -244,6 +263,13 @@ fn check_entry(value: &Entry) -> Result<()> {
         return Err(CodecError::InvalidData);
     }
     Ok(())
+}
+
+fn check_observed(value: &super::ObservedEntry) -> Result<()> {
+    if value.id == 0 {
+        return Err(CodecError::InvalidData);
+    }
+    check_entry(field(&value.entry)?)
 }
 
 pub fn validate_reply(reply: &Reply) -> Result<()> {
@@ -274,11 +300,13 @@ pub fn validate_reply(reply: &Reply) -> Result<()> {
             field(&v.info)?;
         }
         Value::Entry(v) => check_entry(v)?,
-        Value::BoundLink(v)
-            if v.handle == 0 || ah_vfs_storage::StoragePath::parse(&v.path).is_err() =>
-        {
-            return Err(CodecError::InvalidData);
+        Value::OpenedLookup(v) => {
+            if v.handle == 0 {
+                return Err(CodecError::InvalidData);
+            }
+            check_observed(field(&v.root)?)?;
         }
+        Value::ObservedEntry(v) => check_observed(v)?,
         Value::Page(v) => {
             field(&v.reported)?;
             field(&v.completion)?;

@@ -1,6 +1,6 @@
 //! Shared protobuf messages, validation and VFS protocol semantics.
 pub mod wire {
-    include!(concat!(env!("OUT_DIR"), "/assethub.vfs.v12.rs"));
+    include!(concat!(env!("OUT_DIR"), "/assethub.vfs.v13.rs"));
 }
 pub use wire::*;
 pub use wire::{reply::Result as Value, request::Operation, storage_call::Operation as StorageOp};
@@ -16,10 +16,9 @@ pub use attributes::{
 pub use codec::*;
 pub use directory::*;
 pub use lookup::{
-    LookupValueError, decode_bind_link, decode_create_directory, decode_lookup, decode_read,
-    decode_remove, decode_rename, decode_stat, decode_write, encode_create_directory,
-    encode_bind_link, encode_link_target, encode_lookup, encode_read, encode_remove, encode_rename,
-    encode_stat, encode_write,
+    LookupValueError, decode_create_directory, decode_lookup, decode_read, decode_remove,
+    decode_rename, decode_stat, decode_write, encode_create_directory, encode_link_target,
+    encode_lookup, encode_read, encode_remove, encode_rename, encode_stat, encode_write,
 };
 pub use values::{
     EntryValueError, decode_capabilities, decode_entry, decode_time, encode_capabilities,
@@ -30,7 +29,7 @@ pub const FILE_DESCRIPTOR_SET: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "
 /// JSON values at application/configuration boundaries, never a wire message.
 pub type JsonObject = std::collections::BTreeMap<String, serde_json::Value>;
 
-pub const PROTOCOL_MAJOR: u32 = 12;
+pub const PROTOCOL_MAJOR: u32 = 13;
 pub const PROTOCOL_MINOR: u32 = 0;
 pub const MAX_CONTROL_BYTES: usize = 1024 * 1024;
 pub const MAX_DATA_BYTES: usize = 8 * 1024 * 1024;
@@ -38,6 +37,8 @@ pub const MAX_DATA_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_ATTRIBUTE_NAMES_BYTES: usize = MAX_CONTROL_BYTES;
 pub const MAX_FRAME_BYTES: usize = MAX_CONTROL_BYTES + MAX_DATA_BYTES + 1024;
 pub const MAX_RESOURCES: usize = 1024;
+/// Bound the number of retained observations in one lookup.
+pub const MAX_LOOKUP_ENTRIES: usize = 128 * 1024;
 pub const INSTANCE_SCHEMA_PROFILE: &str = "assethub.config.annotations.v1";
 pub const PROTOCOL_FEATURES: &[&str] = &["streams.chunked.v1"];
 
@@ -183,14 +184,19 @@ impl Operation {
                 | Self::WriterChunk(_)
                 | Self::Commit(_)
                 | Self::Abort(_)
-                | Self::ReadBoundLink(_)
+                | Self::BeginLookup(_)
+                | Self::ObserveChild(_)
+                | Self::ReadObservedLink(_)
+                | Self::VerifyLookup(_)
                 | Self::Release(_)
         )
     }
     /// Whether the reply can allocate a new resource in this session.
     pub fn allocates_resource(&self) -> bool {
-        matches!(self, Self::Open(_) | Self::Read(_) | Self::Write(_))
-            || matches!(self, Self::Storage(call) if matches!(call.operation, Some(StorageOp::BindLink(_))))
+        matches!(
+            self,
+            Self::Open(_) | Self::Read(_) | Self::Write(_) | Self::BeginLookup(_)
+        )
     }
 
     /// Check the result alternative before exposing a transport response.
@@ -201,6 +207,7 @@ impl Operation {
             | Self::TestConnection(_)
             | Self::WriterChunk(_)
             | Self::Abort(_)
+            | Self::VerifyLookup(_)
             | Self::Release(_) => matches!(value, Value::Unit(_)),
             Self::Prepare(_) => matches!(value, Value::Prepared(_)),
             Self::Migrate(_) => matches!(value, Value::Config(_)),
@@ -210,7 +217,9 @@ impl Operation {
             Self::Write(_) => matches!(value, Value::Writer(_)),
             Self::ReaderNext(_) => matches!(value, Value::Chunk(_)),
             Self::Commit(_) => matches!(value, Value::Entry(_)),
-            Self::ReadBoundLink(_) => matches!(value, Value::Bytes(_)),
+            Self::BeginLookup(_) => matches!(value, Value::OpenedLookup(_)),
+            Self::ObserveChild(_) => matches!(value, Value::ObservedEntry(_)),
+            Self::ReadObservedLink(_) => matches!(value, Value::Bytes(_)),
             Self::Storage(call) => match &call.operation {
                 Some(StorageOp::Stat(_) | StorageOp::CreateDirectory(_) | StorageOp::Rename(_)) => {
                     matches!(value, Value::Entry(_))
@@ -220,7 +229,6 @@ impl Operation {
                 Some(StorageOp::GetPermissions(_)) => matches!(value, Value::Permissions(_)),
                 Some(StorageOp::ListXattrs(_)) => matches!(value, Value::Names(_)),
                 Some(StorageOp::GetXattr(_)) => matches!(value, Value::Bytes(_)),
-                Some(StorageOp::BindLink(_)) => matches!(value, Value::BoundLink(_)),
                 Some(
                     StorageOp::Remove(_)
                     | StorageOp::SetPermissions(_)
@@ -233,6 +241,18 @@ impl Operation {
     }
 }
 
+pub fn decode_link_slot(
+    slot: &LinkSlot,
+) -> Result<(ah_vfs_storage::EntryName, ah_vfs_storage::ReadLinkRequest), CodecError> {
+    if slot.parent == 0 {
+        return Err(CodecError::InvalidData);
+    }
+    let name = ah_vfs_storage::EntryName::parse(&slot.name).map_err(|_| CodecError::InvalidData)?;
+    let path =
+        ah_vfs_storage::StoragePath::parse(&slot.path).map_err(|_| CodecError::InvalidData)?;
+    Ok((name, ah_vfs_storage::ReadLinkRequest::new(path)))
+}
+
 mod failure;
 pub use failure::{decode_storage_error, encode_storage_error};
 
@@ -241,7 +261,6 @@ impl StorageOp {
         use ah_vfs_storage::Operation as D;
         match self {
             Self::Stat(_) => D::Stat,
-            Self::BindLink(_) => D::ReadLink,
             Self::List(_) | Self::SelectDirectory(_) => D::List,
             Self::CreateDirectory(_) => D::CreateDirectory,
             Self::Remove(_) => D::Remove,
@@ -261,7 +280,10 @@ impl Operation {
         match self {
             Self::Storage(call) => call.operation.as_ref().map(StorageOp::storage_operation),
             Self::Read(_) | Self::ReaderNext(_) => Some(D::Read),
-            Self::ReadBoundLink(_) => Some(D::ReadLink),
+            Self::BeginLookup(_)
+            | Self::ObserveChild(_)
+            | Self::ReadObservedLink(_)
+            | Self::VerifyLookup(_) => Some(D::ReadLink),
             Self::Write(_) | Self::WriterChunk(_) | Self::Commit(_) | Self::Abort(_) => {
                 Some(D::Write)
             }

@@ -2,7 +2,7 @@
 //! End-to-end checks use the actual native plugin executable and a TCP channel.
 use ah_vfs::application::driver_error::LifecycleFailure;
 use ah_vfs_storage::{
-    BackendFailure, ContractViolation, Failure, MutationOutcome, Operation, PathExpr,
+    BackendFailure, Failure, MutationOutcome, Operation, PathExpr,
     ReadLinkRequest, Rejection,
 };
 mod common;
@@ -132,19 +132,44 @@ async fn bound_link_rechecks_the_original_slot_over_grpc() -> Result {
     std::os::unix::fs::symlink("before", root.path().join("link"))?;
     let storage = storage(driver.as_ref(), root.path(), records).await?;
     let operand = PathExpr::parse("/link")?;
-    let old = storage.bind_link(operand.clone(), Default::default()).await?;
+    let old =
+        ah_vfs::resolve::bind_link(storage.as_ref(), operand.clone(), Default::default()).await?;
     let request = ReadLinkRequest::new(StoragePath::parse("link")?);
     assert_eq!(old.read(request.clone()).await?.as_bytes(), b"before");
     let wrong = ReadLinkRequest::new(StoragePath::parse("other")?);
-    let error = old.read(wrong).await.err().ok_or("accepted a different address")?;
-    assert_eq!(error.failure(), Failure::Contract(ContractViolation::InvalidBinding));
+    let error = old
+        .read(wrong.clone())
+        .await
+        .err()
+        .ok_or("accepted a different address")?;
+    assert_eq!(error.failure(), Failure::InvalidBinding);
+    assert_eq!(error.outcome(), MutationOutcome::Unchanged);
+
+    let mut lookup = storage.begin_lookup(Operation::ReadLink).await?;
+    let parent = lookup.root().await?;
+    let name = ah_vfs_storage::EntryName::parse("link")?;
+    let link = lookup.observe(&parent, &name).await?;
+    let error = lookup
+        .execute_read_link(&parent, &name, &link, wrong)
+        .await
+        .err()
+        .ok_or("backend accepted a different address")?;
+    assert_eq!(error.failure(), Failure::InvalidBinding);
+    assert_eq!(error.outcome(), MutationOutcome::Unchanged);
+    assert_eq!(
+        lookup
+            .execute_read_link(&parent, &name, &link, request.clone())
+            .await?
+            .as_bytes(),
+        b"before"
+    );
 
     std::fs::rename(root.path().join("link"), root.path().join("original"))?;
     std::os::unix::fs::symlink("after", root.path().join("link"))?;
     let error = old.read(request.clone()).await.err().ok_or("accepted the replaced link")?;
     assert_eq!(error.failure(), Failure::Rejected(Rejection::Conflict));
     assert_eq!(error.outcome(), MutationOutcome::Unchanged);
-    let current = storage.bind_link(operand, Default::default()).await?;
+    let current = ah_vfs::resolve::bind_link(storage.as_ref(), operand, Default::default()).await?;
     assert_eq!(current.read(request.clone()).await?.as_bytes(), b"after");
 
     process.child.kill()?;

@@ -181,24 +181,43 @@ impl SessionTransport for Peer {
                         modified: None,
                     })
                 }
-                Op::Storage(p::StorageCall {
-                    operation: Some(p::StorageOp::BindLink(link)),
-                    ..
-                }) => {
-                    let (operand, base, links) = p::decode_lookup(link.lookup)
-                        .map_err(|_| vfs_plugin_host::convert::protocol_violation())?;
-                    assert_eq!(operand.to_string(), "../link");
-                    assert_eq!(base.as_str(), "docs/sub");
-                    assert_eq!(links, ah_vfs_storage::IntermediateSymlinks::Reject);
-                    Value::BoundLink(p::BoundLink {
-                        handle: self.next.fetch_add(1, Ordering::SeqCst),
-                        path: "docs/link".into(),
-                    })
-                }
-                Op::ReadBoundLink(_) => return Ok(p::Reply {
-                    result: Some(Value::Bytes(p::Empty {})),
-                    data: vec![0xff, b'/'],
+                Op::BeginLookup(p::Handle { handle: 1 }) => Value::OpenedLookup(p::OpenedLookup {
+                    handle: self.next.fetch_add(1, Ordering::SeqCst),
+                    root: Some(observation(100, "", p::EntryKind::Dir)),
                 }),
+                Op::ObserveChild(p::ObserveChild {
+                    lookup,
+                    parent,
+                    name,
+                }) => {
+                    assert_eq!(lookup, 2);
+                    let observed = match (parent, name.as_str()) {
+                        (100, "docs") => observation(101, "docs", p::EntryKind::Dir),
+                        (101, "sub") => observation(102, "docs/sub", p::EntryKind::Dir),
+                        (101, "link") => observation(103, "docs/link", p::EntryKind::Symlink),
+                        _ => return Err(vfs_plugin_host::convert::protocol_violation()),
+                    };
+                    Value::ObservedEntry(observed)
+                }
+                Op::ReadObservedLink(p::ReadObservedLink {
+                    lookup,
+                    entry,
+                    final_slot,
+                }) => {
+                    assert_eq!((lookup, entry), (2, 103));
+                    assert_eq!(
+                        final_slot,
+                        Some(p::LinkSlot {
+                            parent: 101,
+                            name: "link".into(),
+                            path: "docs/link".into(),
+                        })
+                    );
+                    return Ok(p::Reply {
+                        result: Some(Value::Bytes(p::Empty {})),
+                        data: vec![0xff, b'/'],
+                    });
+                }
                 Op::Read(_) => Value::Reader(p::Handle {
                     handle: self.next.fetch_add(1, Ordering::SeqCst),
                 }),
@@ -221,6 +240,18 @@ impl SessionTransport for Peer {
         })
     }
 }
+fn observation(id: u64, path: &str, kind: p::EntryKind) -> p::ObservedEntry {
+    p::ObservedEntry {
+        id,
+        entry: Some(p::Entry {
+            path: path.into(),
+            kind: kind.into(),
+            size: None,
+            modified: None,
+        }),
+    }
+}
+
 async fn connect(peer: &Arc<Peer>) -> Result<Arc<PluginDriver>> {
     let driver = Arc::new(PluginDriver::connect(peer.clone()).await?);
     driver
@@ -494,18 +525,18 @@ async fn stale_open_recreates_transport_describes_initializes_and_opens_once_mor
 }
 
 #[tokio::test]
-async fn host_forwards_bound_lookup_context_and_preserves_link_bytes() -> Result {
+async fn host_resolves_the_operand_using_only_bound_child_observations() -> Result {
     let driver = connect(&Peer::new()).await?;
     let storage = open(&driver).await?;
-    let target = storage
-        .read_link(
-            ah_vfs_storage::PathExpr::parse("../link")?,
-            LookupContext {
-                working_directory: StoragePath::parse("docs/sub")?,
-                intermediate_symlinks: ah_vfs_storage::IntermediateSymlinks::Reject,
-            },
-        )
-        .await?;
+    let target = ah_vfs::resolve::read_link(
+        storage.as_ref(),
+        ah_vfs_storage::PathExpr::parse("../link")?,
+        LookupContext {
+            working_directory: StoragePath::parse("docs/sub")?,
+            intermediate_symlinks: ah_vfs_storage::IntermediateSymlinks::Reject,
+        },
+    )
+    .await?;
     assert_eq!(target.as_bytes(), b"\xff/");
     Ok(())
 }

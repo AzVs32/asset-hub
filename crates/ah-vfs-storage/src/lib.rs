@@ -17,15 +17,15 @@
 //!
 //! A [`ReadLinkRequest`] addresses the link itself with a canonical
 //! [`StoragePath`]. The backend returns its exact bytes without following it.
-//! If the observed slot has changed before the read, the request fails with
-//! [`Rejection::Conflict`].
+//! If verification detects that the observed slot has changed, the request
+//! fails with [`Rejection::Conflict`].
 //!
 //! # Logical names and native storage
 //! An [`EntryName`] or [`XattrName`] is identified by its original UTF-8 bytes.
 //! `Report` and `report` are distinct, as are `é` and `e\u{301}`. The
-//! namespace uses exact spelling for equality, hashing and ordering. Path
-//! operands interpret `/`, `.` and `..` as syntax but keep ordinary names
-//! unchanged. Attribute keys are a separate namespace with no path syntax.
+//! namespace uses exact spelling for equality, hashing and ordering. A
+//! [`StoragePath`] records validated names in order. Attribute keys occupy a
+//! separate namespace.
 //!
 //! Map each visible native name to its exact logical spelling. The adapter may
 //! transcode a native character representation, such as UTF-16, only losslessly
@@ -51,13 +51,12 @@
 //! [`Rejection::UnsupportedName`], for example a reserved device name or a
 //! spelling the backend would rewrite on creation. A native component or key
 //! that exceeds the backend's length limit fails as [`Rejection::NameTooLong`],
-//! measured in native units. During a walk, check the logical address bound
-//! first. For example, a 256-byte component can fit the logical address and
-//! still fail on a backend with a 255-byte component limit. Joining individually
-//! valid components into an address beyond [`MAX_PATH_BYTES`] instead fails
-//! as [`Rejection::PathTooLong`]. A separate backend-wide address restriction
-//! that cannot be satisfied by component-wise addressing is
-//! [`Rejection::Unsupported`].
+//! measured in native units. Check the logical address bound before native
+//! length limits. A 256-byte component can fit the logical address and still
+//! fail on a backend with a 255-byte component limit. Joining individually
+//! valid components into an address beyond [`MAX_PATH_BYTES`] fails as
+//! [`Rejection::PathTooLong`]. A separate backend-wide address restriction
+//! that cannot be satisfied by component-wise addressing is [`Rejection::Unsupported`].
 //!
 //! Enumeration and direct access use the same visible namespace and spelling.
 //! Entries outside the exported namespace must also be outside direct lookup.
@@ -68,9 +67,8 @@
 //! fail with the same rejection as lookup. When an individually representable
 //! child would make its full address too long, fail with
 //! [`Rejection::PathTooLong`]. Sort and paginate by logical spelling. Under
-//! unchanged namespace and access conditions, pass a listed child's address
-//! through [`StoragePath::to_rooted_expr`] to address the same slot, using a
-//! final-link policy that preserves the entry when needed.
+//! unchanged namespace and access conditions, a listed child's address
+//! identifies the same slot for direct access.
 //!
 //! Malformed caller input fails with its value validation error. A malformed
 //! logical name in a protocol claim, or an adapter returning an alias as an
@@ -85,6 +83,8 @@
 //! Value errors describe construction failures without guessing input provenance.
 //! Validation-to-validation From conversions preserve structural nesting only.
 //! Adapters explicitly classify request/response errors and retain their causes.
+//! [`Failure::InvalidBinding`] identifies a caller request that disagrees with
+//! its binding. [`ContractViolation`] describes defects at the adapter boundary.
 //! [`StorageError`] records the reason and the effects of the whole attempt
 //! independently. [`MutationOutcome::Unchanged`] requires evidence that no
 //! covered change occurred or can still occur. [`MutationOutcome::Unknown`]
@@ -127,7 +127,7 @@
 //! An `Unchanged` failure leaves the retry decision to the caller's policy.
 //! Check the reason, deadline, cancellation intent and current preconditions,
 //! then open a fresh writer with replayable data for a retried write. For
-//! `Unknown`, reconcile against the original instance generation, bound
+//! `Unknown`, reconcile against the original backend generation, the
 //! destination identity or expected absence, and any affected parent
 //! directories before replay. A higher layer may instead supply an
 //! authoritative operation receipt or an explicit deduplication guarantee.
@@ -183,17 +183,17 @@
 //! ```
 //!
 //! # Directory pagination
-//! The executor resolves an initial operand and binds the selected directory
-//! address and incarnation to the request before enumerating. A decoder needs
-//! that independently established binding and a response correlated to the
-//! bound operation. The page's reported address and identity are claims to
-//! check against the binding, even on empty pages. A transport without an
-//! independent binding must report the operation as [`Rejection::Unsupported`].
+//! Before enumerating, the executor supplies a [`DirectorySelection`]
+//! established independently of the page payload. The decoder correlates the
+//! response with the request and checks the page's reported address and
+//! identity against the selection, even on empty pages. If the executor
+//! cannot supply an independent selection, the operation is
+//! [`Rejection::Unsupported`].
 //!
 //! A continuation carries the selected address, identity and exclusive name.
-//! It never reuses the original alias or working directory. Resume only at
-//! the same address and incarnation in the same instance generation, or fail
-//! as [`BackendFailure::Stale`] if the binding is gone or no longer matches.
+//! Resume only at the same address and incarnation in the same backend
+//! generation. A selection can expire within that generation. Start a new
+//! listing if resuming returns [`BackendFailure::Stale`].
 //! This protects directory identity, while the contents are live. Changes
 //! before the cursor may be missed and renames can move entries across it.
 //! The cursor is a continuation value, rather than a stored snapshot or a
@@ -280,12 +280,9 @@
 //!   only when the negotiated schema marks it optional and independent of
 //!   known guarantees. On encode, fail if the negotiated schema cannot
 //!   represent a value. Rust discriminants and display strings are not tags.
-//! - **Paths.** Use distinct schema fields or tags for [`PathExpr`] operands
-//!   and [`StoragePath`] addresses. An operand can use its canonical text,
-//!   decoded with `PathExpr::parse`, preserving its anchor, navigation and
-//!   directory requirement. Decode an address with `StoragePath::parse`.
-//!   An empty address denotes the root. A rooted operand uses `/`, and an
-//!   empty operand is invalid. Encode [`LinkTarget`] as opaque bytes.
+//! - **Addresses.** Decode canonical addresses with [`StoragePath::parse`].
+//!   The empty address denotes the backend root. Keep addresses distinct
+//!   from request operands in the schema. Encode [`LinkTarget`] as opaque bytes.
 //! - **Errors.** A storage failure carries [`Operation`], the [`Failure`]
 //!   family and reason, and [`MutationOutcome`] as independent mandatory
 //!   fields. Check the operation against the correlated request. Reject

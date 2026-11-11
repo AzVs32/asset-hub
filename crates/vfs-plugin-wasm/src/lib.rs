@@ -116,7 +116,7 @@ struct State {
 impl State {
     fn resource(&self, op: &Op, kind: p::ResourceKind, handle: u64) -> Result<(), DriverError> {
         let resource = self.resources.get(&handle).ok_or_else(|| {
-            let reason = if kind == p::ResourceKind::Link {
+            let reason = if kind == p::ResourceKind::Lookup {
                 BackendFailure::Stale
             } else {
                 BackendFailure::Closed
@@ -124,6 +124,14 @@ impl State {
             c::call_error(op, Failure::Backend(reason), false, None)
         })?;
         if resource.kind != kind {
+            if kind == p::ResourceKind::Lookup {
+                return Err(c::call_error(
+                    op,
+                    Failure::Backend(BackendFailure::Stale),
+                    false,
+                    None,
+                ));
+            }
             return Err(c::protocol_violation());
         }
         Ok(())
@@ -229,14 +237,17 @@ impl State {
         match &op {
             Op::Storage(p::StorageCall { handle, .. })
             | Op::Read(p::Read { handle, .. })
-            | Op::Write(p::Write { handle, .. }) => {
+            | Op::Write(p::Write { handle, .. })
+            | Op::BeginLookup(p::Handle { handle }) => {
                 self.resource(&op, p::ResourceKind::Storage, *handle)?
             }
             Op::ReaderNext(p::Handle { handle }) => {
                 self.resource(&op, p::ResourceKind::Reader, *handle)?
             }
-            Op::ReadBoundLink(p::Handle { handle }) => {
-                self.resource(&op, p::ResourceKind::Link, *handle)?
+            Op::ReadObservedLink(p::ReadObservedLink { lookup: handle, .. })
+            | Op::ObserveChild(p::ObserveChild { lookup: handle, .. })
+            | Op::VerifyLookup(p::Handle { handle }) => {
+                self.resource(&op, p::ResourceKind::Lookup, *handle)?
             }
             Op::WriterChunk(p::Handle { handle }) => {
                 self.resource(&op, p::ResourceKind::Writer, *handle)?
@@ -286,11 +297,11 @@ impl State {
             Value::Storage(p::Storage { handle, .. })
             | Value::Reader(p::Handle { handle })
             | Value::Writer(p::Handle { handle })
-            | Value::BoundLink(p::BoundLink { handle, .. }) => {
+            | Value::OpenedLookup(p::OpenedLookup { handle, .. }) => {
                 let kind = match op {
                     Op::Open(_) => p::ResourceKind::Storage,
                     Op::Read(_) => p::ResourceKind::Reader,
-                    Op::Storage(_) => p::ResourceKind::Link,
+                    Op::BeginLookup(_) => p::ResourceKind::Lookup,
                     _ => p::ResourceKind::Writer,
                 };
                 if *handle <= self.next {

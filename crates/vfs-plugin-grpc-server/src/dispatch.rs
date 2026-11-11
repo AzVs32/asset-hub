@@ -3,7 +3,7 @@ use ah_vfs::application::driver_error::{DriverError, LifecycleError, LifecycleFa
 use ah_vfs::application::port::*;
 use ah_vfs::domain::InstanceId;
 use ah_vfs_storage::ContractViolation;
-use ah_vfs_storage::{BackendFailure, Failure, Operation, Rejection, StorageError};
+use ah_vfs_storage::{BackendFailure, EntryName, Failure, Operation, Rejection, StorageError};
 use futures_util::FutureExt;
 use std::{
     collections::HashMap,
@@ -19,6 +19,42 @@ use vfs_plugin_protocol::{self as p, Operation as Op, Value};
 
 type Reader = Arc<Mutex<Box<dyn StorageFileReader>>>;
 type Writer = Arc<Mutex<Box<dyn StorageFileWriter>>>;
+struct Lookup {
+    backend: Box<dyn OperationLookup>,
+    entries: HashMap<u64, ObservedEntry>,
+}
+
+impl Lookup {
+    fn entry(&self, id: u64) -> Result<ObservedEntry, StorageError> {
+        self.entries.get(&id).cloned().ok_or_else(stale_lookup)
+    }
+
+    fn insert(&mut self, id: u64, entry: ObservedEntry) -> Result<p::ObservedEntry, StorageError> {
+        let wire = c::entry(Operation::ReadLink, entry.entry().clone())?;
+        self.entries.insert(id, entry);
+        Ok(p::ObservedEntry {
+            id,
+            entry: Some(wire),
+        })
+    }
+}
+
+fn stale_lookup() -> StorageError {
+    StorageError::without_effects(
+        Operation::ReadLink,
+        Failure::Backend(BackendFailure::Stale),
+        None,
+    )
+}
+
+fn lookup_capacity() -> StorageError {
+    StorageError::without_effects(
+        Operation::ReadLink,
+        Failure::Backend(BackendFailure::CapacityExceeded),
+        None,
+    )
+}
+
 struct Slot<T> {
     value: T,
     _capacity: OwnedSemaphorePermit,
@@ -29,7 +65,7 @@ struct Resources {
     storage: Option<Slot<Arc<dyn Storage>>>,
     readers: HashMap<u64, Slot<Reader>>,
     writers: HashMap<u64, Slot<Writer>>,
-    links: HashMap<u64, Slot<Arc<dyn BoundLink>>>,
+    lookups: HashMap<u64, Slot<Arc<Mutex<Lookup>>>>,
 }
 impl Resources {
     fn kind(&self, handle: u64) -> Option<p::ResourceKind> {
@@ -39,8 +75,8 @@ impl Resources {
             Some(p::ResourceKind::Reader)
         } else if self.writers.contains_key(&handle) {
             Some(p::ResourceKind::Writer)
-        } else if self.links.contains_key(&handle) {
-            Some(p::ResourceKind::Link)
+        } else if self.lookups.contains_key(&handle) {
+            Some(p::ResourceKind::Lookup)
         } else {
             None
         }
@@ -49,7 +85,7 @@ impl Resources {
         if usize::from(self.storage.is_some())
             + self.readers.len()
             + self.writers.len()
-            + self.links.len()
+            + self.lookups.len()
             >= p::MAX_RESOURCES
         {
             return Err(StorageError::without_effects(
@@ -59,6 +95,10 @@ impl Resources {
             )
             .into());
         }
+        self.next_id(operation)
+    }
+
+    fn next_id(&mut self, operation: Operation) -> Result<u64, DriverError> {
         self.next = self.next.checked_add(1).ok_or_else(|| {
             StorageError::without_effects(
                 operation,
@@ -473,6 +513,16 @@ impl Session {
                 .into())
             })
     }
+    async fn lookup(&self, handle: u64) -> Result<Arc<Mutex<Lookup>>, StorageError> {
+        self.resources
+            .lock()
+            .await
+            .lookups
+            .get(&handle)
+            .map(|slot| slot.value.clone())
+            .ok_or_else(stale_lookup)
+    }
+
     async fn call_inner(&self, op: Op, data: Vec<u8>) -> Result<p::Reply, DriverError> {
         let value = match op {
             Op::Storage(p::StorageCall {
@@ -663,32 +713,104 @@ impl Session {
                     p::ResourceKind::Writer => {
                         resources.writers.remove(&handle);
                     }
-                    p::ResourceKind::Link => {
-                        resources.links.remove(&handle);
+                    p::ResourceKind::Lookup => {
+                        resources.lookups.remove(&handle);
                     }
                     _ => return Err(LifecycleError::new(LifecycleFailure::InvalidRequest).into()),
                 }
                 Value::Unit(p::Empty {})
             }
-            Op::ReadBoundLink(p::Handle { handle }) => {
-                let op = Operation::ReadLink;
-                let link = self
-                    .resources
+            Op::BeginLookup(p::Handle { handle }) => {
+                let operation = Operation::ReadLink;
+                if !self.generation.driver.info().capabilities().read_link() {
+                    return Err(unsupported_storage(operation).into());
+                }
+                let storage = self.storage(operation, handle).await?;
+                let capacity = self.generation.reserve().map_err(|source| {
+                    StorageError::without_effects(
+                        operation,
+                        Failure::Backend(BackendFailure::CapacityExceeded),
+                        Some(Box::new(source)),
+                    )
+                })?;
+                let mut backend = storage.begin_lookup(operation).await?;
+                let root = backend.root().await?;
+                let mut lookup = Lookup {
+                    backend,
+                    entries: HashMap::new(),
+                };
+                let mut resources = self.resources.lock().await;
+                let handle = resources.allocate(operation)?;
+                let id = resources.next_id(operation)?;
+                let root = lookup.insert(id, root)?;
+                resources.lookups.insert(
+                    handle,
+                    Slot {
+                        value: Arc::new(Mutex::new(lookup)),
+                        _capacity: capacity,
+                    },
+                );
+                Value::OpenedLookup(p::OpenedLookup {
+                    handle,
+                    root: Some(root),
+                })
+            }
+            Op::ObserveChild(p::ObserveChild {
+                lookup,
+                parent,
+                name,
+            }) => {
+                let lookup = self.lookup(lookup).await?;
+                let mut lookup = lookup.lock().await;
+                let parent = lookup.entry(parent)?;
+                let name = EntryName::parse(&name).map_err(|source| {
+                    LifecycleError::with_source(LifecycleFailure::InvalidRequest, source)
+                })?;
+                if lookup.entries.len() >= p::MAX_LOOKUP_ENTRIES {
+                    return Err(lookup_capacity().into());
+                }
+                let entry = lookup.backend.observe(&parent, &name).await?;
+                let id = self.resources.lock().await.next_id(Operation::ReadLink)?;
+                Value::ObservedEntry(lookup.insert(id, entry)?)
+            }
+            Op::ReadObservedLink(p::ReadObservedLink {
+                lookup,
+                entry,
+                final_slot,
+            }) => {
+                let lookup = self.lookup(lookup).await?;
+                let lookup = lookup.lock().await;
+                let entry = lookup.entry(entry)?;
+                let target = if let Some(slot) = final_slot {
+                    let (name, request) = p::decode_link_slot(&slot).map_err(|source| {
+                        LifecycleError::with_source(LifecycleFailure::InvalidRequest, source)
+                    })?;
+                    let parent = lookup.entry(slot.parent)?;
+                    lookup
+                        .backend
+                        .execute_read_link(&parent, &name, &entry, request)
+                        .await?
+                } else {
+                    lookup.backend.read_link(&entry).await?
+                };
+                return p::encode_link_target(target).map_err(|reason| {
+                    StorageError::without_effects(
+                        Operation::ReadLink,
+                        Failure::Rejected(reason),
+                        None,
+                    )
+                    .into()
+                });
+            }
+            Op::VerifyLookup(p::Handle { handle }) => {
+                self.lookup(handle)
+                    .await?
                     .lock()
                     .await
-                    .links
-                    .get(&handle)
-                    .map(|slot| slot.value.clone())
-                    .ok_or_else(|| StorageError::without_effects(
-                        op,
-                        Failure::Backend(BackendFailure::Stale),
-                        None,
-                    ))?;
-                let request = ah_vfs_storage::ReadLinkRequest::new(link.path().clone());
-                let target = link.read(request).await?;
-                return p::encode_link_target(target).map_err(|reason| {
-                    StorageError::without_effects(op, Failure::Rejected(reason), None).into()
-                });
+                    .backend
+                    .verify()
+                    .await?;
+                Value::Unit(p::Empty {})
             }
             _ => return Err(LifecycleError::new(LifecycleFailure::InvalidRequest).into()),
         };
@@ -714,30 +836,6 @@ impl Session {
                     intermediate_symlinks,
                 };
                 Value::Entry(c::entry(operation, s.stat_entry(request, context).await?)?)
-            }
-            p::StorageOp::BindLink(request) => {
-                let (operand, working_directory, intermediate_symlinks) =
-                    p::decode_bind_link(request).map_err(invalid_lookup)?;
-                let context = LookupContext {
-                    working_directory,
-                    intermediate_symlinks,
-                };
-                let capacity = self.generation.reserve().map_err(|source| {
-                    StorageError::without_effects(
-                        operation,
-                        Failure::Backend(BackendFailure::CapacityExceeded),
-                        Some(Box::new(source)),
-                    )
-                })?;
-                let link = s.bind_link(operand, context).await?;
-                let path = link.path().as_str().into();
-                let mut resources = self.resources.lock().await;
-                let handle = resources.allocate(operation)?;
-                resources.links.insert(handle, Slot {
-                    value: Arc::from(link),
-                    _capacity: capacity,
-                });
-                Value::BoundLink(p::BoundLink { handle, path })
             }
             p::StorageOp::SelectDirectory(wire) => {
                 let (request, working_directory, intermediate_symlinks) =

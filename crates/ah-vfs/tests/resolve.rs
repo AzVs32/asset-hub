@@ -30,6 +30,8 @@ impl Node {
 struct Namespace {
     generation: Arc<()>,
     nodes: BTreeMap<StoragePath, Arc<Node>>,
+    competing_creation: Option<StoragePath>,
+    fail_final_verification: bool,
 }
 
 #[derive(Clone)]
@@ -108,6 +110,8 @@ impl Namespace {
         Ok(Self {
             generation: Arc::new(()),
             nodes,
+            competing_creation: None,
+            fail_final_verification: false,
         })
     }
 
@@ -202,32 +206,18 @@ impl Namespace {
         request: &CreateDirectoryRequest,
     ) -> Result<StoragePath, StorageError> {
         let op = Operation::CreateDirectory;
-        let count_before = self.nodes.len();
-        let lookup = request.lookup();
         let directories = self.directories(&StoragePath::root(), op)?;
-        let result = Resolver::new(op, IntermediateSymlinks::default())
+        Resolver::new(op, IntermediateSymlinks::default())
             .walk(
                 &mut Fixture {
                     namespace: self,
                     op,
                 },
-                lookup,
+                request.lookup(),
                 directories,
             )
             .and_then(|selected| selected.require_entry(op))
-            .and_then(|selected| {
-                lookup
-                    .check_existing_target(selected.entry.path(), selected.entry.entry_type())
-                    .map_err(|reason| rejected(op, reason))?;
-                Ok(selected.entry.path().clone())
-            });
-        result.map_err(|error| {
-            if self.nodes.len() == count_before {
-                error
-            } else {
-                StorageError::after_dispatch(op, error.failure(), Some(Box::new(error)))
-            }
-        })
+            .map(|selected| selected.entry.path().clone())
     }
 
     fn rename_decision(
@@ -252,7 +242,7 @@ impl Namespace {
             .join(&name)
             .map_err(|_| Failure::Rejected(Rejection::PathTooLong))?;
         let source_entry = backend
-            .observe_child(&parent, source_address, &name)
+            .observe(&parent, source_address)
             .map_err(|error| error.failure())?;
         let kind = source_entry.entry.entry_type();
         source
@@ -291,6 +281,13 @@ struct Fixture<'a> {
     op: Operation,
 }
 
+impl Fixture<'_> {
+    fn observe(&self, parent: &Binding, address: StoragePath) -> Result<Binding, StorageError> {
+        self.namespace.verify(parent, self.op)?;
+        self.namespace.binding(address, self.op)
+    }
+}
+
 impl LookupPort for Fixture<'_> {
     type Binding = Binding;
 
@@ -298,24 +295,23 @@ impl LookupPort for Fixture<'_> {
         &binding.entry
     }
 
-    fn observe_child(
+    async fn observe_child(
         &mut self,
         parent: &Binding,
         address: StoragePath,
         _name: &EntryName,
     ) -> Result<Binding, StorageError> {
-        self.namespace.verify(parent, self.op)?;
-        self.namespace.binding(address, self.op)
+        self.observe(parent, address)
     }
 
-    fn read_bound_link(&self, entry: &Binding) -> Result<LinkTarget, StorageError> {
+    async fn read_bound_link(&self, entry: &Binding) -> Result<LinkTarget, StorageError> {
         match entry.node.as_ref() {
             Node::Link(link) => Ok(link.clone()),
             _ => Err(rejected(self.op, Rejection::NotSymlink)),
         }
     }
 
-    fn create_child(
+    async fn create_child(
         &mut self,
         parent: &Binding,
         address: StoragePath,
@@ -328,7 +324,17 @@ impl LookupPort for Fixture<'_> {
             return Err(rejected(self.op, Rejection::AlreadyExists));
         };
         slot.insert(Arc::new(Node::Directory));
+        if self.namespace.competing_creation.as_ref() == Some(&address) {
+            return Err(rejected(self.op, Rejection::AlreadyExists));
+        }
         self.namespace.binding(address, self.op)
+    }
+
+    async fn verify_observations(&self) -> Result<(), StorageError> {
+        if self.namespace.fail_final_verification {
+            return Err(rejected(self.op, Rejection::Conflict));
+        }
+        Ok(())
     }
 }
 
@@ -545,6 +551,45 @@ fn recursive_creation_reports_known_partial_effects_separately_from_failure() ->
         ));
         assert!(!fs.nodes.contains_key(&StoragePath::parse("file/child")?));
     }
+    Ok(())
+}
+
+#[test]
+fn recursive_creation_does_not_claim_a_competing_operations_effect() -> TestResult {
+    let mut fs = Namespace::new([("file", Node::File)])?;
+    let parent = StoragePath::parse("competing")?;
+    fs.competing_creation = Some(parent.clone());
+    let request = CreateDirectoryRequest::new(
+        PathExpr::parse("competing/../file/child")?,
+        CreateDirectoryMode::Recursive,
+    );
+
+    let error = fs
+        .mkdir_recursive(&request)
+        .err()
+        .ok_or("expected lookup failure")?;
+    assert_eq!(error.failure(), Failure::Rejected(Rejection::NotDirectory));
+    assert_eq!(error.outcome(), MutationOutcome::Unchanged);
+    assert!(fs.nodes.contains_key(&parent));
+    Ok(())
+}
+
+#[test]
+fn recursive_creation_includes_effects_when_final_verification_fails() -> TestResult {
+    let mut fs = Namespace::new([])?;
+    fs.fail_final_verification = true;
+    let request = CreateDirectoryRequest::new(
+        PathExpr::parse("parent/child")?,
+        CreateDirectoryMode::Recursive,
+    );
+
+    let error = fs
+        .mkdir_recursive(&request)
+        .err()
+        .ok_or("expected verification failure")?;
+    assert_eq!(error.failure(), Failure::Rejected(Rejection::Conflict));
+    assert_eq!(error.outcome(), MutationOutcome::Unknown);
+    assert!(fs.nodes.contains_key(&StoragePath::parse("parent/child")?));
     Ok(())
 }
 

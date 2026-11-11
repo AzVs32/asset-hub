@@ -850,13 +850,12 @@ async fn lookup_policy_controls_links_without_escaping_the_instance() -> TestRes
             EntryType::Symlink
         );
     }
-    let target = f
-        .storage
-        .read_link(
-            ah_vfs_storage::PathExpr::parse("/dangling")?,
-            Default::default(),
-        )
-        .await?;
+    let target = ah_vfs::resolve::read_link(
+        f.storage.as_ref(),
+        ah_vfs_storage::PathExpr::parse("/dangling")?,
+        Default::default(),
+    )
+    .await?;
     use std::os::unix::ffi::OsStrExt;
     assert_eq!(
         target.as_bytes(),

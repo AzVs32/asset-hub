@@ -350,8 +350,8 @@ pub enum RenameDecision {
 
 /// Atomic rename within one instance, never copy/delete. Both roots are excluded.
 /// Both operands preserve the final symbolic link as a directory entry. Resolve
-/// the source first and use the same captured instance, working directory and
-/// link traversal budget for both. An absent destination with a directory
+/// the source first and use the same instance, per-call base address and link
+/// traversal budget for both. An absent destination with a directory
 /// requirement can only be used for a directory source.
 /// Once both operands pass lookup, compare directory entry slots by their
 /// parent identities and names. The same slot fails as AlreadyExists in

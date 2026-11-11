@@ -11,8 +11,8 @@ pub const MAX_PATH_EXPR_BYTES: usize = MAX_PATH_BYTES + 2;
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum LookupStart {
     InstanceRoot,
-    /// The captured working directory for a request, or the containing
-    /// directory of a link when interpreting its target.
+    /// The directory selected from the current request's base address, or the
+    /// containing directory of a link when interpreting its target.
     BaseDirectory,
 }
 
@@ -36,8 +36,8 @@ pub enum PathExprError {
 }
 
 /// A nonempty, instance-scoped path operand. A leading slash selects the
-/// instance root. A relative operand uses the captured working directory,
-/// while a relative link target uses the link's containing directory.
+/// instance root. A relative operand uses the directory selected from the base
+/// address. A relative link target uses the link's containing directory.
 /// Runs of slashes are equivalent to one slash.
 /// Ordinary components retain their exact [`EntryName`] spelling.
 /// Use [`StoragePath::to_rooted_expr`] to reuse an already selected address.
