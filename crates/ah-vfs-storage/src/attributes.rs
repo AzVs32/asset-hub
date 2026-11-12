@@ -137,6 +137,10 @@ impl AttributeAction {
 
 /// An attribute request addresses the final directory entry itself.
 ///
+/// On a symbolic link, an action the backend cannot apply to the link itself
+/// fails with [`crate::Rejection::Unsupported`] without effects. The backend
+/// never applies the action to the link target.
+///
 /// The address is canonical. Use [`Self::into_parts`] when
 /// a protocol message or queued operation needs to own the address and action.
 #[derive(Clone, Debug, Eq, PartialEq, Getters)]

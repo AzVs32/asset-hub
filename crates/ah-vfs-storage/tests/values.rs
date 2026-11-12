@@ -172,6 +172,27 @@ fn canonical_mutation_requests_reject_root() -> Result {
 }
 
 #[test]
+fn canonical_rename_requires_distinct_addresses_outside_the_source_subtree() -> Result {
+    let source = StoragePath::parse("a/b")?;
+    for mode in [RenameMode::NoReplace, RenameMode::Replace] {
+        assert_eq!(
+            RenameRequest::new(source.clone(), source.clone(), mode),
+            Err(RequestPathError::RenameSameAddress)
+        );
+        for destination in ["a/b/c", "a/b/c/d"] {
+            assert_eq!(
+                RenameRequest::new(source.clone(), StoragePath::parse(destination)?, mode),
+                Err(RequestPathError::RenameDestinationBelowSource)
+            );
+        }
+        for destination in ["a", "a/bb/c", "a/B/c"] {
+            RenameRequest::new(source.clone(), StoragePath::parse(destination)?, mode)?;
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn ranges_handle_empty_reads_eof_and_integer_boundaries() -> Result {
     assert_eq!(ReadRange::default(), ReadRange::FULL);
     assert_eq!(ReadRange::new(u64::MAX, None)?.length(), None);

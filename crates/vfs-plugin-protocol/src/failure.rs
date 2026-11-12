@@ -151,11 +151,6 @@ const CAUSES: &[(&str, &str, d::Failure)] = &[
     ),
     (
         "backend",
-        "unrepresentable-link-target",
-        d::Failure::Backend(d::BackendFailure::UnrepresentableLinkTarget),
-    ),
-    (
-        "backend",
         "closed",
         d::Failure::Backend(d::BackendFailure::Closed),
     ),

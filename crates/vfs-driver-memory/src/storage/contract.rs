@@ -136,9 +136,6 @@ fn rename(
     if same_slot {
         return Ok(result);
     }
-    if descendant(destination_path.as_str(), source_path.as_str()) {
-        return Err(rejected(op, Rejection::Conflict));
-    }
     // Validate every resulting address under the lock before changing the namespace.
     let mut moved = Vec::new();
     for (path, entry) in nodes.iter() {

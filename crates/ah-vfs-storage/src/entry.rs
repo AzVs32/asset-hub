@@ -30,6 +30,8 @@ pub enum EntryError {
     RootNotDirectory,
 }
 /// Metadata describes the selected entry. The backend root is always a directory.
+/// The canonical address lets metadata identify its entry independently of a
+/// directory page, at the cost of repeating the directory prefix in a listing.
 /// Native timestamp encodings are converted at the adapter boundary. Metadata
 /// from separate operations need not describe the same backend revision.
 #[derive(Clone, Debug, Eq, PartialEq, Getters, CopyGetters)]

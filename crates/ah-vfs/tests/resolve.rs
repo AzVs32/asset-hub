@@ -279,7 +279,13 @@ impl Namespace {
             }
             Some(kind) => ObservedDestination::Occupied(kind),
         };
-        decide_destination(request, &address, kind, observation)
+        decide_destination(
+            request,
+            source_entry.entry.path(),
+            &address,
+            kind,
+            observation,
+        )
     }
 }
 
@@ -304,6 +310,7 @@ enum RenameDecision {
 
 fn decide_destination(
     operand: &RenameOperand,
+    source_address: &StoragePath,
     address: &StoragePath,
     source: EntryType,
     destination: ObservedDestination,
@@ -327,8 +334,7 @@ fn decide_destination(
             ah_vfs_storage::RenameDestination::NonEmptyDirectory
         }
     };
-    let source_address = address.clone();
-    let request = RenameRequest::new(source_address, address.clone(), operand.mode())
+    let request = RenameRequest::new(source_address.clone(), address.clone(), operand.mode())
         .map_err(|_| ResolveFailure::Storage(Failure::InvalidRequest))?;
     request.decide_destination(source, canonical)?;
     Ok(RenameDecision::Move)
@@ -801,9 +807,11 @@ fn destination_rules_apply_to_absent_and_existing_entries() -> TestResult {
         PathExpr::parse("dest/")?,
         RenameMode::Replace,
     )?;
+    let source_address = StoragePath::parse("src")?;
     assert_eq!(
         decide_destination(
             &rename,
+            &source_address,
             &address,
             EntryType::Directory,
             ObservedDestination::Missing
@@ -811,16 +819,29 @@ fn destination_rules_apply_to_absent_and_existing_entries() -> TestResult {
         Ok(RenameDecision::Move)
     );
     assert_eq!(
-        decide_destination(&rename, &address, file, ObservedDestination::Missing),
-        Err(Rejection::NotDirectory.into())
-    );
-    assert_eq!(
-        decide_destination(&rename, &address, file, ObservedDestination::SameSlot),
+        decide_destination(
+            &rename,
+            &source_address,
+            &address,
+            file,
+            ObservedDestination::Missing
+        ),
         Err(Rejection::NotDirectory.into())
     );
     assert_eq!(
         decide_destination(
             &rename,
+            &address,
+            &address,
+            file,
+            ObservedDestination::SameSlot
+        ),
+        Err(Rejection::NotDirectory.into())
+    );
+    assert_eq!(
+        decide_destination(
+            &rename,
+            &source_address,
             &address,
             file,
             ObservedDestination::Occupied(EntryType::Directory)
@@ -922,13 +943,13 @@ fn link_target_bytes_are_lossless_and_following_checks_expanded_length() -> Test
     assert_eq!(unreadable.as_bytes(), raw);
     assert_eq!(
         prepare_link_target(&unreadable, &root, &[]),
-        Err(Failure::Backend(BackendFailure::UnrepresentableLinkTarget)),
+        Err(ResolveFailure::UnrepresentableLinkTarget),
     );
     assert_eq!(unreadable.into_bytes(), raw);
     for raw in [b"".as_slice(), b"name\0", b"a:b", b"a\\b", b"C:\\docs"] {
         assert_eq!(
             prepare_link_target(&LinkTarget::new(raw.to_vec()), &root, &[]),
-            Err(Failure::Backend(BackendFailure::UnrepresentableLinkTarget))
+            Err(ResolveFailure::UnrepresentableLinkTarget)
         );
     }
     let raw = "/Report//../e\u{301}/";
@@ -950,7 +971,7 @@ fn link_target_bytes_are_lossless_and_following_checks_expanded_length() -> Test
     );
     assert_eq!(prepared.check_directory_requirement(true), Ok(()));
     let long_suffix = PathExpr::parse("b/c")?;
-    let too_long = Err(Failure::Rejected(Rejection::PathTooLong));
+    let too_long = Err(ResolveFailure::from(Rejection::PathTooLong));
     assert_eq!(
         prepare_link_target(&target, &directory, long_suffix.components()),
         too_long

@@ -17,14 +17,21 @@
 //!
 //! Requests use canonical [`StoragePath`] addresses. The backend preserves
 //! every symbolic link as an entry without following it, including in the
-//! final slot. A namespace mismatch detected before effects returns
+//! final slot. During canonical execution, any intermediate component found
+//! to be a non-directory entry, including a symbolic link, is a namespace
+//! mismatch. A namespace mismatch detected before effects returns
 //! [`Rejection::Conflict`] with [`MutationOutcome::Unchanged`]. A retired
 //! namespace generation returns [`BackendFailure::Stale`].
 //! [`ReadRequest`] and replacement writes reject a link as
 //! [`Rejection::NotRegularFile`]. [`StatRequest`], [`ReadLinkRequest`],
 //! [`AttributeRequest`], non-directory removal and rename address the link
-//! itself. Root is excluded from write, remove, rename and directory creation.
+//! itself. An attribute operation that the backend cannot perform on the
+//! link itself returns [`Rejection::Unsupported`] without effects.
+//! Root is excluded from write, remove, rename and directory creation.
 //! Directory creation requests create one directory under an existing parent.
+//! [`RenameRequest::new`] rejects equal addresses and any destination strictly
+//! below the source. The latter check compares complete address components
+//! and requires no knowledge of the entry type.
 //!
 //! # Logical names and native storage
 //! An [`EntryName`] or [`XattrName`] is identified by its original UTF-8 bytes.
@@ -32,6 +39,9 @@
 //! namespace uses exact spelling for equality, hashing and ordering. A
 //! [`StoragePath`] records validated names in order. Attribute keys occupy a
 //! separate namespace.
+//! Backslash and colon are excluded from entry names to keep addresses
+//! portable across native path syntaxes, including Windows path separators,
+//! drive prefixes and alternate data streams.
 //!
 //! Map each visible native name to its exact logical spelling. The adapter may
 //! transcode a native character representation, such as UTF-16, only losslessly
@@ -68,10 +78,11 @@
 //! Entries outside the exported namespace must also be outside direct lookup.
 //! If a visible native entry or attribute key cannot be represented, fail the
 //! page or attribute listing with [`BackendFailure::UnrepresentableName`].
-//! This includes a native name containing a forbidden character or invalid
-//! UTF-8. If a visible spelling decodes but is unsupported for direct access,
-//! fail with the same rejection as lookup. When an individually representable
-//! child would make its full address too long, fail with
+//! A single visible name with a forbidden character or invalid UTF-8 can
+//! therefore fail a listing request. If a visible spelling decodes but is
+//! unsupported for direct access, fail with the same rejection as lookup.
+//! When an individually representable child would make its full address too
+//! long, fail with
 //! [`Rejection::PathTooLong`]. Sort and paginate by logical spelling. Under
 //! unchanged namespace and access conditions, a listed child's address
 //! identifies the same slot for direct access.
@@ -89,8 +100,11 @@
 //! Value errors describe construction failures without guessing input provenance.
 //! Validation-to-validation From conversions preserve structural nesting only.
 //! Adapters explicitly classify request/response errors and retain their causes.
-//! [`Failure::InvalidBinding`] identifies a caller request that disagrees with
-//! its binding. [`ContractViolation`] describes defects at the adapter boundary.
+//! [`RequestPathError`] rejects canonical addresses that violate an operation's
+//! constructor rules. [`Failure::InvalidRequest`] reports input that cannot
+//! form a valid dispatchable operation. [`Failure::InvalidBinding`] reports
+//! a valid request that disagrees with its binding. [`ContractViolation`]
+//! describes defects at the adapter boundary.
 //! [`StorageError`] records the reason and the effects of the whole attempt
 //! independently. [`MutationOutcome::Unchanged`] requires evidence that no
 //! covered change occurred or can still occur. [`MutationOutcome::Unknown`]
@@ -195,6 +209,13 @@
 //! identity against the selection, even on empty pages. If the executor
 //! cannot supply an independent selection, the operation is
 //! [`Rejection::Unsupported`].
+//!
+//! Producers emit entries in strictly increasing UTF-8 byte order by name,
+//! strictly after the cursor. On backends that enumerate in an unspecified
+//! order, such as local filesystems, each page can require a full scan and
+//! sorting or ordered selection to determine the next entries. Each [`Entry`]
+//! retains its canonical address so it can be used independently of the page,
+//! which repeats the directory prefix for each listed child.
 //!
 //! A continuation carries the selected address, identity and exclusive name.
 //! Resume only at the same address and incarnation in the same backend
@@ -396,16 +417,6 @@
 //!         | AttributeAction::SetXattr { .. } | AttributeAction::RemoveXattr(_) => {}
 //!     }
 //! }
-//! ```
-//!
-//! Use ordinary functions and closures to compose constructors. Generated
-//! builder types and state traits are outside the public API.
-//! ```compile_fail
-//! use ah_vfs_storage::ReadRequestBuilder;
-//! ```
-//!
-//! ```compile_fail
-//! use ah_vfs_storage::capabilities_builder::IsComplete;
 //! ```
 //!
 //! A write request requires an explicit publication guarantee.

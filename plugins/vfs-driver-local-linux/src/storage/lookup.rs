@@ -491,14 +491,6 @@ fn rename(
     use rustix::fs::{RenameFlags, renameat_with};
     let op = Operation::Rename;
     let selected = source.require_entry(op)?;
-    if request
-        .destination()
-        .as_str()
-        .strip_prefix(request.source().as_str())
-        .is_some_and(|suffix| suffix.starts_with('/'))
-    {
-        return Err(rejected(op, Rejection::Conflict));
-    }
     let kind = selected.entry.entry_type();
     let same_slot = source.name == destination.name
         && identity(op, &source.parent.file)? == identity(op, &destination.parent.file)?;
@@ -923,6 +915,43 @@ mod tests {
                 }
             }
         }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn replacing_a_bound_parent_with_a_link_conflicts_before_unlink()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let base = directory.path();
+        std::fs::create_dir(base.join("parent"))?;
+        std::fs::create_dir(base.join("other"))?;
+        std::fs::write(base.join("parent/file"), b"observed")?;
+        std::fs::write(base.join("other/file"), b"referent")?;
+        let root = Arc::new(Dir::open_ambient_dir(base, cap_std::ambient_authority())?);
+        let mut lookup = LocalLookup::new(root, Arc::default(), Operation::Remove);
+        let root = lookup.root().await?;
+        let parent = lookup.observe(&root, &EntryName::parse("parent")?).await?;
+        let name = EntryName::parse("file")?;
+        let entry = lookup.observe(&parent, &name).await?;
+
+        std::fs::rename(base.join("parent"), base.join("moved"))?;
+        std::os::unix::fs::symlink("other", base.join("parent"))?;
+        let slot = EntrySlot {
+            parent: &parent,
+            name: &name,
+            entry: Some(&entry),
+        };
+        let request =
+            RemoveRequest::new(StoragePath::parse("parent/file")?, RemoveKind::NonDirectory)?;
+        let error = lookup
+            .execute_remove(slot, request)
+            .await
+            .err()
+            .ok_or("replaced parent passed verification")?;
+        assert_eq!(error.failure(), Failure::Rejected(Rejection::Conflict));
+        assert_eq!(error.outcome(), ah_vfs_storage::MutationOutcome::Unchanged);
+        assert_eq!(std::fs::read(base.join("moved/file"))?, b"observed");
+        assert_eq!(std::fs::read(base.join("other/file"))?, b"referent");
         Ok(())
     }
 

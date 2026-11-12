@@ -102,6 +102,8 @@ pub trait StorageOperations: Storage {
     }
 
     /// Resolve both operands in one instance and perform a single atomic rename.
+    /// When both resolve to the same address, a validated replacement succeeds
+    /// without changes and a no-replace rename returns `AlreadyExists`.
     fn move_entry(
         &self,
         request: RenameOperand,

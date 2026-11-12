@@ -39,7 +39,8 @@ impl Default for PageSize {
 /// boundary, equality must identify the same directory in the same backend
 /// generation. A replaced directory or a different backend generation must
 /// have a different identity, even at the same address.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// Hashing is suitable for maps within that execution boundary.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct DirectoryIdentity([u8; 16]);
 
 impl DirectoryIdentity {

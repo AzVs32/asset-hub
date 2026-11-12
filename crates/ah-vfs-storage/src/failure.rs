@@ -48,7 +48,7 @@ pub enum Rejection {
 }
 
 /// Failures of data, backend availability or the current resource lifetime.
-/// Persisted instance records and driver configuration have their own application errors.
+/// Persisted backend records and driver configuration have their own application errors.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 #[non_exhaustive]
 pub enum BackendFailure {
@@ -68,8 +68,6 @@ pub enum BackendFailure {
     /// the logical namespace and cannot be returned as a logical name.
     #[error("backend name cannot be represented losslessly")]
     UnrepresentableName,
-    #[error("symbolic link target cannot be represented as a lookup operand")]
-    UnrepresentableLinkTarget,
     #[error("resource is closed")]
     Closed,
     #[error("resource belongs to a stale generation")]
@@ -104,9 +102,12 @@ pub enum ContractViolation {
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 #[non_exhaustive]
 pub enum Failure {
+    /// The input cannot form a valid operation at the dispatch boundary.
+    /// A typed validation or preparation error can be retained as the source.
+    /// Canonical request constructors report [`crate::RequestPathError`] directly.
     #[error("request is invalid")]
     InvalidRequest,
-    /// The caller supplied a request that disagrees with its binding.
+    /// A valid request disagrees with the backend observation supplied by the caller.
     #[error("request does not match its backend binding")]
     InvalidBinding,
     #[error("{0}")]

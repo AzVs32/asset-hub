@@ -467,14 +467,6 @@ impl OperationLookup for LocalLookup {
             let op = Operation::Rename;
             let source = self.slot(op, source, request.source())?;
             let destination = self.slot(op, destination, request.destination())?;
-            if request
-                .destination()
-                .as_str()
-                .strip_prefix(request.source().as_str())
-                .is_some_and(|suffix| suffix.starts_with('/'))
-            {
-                return Err(rejected(op, Rejection::Conflict));
-            }
             let ancestors = self.checked(Some(request.source())).await?;
             blocking(op, true, move || {
                 let _ancestors = ancestors;

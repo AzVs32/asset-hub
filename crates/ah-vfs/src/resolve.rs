@@ -47,8 +47,8 @@ use crate::application::port::{
 };
 use ah_vfs_storage::{
     AttributeAction, AttributeRequest, AttributeResult, CreateDirectoryRequest, DirectorySelection,
-    ListRequest, ReadLinkRequest, ReadRequest, RemoveRequest, RenameRequest, StatRequest,
-    WriteRequest,
+    ListRequest, ReadLinkRequest, ReadRequest, RemoveRequest, RenameRequest, RequestPathError,
+    StatRequest, WriteRequest,
 };
 use ah_vfs_storage::{
     BackendFailure, ContractViolation, Entry, EntryName, EntryType, Failure, LinkTarget,
@@ -77,6 +77,9 @@ pub enum ResolveFailure {
     SymlinkNotAllowed,
     #[error("symbolic link traversal limit was exceeded")]
     TooManySymlinks,
+    /// The stored bytes cannot be used as a VFS path expression.
+    #[error("symbolic link target cannot be interpreted as a VFS path")]
+    UnrepresentableLinkTarget,
     #[error("{0}")]
     Storage(Failure),
 }
@@ -401,6 +404,23 @@ pub(crate) async fn rename(
         .path()
         .join(&name)
         .map_err(|_| lookup_error(op, Failure::Rejected(Rejection::PathTooLong)))?;
+    let request = match RenameRequest::new(entry.path().clone(), address.clone(), operand.mode()) {
+        Ok(request) => Some(request),
+        Err(RequestPathError::RenameSameAddress) => None,
+        Err(cause) => {
+            let failure = match cause {
+                RequestPathError::RenameDestinationBelowSource => {
+                    Failure::Rejected(Rejection::Conflict)
+                }
+                _ => Failure::InvalidRequest,
+            };
+            return Err(StorageError::without_effects(
+                op,
+                failure,
+                Some(Box::new(cause)),
+            ));
+        }
+    };
     let observed = match port.observe_child(&parent, address.clone(), &name).await {
         Ok(entry) => Some(entry),
         Err(error) if error.failure() == Failure::Rejected(Rejection::NotFound) => None,
@@ -414,17 +434,15 @@ pub(crate) async fn rename(
             .check_missing_target_shape(&address, entry.entry_type() == EntryType::Directory),
     }
     .map_err(|reason| reason.without_effects(op))?;
-    if entry.path() == &address {
+    let Some(request) = request else {
         backend.verify().await?;
         return Ok(entry.clone());
-    }
+    };
     let destination_slot = EntrySlot {
         parent: &parent.observed,
         name: &name,
         entry: observed.as_ref().map(|entry| &entry.observed),
     };
-    let request = RenameRequest::new(entry.path().clone(), address, operand.mode())
-        .map_err(|_| lookup_error(op, Failure::InvalidBinding))?;
     backend
         .execute_rename(selected.require_slot(op)?, destination_slot, request)
         .await
@@ -653,12 +671,12 @@ pub fn prepare_link_target(
     link: &LinkTarget,
     containing_directory: &StoragePath,
     pending: &[PathComponent],
-) -> Result<PathExpr, Failure> {
-    let too_long = Failure::Rejected(Rejection::PathTooLong);
+) -> Result<PathExpr, ResolveFailure> {
+    let too_long = ResolveFailure::from(Rejection::PathTooLong);
     if link.as_bytes().len() > MAX_PATH_EXPR_BYTES {
         return Err(too_long);
     }
-    let unrepresentable = Failure::Backend(BackendFailure::UnrepresentableLinkTarget);
+    let unrepresentable = ResolveFailure::UnrepresentableLinkTarget;
     let text = std::str::from_utf8(link.as_bytes()).map_err(|_| unrepresentable)?;
     let target = PathExpr::parse(text).map_err(|error| match error {
         PathExprError::TooLong | PathExprError::InvalidName(NameError::TooLong) => too_long,
@@ -974,7 +992,7 @@ impl Resolver {
                         {
                             let link = backend.read_bound_link(&selected).await?;
                             let target = prepare_link_target(&link, parent_address, &pending)
-                                .map_err(|reason| self.failure(reason))?;
+                                .map_err(|reason| self.reject(reason))?;
                             selected = Box::pin(self.segment(
                                 backend,
                                 lookup,

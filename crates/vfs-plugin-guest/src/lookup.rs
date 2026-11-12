@@ -117,7 +117,12 @@ impl<T: PartialEq> DirectBindings<T> {
         let conflict = || self.context.failure(Failure::Rejected(Rejection::Conflict));
         for (entry, version) in &self.observations {
             let (current, current_version) = load(entry.path()).map_err(|error| {
-                if is_missing(&error) {
+                if error.storage_error().is_some_and(|error| {
+                    matches!(
+                        error.failure(),
+                        Failure::Rejected(Rejection::NotFound | Rejection::NotDirectory)
+                    )
+                }) {
                     conflict()
                 } else {
                     error
@@ -138,4 +143,32 @@ fn is_missing(error: &crate::api::Failure) -> bool {
     error
         .storage_error()
         .is_some_and(|error| error.failure() == Failure::Rejected(Rejection::NotFound))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ah_vfs_storage::MutationOutcome;
+
+    #[test]
+    fn verification_treats_a_non_directory_ancestor_as_conflict()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let mut bindings = DirectBindings::new(Operation::Remove);
+        let address = StoragePath::parse("parent/file")?;
+        let entry = Entry::new(address.clone(), EntryType::file(None), None)?;
+        bindings.observe(address, Ok((entry, ())))?;
+
+        let error = bindings
+            .verify(|_| {
+                Err(bindings
+                    .context
+                    .failure(Failure::Rejected(Rejection::NotDirectory)))
+            })
+            .err()
+            .ok_or("expected a namespace conflict")?;
+        let error = error.storage_error().ok_or("expected a storage error")?;
+        assert_eq!(error.failure(), Failure::Rejected(Rejection::Conflict));
+        assert_eq!(error.outcome(), MutationOutcome::Unchanged);
+        Ok(())
+    }
 }

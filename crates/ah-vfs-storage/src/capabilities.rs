@@ -145,7 +145,8 @@ impl RenameSupport {
         }
     }
 }
-/// Attribute writing always includes reading; authorization is checked per call.
+/// Attribute writing always includes reading. Availability and authorization
+/// are checked per call and can depend on the selected entry type.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum AttributeSupport {
     #[default]
@@ -169,6 +170,8 @@ impl AttributeSupport {
 }
 
 /// The guarantee against replacement of the final name before a mutation.
+/// Consumers that need conditional mutation can require the stronger level.
+/// The declared guarantee applies regardless of whether a caller reads it.
 ///
 /// No-replace rename, create-new publication and single-directory creation
 /// check destination absence atomically under either level. Occupied slots

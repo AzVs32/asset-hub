@@ -230,11 +230,17 @@ impl CreateDirectoryRequest {
     }
 }
 
+/// Canonical addresses that cannot form a request for the selected operation.
+/// These checks run before dispatch and require no backend observations.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 #[non_exhaustive]
 pub enum RequestPathError {
     #[error("the storage root cannot be modified by this request")]
     RootNotAllowed,
+    #[error("rename requires distinct source and destination addresses")]
+    RenameSameAddress,
+    #[error("rename destination is beneath the source address")]
+    RenameDestinationBelowSource,
 }
 
 fn require_non_root(path: &StoragePath) -> Result<(), RequestPathError> {
@@ -292,7 +298,9 @@ pub enum RenameDestination {
     NonEmptyDirectory,
 }
 
-/// Atomically rename between two canonical, non-root addresses.
+/// Atomically rename between two distinct canonical, non-root addresses.
+/// A destination strictly below the source is invalid for either rename mode.
+/// An equal-address rename is handled by the layer resolving the operands.
 #[derive(Clone, Debug, Eq, PartialEq, Getters, CopyGetters)]
 pub struct RenameRequest {
     #[getset(get = "pub")]
@@ -304,6 +312,8 @@ pub struct RenameRequest {
 }
 
 impl RenameRequest {
+    /// Validate the address pair before dispatch. Descendants are recognized
+    /// at component boundaries using exact spelling.
     pub fn new(
         source: StoragePath,
         destination: StoragePath,
@@ -311,6 +321,16 @@ impl RenameRequest {
     ) -> Result<Self, RequestPathError> {
         require_non_root(&source)?;
         require_non_root(&destination)?;
+        if source == destination {
+            return Err(RequestPathError::RenameSameAddress);
+        }
+        if destination
+            .as_str()
+            .strip_prefix(source.as_str())
+            .is_some_and(|suffix| suffix.starts_with('/'))
+        {
+            return Err(RequestPathError::RenameDestinationBelowSource);
+        }
         Ok(Self {
             source,
             destination,

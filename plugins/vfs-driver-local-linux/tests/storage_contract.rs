@@ -435,6 +435,16 @@ async fn attribute_lookup_preserves_the_final_link_and_obeys_intermediate_policy
             FollowWithinInstance,
             Rejection::Unsupported.into(),
         ),
+        (
+            "/link",
+            A::set_xattr(
+                XattrName::parse("user.link-test")?,
+                vec![1],
+                XattrWriteMode::Upsert,
+            ),
+            FollowWithinInstance,
+            Rejection::Unsupported.into(),
+        ),
     ] {
         let error = execute(operand, action, links)?
             .await

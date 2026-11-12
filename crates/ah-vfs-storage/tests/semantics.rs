@@ -265,7 +265,7 @@ fn rename_admission_preserves_the_requested_replacement_guarantee() -> Result {
         ] {
             let request = RenameRequest::new(
                 StoragePath::parse("file")?,
-                StoragePath::parse("file")?,
+                StoragePath::parse("destination")?,
                 mode,
             )?;
             assert_eq!(capabilities.require_rename(&request).is_ok(), supported);

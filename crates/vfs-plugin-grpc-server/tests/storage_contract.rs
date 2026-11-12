@@ -842,7 +842,7 @@ async fn formal_lookup_preserves_policy_instance_and_link_bytes() -> TestResult 
     }
     stat_failure(
         formal.call(stat("opaque", true)?).await?,
-        d::Failure::Backend(d::BackendFailure::UnrepresentableLinkTarget),
+        ResolveFailure::UnrepresentableLinkTarget,
     )?;
 
     let error = formal

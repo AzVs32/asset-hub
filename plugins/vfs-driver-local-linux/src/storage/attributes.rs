@@ -27,10 +27,6 @@ pub(super) fn execute(
     if !LinuxLocalDriver::supported_capabilities().supports(op) {
         return Err(rejected(op, Rejection::Unsupported));
     }
-    if matches!(request.action(), AttributeAction::SetXattr { value, .. } if value.len() > MAX_NATIVE_XATTR_BYTES)
-    {
-        return Err(rejected(op, Rejection::LimitExceeded));
-    }
     let (_, action) = request.into_parts();
     if let AttributeAction::GetPermissions = action {
         let stat = native::fstat(handle).map_err(|error| native_error(op, error))?;
@@ -52,6 +48,10 @@ pub(super) fn execute(
         // These operations have no supported handle-based implementation for
         // the selected link or special entry. Never operate on its referent.
         return Err(rejected(op, Rejection::Unsupported));
+    }
+    if matches!(&action, AttributeAction::SetXattr { value, .. } if value.len() > MAX_NATIVE_XATTR_BYTES)
+    {
+        return Err(rejected(op, Rejection::LimitExceeded));
     }
     // This procfs reference follows the held descriptor, not the original
     // name. The handle stays live throughout the native call.

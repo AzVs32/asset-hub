@@ -13,11 +13,9 @@ fn validate_name(value: &str) -> Result<(), NameError> {
     if value.len() > MAX_PATH_BYTES {
         return Err(NameError::TooLong);
     }
-    // TODO: 将非法名称以静态数组的形式列出，方便维护和扩展。
     if matches!(value, "." | "..") {
         return Err(NameError::DotComponent);
     }
-    // TODO: 将 '/' 合并到下方的非法字符中，以静态数组的形式列出所有非法字符，方便维护和扩展。
     if value.contains('/') {
         return Err(NameError::Separator);
     }
@@ -61,6 +59,8 @@ pub enum NameError {
 /// original UTF-8 bytes, without normalization or case folding.
 ///
 /// Empty names, `.`, `..`, slash, backslash, colon and NUL are excluded.
+/// Backslash and colon are reserved for portability across native path
+/// syntaxes, including Windows separators, drive prefixes and stream names.
 /// The logical byte limit is [`MAX_PATH_BYTES`]. The adapter checks native
 /// component limits separately.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
