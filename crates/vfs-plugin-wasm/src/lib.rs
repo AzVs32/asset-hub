@@ -238,7 +238,7 @@ impl State {
             Op::Storage(p::StorageCall { handle, .. })
             | Op::Read(p::Read { handle, .. })
             | Op::Write(p::Write { handle, .. })
-            | Op::BeginLookup(p::Handle { handle }) => {
+            | Op::BeginLookup(p::LookupHandle { handle, .. }) => {
                 self.resource(&op, p::ResourceKind::Storage, *handle)?
             }
             Op::ReaderNext(p::Handle { handle }) => {
@@ -246,7 +246,7 @@ impl State {
             }
             Op::ReadObservedLink(p::ReadObservedLink { lookup: handle, .. })
             | Op::ObserveChild(p::ObserveChild { lookup: handle, .. })
-            | Op::VerifyLookup(p::Handle { handle }) => {
+            | Op::VerifyLookup(p::LookupHandle { handle, .. }) => {
                 self.resource(&op, p::ResourceKind::Lookup, *handle)?
             }
             Op::WriterChunk(p::Handle { handle }) => {

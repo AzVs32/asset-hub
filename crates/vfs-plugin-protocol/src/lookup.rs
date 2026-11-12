@@ -62,7 +62,7 @@ pub fn decode_lookup(
 pub fn encode_stat(request: &StatRequest, base: &StoragePath, links: IntermediateSymlinks) -> Stat {
     Stat {
         lookup: Some(encode_lookup(request.path(), base, links)),
-        final_link: match request.lookup().final_symlink() {
+        final_link: match request.final_symlink() {
             SymlinkAction::FollowWithinInstance => FinalLink::FollowFinal,
             SymlinkAction::Preserve => FinalLink::PreserveFinal,
         }

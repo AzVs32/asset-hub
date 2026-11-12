@@ -239,15 +239,9 @@ fn operation_requests_protect_the_selected_root_and_validate_entry_operands() ->
 #[test]
 fn ranges_handle_empty_reads_eof_and_integer_boundaries() -> Result {
     assert_eq!(ReadRange::default(), ReadRange::FULL);
-    assert_eq!(ReadRange::new(u64::MAX, None)?.end_exclusive(), None);
-    assert_eq!(
-        ReadRange::new(u64::MAX, Some(0))?.end_exclusive(),
-        Some(u64::MAX)
-    );
-    assert_eq!(
-        ReadRange::new(u64::MAX - 2, Some(2))?.end_exclusive(),
-        Some(u64::MAX)
-    );
+    assert_eq!(ReadRange::new(u64::MAX, None)?.length(), None);
+    assert_eq!(ReadRange::new(u64::MAX, Some(0))?.length(), Some(0));
+    assert_eq!(ReadRange::new(u64::MAX - 2, Some(2))?.length(), Some(2));
     assert_eq!(ReadRange::new(u64::MAX, Some(1)), Err(RangeError::Overflow));
     assert_eq!(ReadRange::new(1, Some(u64::MAX)), Err(RangeError::Overflow));
     Ok(())

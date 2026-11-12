@@ -232,22 +232,30 @@ pub fn validate_request(request: &Request) -> Result<()> {
             super::decode_write(write.clone()).map_err(|_| CodecError::InvalidData)?;
         }
         O::Release(v) => check_resource(v)?,
-        O::BeginLookup(v) | O::VerifyLookup(v) if v.handle == 0 => {
+        O::BeginLookup(v) | O::VerifyLookup(v)
+            if v.handle == 0 || super::decode_lookup_purpose(&v.purpose).is_none() =>
+        {
             return Err(CodecError::InvalidData);
         }
         O::ObserveChild(v)
             if v.lookup == 0
                 || v.parent == 0
+                || super::decode_lookup_purpose(&v.purpose).is_none()
                 || ah_vfs_storage::EntryName::parse(&v.name).is_err() =>
         {
             return Err(CodecError::InvalidData);
         }
         O::ReadObservedLink(v) => {
-            if v.lookup == 0 || v.entry == 0 {
+            if v.lookup == 0 || v.entry == 0 || super::decode_lookup_purpose(&v.purpose).is_none() {
                 return Err(CodecError::InvalidData);
             }
             if let Some(slot) = &v.final_slot {
-                super::decode_link_slot(slot).map_err(|_| CodecError::InvalidData)?;
+                if super::decode_lookup_purpose(&v.purpose)
+                    != Some(ah_vfs_storage::Operation::ReadLink)
+                {
+                    return Err(CodecError::InvalidData);
+                }
+                super::decode_entry_slot(slot).map_err(|_| CodecError::InvalidData)?;
             }
         }
         _ => {}

@@ -250,20 +250,22 @@ async fn native_process_passes_shared_storage_contracts_over_grpc() -> Result {
             .is_empty()
     );
     use ah_vfs_storage::{
-        AttributeAction as A, AttributeRequest, AttributeResult as R, IntermediateSymlinks,
-        PathExpr, Permissions, Rejection, XattrName, XattrWriteMode,
+        AttributeAction as A, AttributeResult as R, IntermediateSymlinks, PathExpr, Permissions,
+        Rejection, XattrName, XattrWriteMode,
     };
     use std::num::NonZeroUsize;
     std::fs::write(root.path().join("docs/attributes"), b"test")?;
     std::os::unix::fs::symlink("/docs", root.path().join("alias"))?;
-    let attributes = storage.attributes().ok_or("missing attributes port")?;
+    assert!(storage.attributes().is_some());
     let execute = |action| -> Result<_> {
-        Ok(attributes.execute(
-            AttributeRequest::new(PathExpr::parse("../alias/attributes")?, action),
+        Ok(ah_vfs::resolve::attribute(
+            storage.as_ref(),
+            PathExpr::parse("../alias/attributes")?,
             LookupContext {
                 working_directory: StoragePath::parse("docs")?,
                 intermediate_symlinks: IntermediateSymlinks::FollowWithinInstance,
             },
+            action,
         ))
     };
     let mode = Permissions::new(0o640)?;

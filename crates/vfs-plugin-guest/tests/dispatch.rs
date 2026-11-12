@@ -108,8 +108,8 @@ impl GuestStorage for Store {
     ) -> Result<ah_vfs_storage::Entry> {
         direct_stat(request, base, links, |_| entry(0))
     }
-    fn begin_lookup(&self) -> Result<Lookup> {
-        Ok(Lookup::new(OpaqueLink))
+    fn begin_lookup(&self, operation: Operation) -> Result<Lookup> {
+        Ok(Lookup::new(ObservedFixture(operation)))
     }
     fn read(
         &self,
@@ -134,22 +134,6 @@ impl GuestStorage for Store {
 impl GuestAttributes for Store {
     fn support(&self) -> (AttributeSupport, AttributeSupport) {
         (AttributeSupport::Read, AttributeSupport::None)
-    }
-
-    fn execute(
-        &self,
-        request: AttributeRequest,
-        base: StoragePath,
-        links: IntermediateSymlinks,
-    ) -> Result<AttributeResult> {
-        ATTRIBUTE_CALLS.with(|v| v.set(v.get() + 1));
-        assert_eq!(base.as_str(), "work/sub");
-        assert_eq!(links, IntermediateSymlinks::Reject);
-        assert_eq!(request.path().to_string(), "../file/");
-        assert!(matches!(request.action(), AttributeAction::GetPermissions));
-        let mode =
-            Permissions::new(0o440).map_err(|_| p::Failure::new(p::FailureCode::InvalidRequest))?;
-        Ok(AttributeResult::Permissions(mode))
     }
 }
 
@@ -506,8 +490,8 @@ fn storage_failure(error: StorageError) -> p::Failure {
     vfs_plugin_guest::api::Failure::from(error).into()
 }
 
-struct OpaqueLink;
-impl GuestLookup for OpaqueLink {
+struct ObservedFixture(Operation);
+impl GuestLookup for ObservedFixture {
     fn root(&mut self) -> Result<(u64, ah_vfs_storage::Entry)> {
         let entry = ah_vfs_storage::Entry::new(
             StoragePath::root(),
@@ -524,13 +508,39 @@ impl GuestLookup for OpaqueLink {
         name: &ah_vfs_storage::EntryName,
     ) -> Result<(u64, ah_vfs_storage::Entry)> {
         assert_eq!(parent, 70);
-        assert_eq!(name.as_str(), "opaque");
+        let kind = if self.0 == Operation::ReadLink {
+            assert_eq!(name.as_str(), "opaque");
+            ah_vfs_storage::EntryType::Symlink
+        } else {
+            assert_eq!(name.as_str(), "file");
+            ah_vfs_storage::EntryType::file(None)
+        };
         let path = StoragePath::root()
             .join(name)
             .map_err(|_| p::Failure::new(p::FailureCode::InvalidRequest))?;
-        let entry = ah_vfs_storage::Entry::new(path, ah_vfs_storage::EntryType::Symlink, None)
+        let entry = ah_vfs_storage::Entry::new(path, kind, None)
             .map_err(|_| p::Failure::new(p::FailureCode::InvalidRequest))?;
         Ok((71, entry))
+    }
+
+    fn execute_attribute(
+        &self,
+        slot: Option<(u64, &ah_vfs_storage::EntryName)>,
+        entry: u64,
+        request: AttributeRequest,
+    ) -> Result<AttributeResult> {
+        ATTRIBUTE_CALLS.with(|v| v.set(v.get() + 1));
+        assert_eq!(
+            slot.map(|(parent, name)| (parent, name.as_str())),
+            Some((70, "file"))
+        );
+        assert_eq!(entry, 71);
+        assert_eq!(request.path().as_str(), "file");
+        assert_eq!(self.0, Operation::GetPermissions);
+        assert!(matches!(request.action(), AttributeAction::GetPermissions));
+        let mode =
+            Permissions::new(0o440).map_err(|_| p::Failure::new(p::FailureCode::InvalidRequest))?;
+        Ok(AttributeResult::Permissions(mode))
     }
 
     fn read_link(&self, entry: u64) -> Result<ah_vfs_storage::LinkTarget> {
@@ -549,7 +559,10 @@ fn read_link_uses_scoped_guest_observations_and_preserves_opaque_bytes() -> Test
     let storage = open(&mut dispatcher, false)?;
     let reply = call(
         &mut dispatcher,
-        Op::BeginLookup(p::Handle { handle: storage }),
+        Op::BeginLookup(p::LookupHandle {
+            handle: storage,
+            purpose: "read-link".into(),
+        }),
         vec![],
     )?;
     let Some(Value::OpenedLookup(lookup)) = reply.result else {
@@ -559,6 +572,7 @@ fn read_link_uses_scoped_guest_observations_and_preserves_opaque_bytes() -> Test
     let reply = call(
         &mut dispatcher,
         Op::ObserveChild(p::ObserveChild {
+            purpose: "read-link".into(),
             lookup: lookup.handle,
             parent: root.id,
             name: "opaque".into(),
@@ -569,9 +583,10 @@ fn read_link_uses_scoped_guest_observations_and_preserves_opaque_bytes() -> Test
         return Err("expected entry observation".into());
     };
     let read = Op::ReadObservedLink(p::ReadObservedLink {
+        purpose: "read-link".into(),
         lookup: lookup.handle,
         entry: entry.id,
-        final_slot: Some(p::LinkSlot {
+        final_slot: Some(p::EntrySlot {
             parent: root.id,
             name: "opaque".into(),
             path: "opaque".into(),
@@ -582,16 +597,20 @@ fn read_link_uses_scoped_guest_observations_and_preserves_opaque_bytes() -> Test
     assert_eq!(reply.data, [0xff, b'/']);
     let reply = call(
         &mut dispatcher,
-        Op::BeginLookup(p::Handle { handle: storage }),
+        Op::BeginLookup(p::LookupHandle {
+            handle: storage,
+            purpose: "read-link".into(),
+        }),
         vec![],
     )?;
     let Some(Value::OpenedLookup(other)) = reply.result else {
         return Err("expected another lookup binding".into());
     };
     let wrong_path = Op::ReadObservedLink(p::ReadObservedLink {
+        purpose: "read-link".into(),
         lookup: lookup.handle,
         entry: entry.id,
-        final_slot: Some(p::LinkSlot {
+        final_slot: Some(p::EntrySlot {
             parent: root.id,
             name: "opaque".into(),
             path: "other".into(),
@@ -612,6 +631,7 @@ fn read_link_uses_scoped_guest_observations_and_preserves_opaque_bytes() -> Test
         None,
     ));
     let wrong_scope = Op::ReadObservedLink(p::ReadObservedLink {
+        purpose: "read-link".into(),
         lookup: other.handle,
         entry: entry.id,
         final_slot: None,
@@ -688,13 +708,46 @@ fn guest_dispatch_checks_attribute_interfaces_and_admits_read_only_requests() ->
     let Value::Storage(storage) = reply.into_value()? else {
         return Err("missing storage".into());
     };
+    let purpose = "get-permissions";
+    let Value::OpenedLookup(lookup) = call(
+        &mut dispatcher,
+        Op::BeginLookup(p::LookupHandle {
+            handle: storage.handle,
+            purpose: purpose.into(),
+        }),
+        vec![],
+    )?
+    .into_value()?
+    else {
+        return Err("expected lookup scope".into());
+    };
+    let root = lookup.root.ok_or("expected root")?;
+    let Value::ObservedEntry(entry) = call(
+        &mut dispatcher,
+        Op::ObserveChild(p::ObserveChild {
+            lookup: lookup.handle,
+            parent: root.id,
+            name: "file".into(),
+            purpose: purpose.into(),
+        }),
+        vec![],
+    )?
+    .into_value()?
+    else {
+        return Err("expected file observation".into());
+    };
+    let target = p::BoundAttribute {
+        lookup: lookup.handle,
+        entry: entry.id,
+        slot: Some(p::EntrySlot {
+            parent: root.id,
+            name: "file".into(),
+            path: "file".into(),
+        }),
+    };
     let operation = |action| -> TestResult<_> {
-        let request = AttributeRequest::new(PathExpr::parse("../file/")?, action);
-        let (op, data) = p::encode_attribute(
-            request,
-            &StoragePath::parse("work/sub")?,
-            IntermediateSymlinks::Reject,
-        )?;
+        let request = AttributeRequest::new(StoragePath::parse("file")?, action);
+        let (op, data) = p::encode_attribute(request, target.clone())?;
         Ok((
             Op::Storage(p::StorageCall {
                 handle: storage.handle,

@@ -151,6 +151,24 @@ impl SessionTransport for Peer {
                     }
                     _ => Value::Unit(p::Empty {}),
                 },
+                Op::BeginLookup(_) => Value::OpenedLookup(p::OpenedLookup {
+                    handle: 2,
+                    root: Some(p::ObservedEntry {
+                        id: 3,
+                        entry: Some(p::Entry {
+                            kind: p::EntryKind::Dir.into(),
+                            ..Default::default()
+                        }),
+                    }),
+                }),
+                Op::ObserveChild(child) => Value::ObservedEntry(p::ObservedEntry {
+                    id: 4,
+                    entry: Some(p::Entry {
+                        path: child.name,
+                        kind: p::EntryKind::File.into(),
+                        ..Default::default()
+                    }),
+                }),
                 Op::Write(_) => Value::Writer(p::Handle { handle: 2 }),
                 Op::Read(_) => Value::Reader(p::Handle { handle: 3 }),
                 Op::ReaderNext(_) => Value::Chunk(p::Chunk { eof: false }),
@@ -341,7 +359,7 @@ fn timestamps_and_unknown_error_codes_preserve_boundary_semantics() -> Result {
 
 #[tokio::test]
 async fn invalid_attribute_replies_are_distinct_from_backend_name_errors() -> Result {
-    use ah_vfs_storage::{AttributeAction, AttributeRequest, MutationOutcome, PathExpr};
+    use ah_vfs_storage::{AttributeAction, MutationOutcome, PathExpr};
     let (driver, _) = peer(Fault::Attributes(vec![])).await?;
     let storage = driver
         .open(OpenContext::new(
@@ -349,13 +367,16 @@ async fn invalid_attribute_replies_are_distinct_from_backend_name_errors() -> Re
             Default::default(),
         ))
         .await?;
-    let request = AttributeRequest::new(PathExpr::parse("/")?, AttributeAction::GetPermissions);
     let attributes = storage.attributes().ok_or("missing attributes port")?;
-    let error = attributes
-        .execute(request, Default::default())
-        .await
-        .err()
-        .ok_or("accepted entry type bits")?;
+    let error = ah_vfs::resolve::attribute(
+        storage.as_ref(),
+        PathExpr::parse("/")?,
+        Default::default(),
+        AttributeAction::GetPermissions,
+    )
+    .await
+    .err()
+    .ok_or("accepted entry type bits")?;
     assert_eq!(
         error.failure(),
         Failure::Contract(ContractViolation::InvalidAttributes)
@@ -390,17 +411,15 @@ async fn invalid_attribute_replies_are_distinct_from_backend_name_errors() -> Re
                 Default::default(),
             ))
             .await?;
-        let request = AttributeRequest::new(
+        let error = ah_vfs::resolve::attribute(
+            storage.as_ref(),
             PathExpr::parse("/entry")?,
+            Default::default(),
             AttributeAction::list_xattrs(NonZeroUsize::new(1024).ok_or("zero limit")?),
-        );
-        let error = storage
-            .attributes()
-            .ok_or("missing attributes port")?
-            .execute(request, Default::default())
-            .await
-            .err()
-            .ok_or("accepted invalid attribute names")?;
+        )
+        .await
+        .err()
+        .ok_or("accepted invalid attribute names")?;
         assert_eq!(
             error.failure(),
             Failure::Contract(ContractViolation::InvalidAttributes)

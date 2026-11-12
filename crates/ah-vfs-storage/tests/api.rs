@@ -164,7 +164,7 @@ fn external_attribute_callers_construct_and_borrow_payloads() -> Result {
 
     let max = NonZeroUsize::MIN;
     let name = XattrName::parse("user.label")?;
-    let path = PathExpr::parse("file")?;
+    let path = StoragePath::parse("file")?;
     let list = AttributeRequest::new(path.clone(), AttributeAction::list_xattrs(max));
     assert!(
         matches!(list.action(), AttributeAction::ListXattrs { max_bytes, .. } if *max_bytes == max)
@@ -184,39 +184,38 @@ fn external_attribute_callers_construct_and_borrow_payloads() -> Result {
 #[test]
 fn external_attribute_adapter_moves_the_path_and_original_buffer() -> Result {
     use std::{
-        future::Future,
         pin::pin,
         task::{Context, Poll, Waker},
     };
 
     struct SetXattrMessage {
-        path: PathExpr,
+        path: StoragePath,
         name: XattrName,
         data: Vec<u8>,
         mode: XattrWriteMode,
     }
 
-    fn prepare_message(
-        request: AttributeRequest,
-    ) -> impl Future<Output = Option<SetXattrMessage>> + Send + 'static {
-        async move {
-            let (path, action) = request.into_parts();
-            match action {
-                AttributeAction::SetXattr {
-                    name, value, mode, ..
-                } => Some(SetXattrMessage {
-                    path,
-                    name,
-                    data: value,
-                    mode,
-                }),
-                _ => None,
-            }
+    async fn prepare_message(request: AttributeRequest) -> Option<SetXattrMessage> {
+        let (path, action) = request.into_parts();
+        match action {
+            AttributeAction::SetXattr {
+                name, value, mode, ..
+            } => Some(SetXattrMessage {
+                path,
+                name,
+                data: value,
+                mode,
+            }),
+            _ => None,
         }
     }
 
-    let path = PathExpr::parse("../目录/file")?;
-    let original_components = path.components().as_ptr();
+    fn require_owned<T: Send + 'static>(future: T) -> T {
+        future
+    }
+
+    let path = StoragePath::parse("目录/file")?;
+    let original_components = path.as_str().as_ptr();
     let value = vec![0, 255];
     let original_buffer = value.as_ptr();
     let name = XattrName::parse("user.label")?;
@@ -226,18 +225,20 @@ fn external_attribute_adapter_moves_the_path_and_original_buffer() -> Result {
     );
 
     assert_eq!(request.operation(), Operation::SetXattr);
-    assert_eq!(request.path().to_string(), "../目录/file");
+    assert_eq!(request.path().to_string(), "目录/file");
     assert!(matches!(
         request.action(),
         AttributeAction::SetXattr { value, .. } if value.as_ptr() == original_buffer
     ));
 
     let mut context = Context::from_waker(Waker::noop());
-    let Poll::Ready(Some(message)) = pin!(prepare_message(request)).poll(&mut context) else {
+    let Poll::Ready(Some(message)) =
+        pin!(require_owned(prepare_message(request))).poll(&mut context)
+    else {
         return Err("expected an owned SetXattr message".into());
     };
-    assert_eq!(message.path.components().as_ptr(), original_components);
-    assert_eq!(message.path.to_string(), "../目录/file");
+    assert_eq!(message.path.as_str().as_ptr(), original_components);
+    assert_eq!(message.path.to_string(), "目录/file");
     assert_eq!(message.name.as_str(), "user.label");
     assert_eq!(message.mode, XattrWriteMode::Replace);
     assert_eq!(message.data, [0, 255]);

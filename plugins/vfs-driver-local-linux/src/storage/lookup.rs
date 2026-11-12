@@ -1,12 +1,13 @@
 //! Handle-bound metadata and link lookup on Linux.
-use super::{blocking, fs};
+use super::{attributes, blocking, fs};
 use ah_vfs::application::port::{
     LookupContext, LookupScope, ObservedEntry, OperationLookup, StorageFuture,
 };
 use ah_vfs::resolve::{LookupPort, Resolver};
 use ah_vfs_storage::{
-    BackendFailure, CreateDirectoryRequest, Entry, EntryName, EntryType, Failure, LinkTarget,
-    LookupStart, Operation, PathLookup, Rejection, StorageError, StoragePath, SymlinkAction,
+    AttributeRequest, AttributeResult, BackendFailure, CreateDirectoryRequest, Entry, EntryName,
+    EntryType, Failure, LinkTarget, LookupStart, Operation, PathLookup, Rejection, StorageError,
+    StoragePath, SymlinkAction,
 };
 use cap_std::fs::{Dir, File};
 use rustix::fs::{Mode, OFlags, ResolveFlags, fstat, mkdirat, openat2, readlinkat};
@@ -44,14 +45,16 @@ pub(super) fn stat(
 
 pub(super) struct LocalLookup {
     root: Arc<Dir>,
+    operation: Operation,
     scope: LookupScope,
     observed: Arc<Mutex<BTreeMap<StoragePath, Arc<File>>>>,
 }
 
 impl LocalLookup {
-    pub(super) fn new(root: Arc<Dir>) -> Self {
+    pub(super) fn new(root: Arc<Dir>, operation: Operation) -> Self {
         Self {
             root,
+            operation,
             scope: LookupScope::default(),
             observed: Arc::default(),
         }
@@ -60,7 +63,7 @@ impl LocalLookup {
 
 impl OperationLookup for LocalLookup {
     fn operation(&self) -> Operation {
-        Operation::ReadLink
+        self.operation
     }
 
     fn root(&mut self) -> StorageFuture<'_, ObservedEntry> {
@@ -123,6 +126,40 @@ impl OperationLookup for LocalLookup {
         })
     }
 
+    fn execute_attribute<'a>(
+        &'a self,
+        slot: Option<(&'a ObservedEntry, &'a EntryName)>,
+        entry: &'a ObservedEntry,
+        request: AttributeRequest,
+    ) -> StorageFuture<'a, AttributeResult> {
+        Box::pin(async move {
+            let op = request.operation();
+            let selected = self
+                .scope
+                .get::<Selected>(entry)
+                .ok_or_else(|| stale(op))?
+                .clone();
+            let matches_slot = if let Some((parent, name)) = slot {
+                let parent = self
+                    .scope
+                    .get::<Selected>(parent)
+                    .ok_or_else(|| stale(op))?;
+                parent.entry.entry_type() == EntryType::Directory
+                    && parent.entry.path().join(name).as_ref() == Ok(request.path())
+            } else {
+                request.path().is_root()
+            };
+            if op != self.operation || selected.entry.path() != request.path() || !matches_slot {
+                return Err(failure(op, Failure::InvalidBinding));
+            }
+            self.verify().await?;
+            blocking(op, op.may_mutate(), move || {
+                attributes::execute(&selected.entry, &selected.file, request)
+            })
+            .await
+        })
+    }
+
     fn verify(&self) -> StorageFuture<'_, ()> {
         let root = self.root.clone();
         let observed = self.observed.clone();
@@ -134,16 +171,6 @@ impl OperationLookup for LocalLookup {
             verify_observations(&root, &observed, op)
         }))
     }
-}
-
-pub(super) fn attribute_target(
-    root: &Dir,
-    lookup: PathLookup<'_>,
-    context: LookupContext,
-    op: Operation,
-) -> Result<(Entry, Arc<File>), StorageError> {
-    let selected = Walk::select(root, lookup, context, op)?;
-    Ok((selected.entry, selected.file))
 }
 
 pub(super) fn descriptor_path(file: &File) -> String {

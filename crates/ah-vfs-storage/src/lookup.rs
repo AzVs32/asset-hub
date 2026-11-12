@@ -179,9 +179,9 @@ impl<'a> PathLookup<'a> {
     }
 
     fn check_directory(self, is_directory: bool) -> Result<(), Rejection> {
-        if self.existing == ExistingTarget::Directory && !is_directory {
+        if self.requires_directory() && !is_directory {
             return Err(Rejection::NotDirectory);
         }
-        self.path.check_directory_requirement(is_directory)
+        Ok(())
     }
 }

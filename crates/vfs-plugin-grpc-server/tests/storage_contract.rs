@@ -528,8 +528,9 @@ async fn formal_lookup_preserves_policy_instance_and_link_bytes() -> TestResult 
     )?;
     for (path, bytes) in [("opaque", b"\xff".as_slice()), ("dangling", b"missing")] {
         let reply = formal
-            .invoke(p::Operation::BeginLookup(p::Handle {
+            .invoke(p::Operation::BeginLookup(p::LookupHandle {
                 handle: formal.handle,
+                purpose: "read-link".into(),
             }))
             .await?;
         let Some(p::Value::OpenedLookup(lookup)) = reply.result else {
@@ -538,6 +539,7 @@ async fn formal_lookup_preserves_policy_instance_and_link_bytes() -> TestResult 
         let root = lookup.root.ok_or("expected root observation")?;
         let reply = formal
             .invoke(p::Operation::ObserveChild(p::ObserveChild {
+                purpose: "read-link".into(),
                 lookup: lookup.handle,
                 parent: root.id,
                 name: path.into(),
@@ -548,9 +550,10 @@ async fn formal_lookup_preserves_policy_instance_and_link_bytes() -> TestResult 
         };
         let reply = formal
             .invoke(p::Operation::ReadObservedLink(p::ReadObservedLink {
+                purpose: "read-link".into(),
                 lookup: lookup.handle,
                 entry: entry.id,
-                final_slot: Some(p::LinkSlot {
+                final_slot: Some(p::EntrySlot {
                     parent: root.id,
                     name: path.into(),
                     path: path.into(),
@@ -572,17 +575,13 @@ async fn formal_lookup_preserves_policy_instance_and_link_bytes() -> TestResult 
         d::Operation::Write,
         d::Failure::Rejected(d::Rejection::RootProtected),
     )?;
-    let request = d::AttributeRequest::new(
-        d::PathExpr::parse("missing")?,
-        d::AttributeAction::GetPermissions,
-    );
-    let (wire, _) = p::encode_attribute(
-        request,
-        &d::StoragePath::root(),
-        d::IntermediateSymlinks::FollowWithinInstance,
-    )?;
     formal_failure(
-        formal.call(wire).await?,
+        formal
+            .invoke(p::Operation::BeginLookup(p::LookupHandle {
+                handle: formal.handle,
+                purpose: "get-permissions".into(),
+            }))
+            .await?,
         d::Operation::GetPermissions,
         d::Failure::Rejected(d::Rejection::Unsupported),
     )?;

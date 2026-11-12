@@ -8,8 +8,8 @@ use std::num::NonZeroUsize;
 pub enum AttributeValueError {
     #[error("not an attribute operation")]
     Operation,
-    #[error("invalid attribute lookup")]
-    Lookup(#[from] super::LookupValueError),
+    #[error("invalid bound attribute target")]
+    Target,
     #[error("invalid permission bits")]
     Permissions(#[from] d::PermissionsError),
     #[error("invalid attribute name")]
@@ -28,26 +28,27 @@ pub enum AttributeValueError {
 
 pub fn encode_attribute(
     request: d::AttributeRequest,
-    base: &d::StoragePath,
-    links: d::IntermediateSymlinks,
+    target: super::BoundAttribute,
 ) -> Result<(StorageOp, Vec<u8>), AttributeValueError> {
     use d::AttributeAction as A;
-    let (operand, action) = request.into_parts();
-    let lookup = super::encode_lookup(&operand, base, links);
+    let (address, action) = request.into_parts();
+    if target_address(&target)? != address {
+        return Err(AttributeValueError::Target);
+    }
     let op = match action {
-        A::GetPermissions => StorageOp::GetPermissions(lookup),
+        A::GetPermissions => StorageOp::GetPermissions(target),
         A::SetPermissions(mode) => StorageOp::SetPermissions(super::SetPermissions {
-            lookup: Some(lookup),
+            target: Some(target),
             mode: mode.bits(),
         }),
         A::ListXattrs { max_bytes, .. } => StorageOp::ListXattrs(super::ListXattrs {
-            lookup: Some(lookup),
+            target: Some(target),
             max_bytes: encode_limit(max_bytes, MAX_ATTRIBUTE_NAMES_BYTES)?,
         }),
         A::GetXattr {
             name, max_bytes, ..
         } => StorageOp::GetXattr(super::GetXattr {
-            lookup: Some(lookup),
+            target: Some(target),
             name: name.as_str().into(),
             max_bytes: encode_limit(max_bytes, MAX_DATA_BYTES)?,
         }),
@@ -64,7 +65,7 @@ pub fn encode_attribute(
             };
             return Ok((
                 StorageOp::SetXattr(super::SetXattr {
-                    lookup: Some(lookup),
+                    target: Some(target),
                     name: name.as_str().into(),
                     mode: mode.into(),
                 }),
@@ -72,7 +73,7 @@ pub fn encode_attribute(
             ));
         }
         A::RemoveXattr(name) => StorageOp::RemoveXattr(super::RemoveXattr {
-            lookup: Some(lookup),
+            target: Some(target),
             name: name.as_str().into(),
         }),
         _ => return Err(AttributeValueError::Operation),
@@ -83,20 +84,20 @@ pub fn encode_attribute(
 pub fn decode_attribute(
     op: StorageOp,
     data: Vec<u8>,
-) -> Result<(d::AttributeRequest, d::StoragePath, d::IntermediateSymlinks), AttributeValueError> {
+) -> Result<(d::AttributeRequest, super::BoundAttribute), AttributeValueError> {
     use d::AttributeAction as A;
     if data.len() > MAX_DATA_BYTES || !data.is_empty() && !matches!(op, StorageOp::SetXattr(_)) {
         return Err(AttributeValueError::Data);
     }
-    let (lookup, action) = match op {
-        StorageOp::GetPermissions(lookup) => (Some(lookup), A::GetPermissions),
-        StorageOp::SetPermissions(v) => (v.lookup, A::SetPermissions(d::Permissions::new(v.mode)?)),
+    let (target, action) = match op {
+        StorageOp::GetPermissions(target) => (Some(target), A::GetPermissions),
+        StorageOp::SetPermissions(v) => (v.target, A::SetPermissions(d::Permissions::new(v.mode)?)),
         StorageOp::ListXattrs(v) => (
-            v.lookup,
+            v.target,
             A::list_xattrs(decode_limit(v.max_bytes, MAX_ATTRIBUTE_NAMES_BYTES)?),
         ),
         StorageOp::GetXattr(v) => (
-            v.lookup,
+            v.target,
             A::get_xattr(
                 d::XattrName::parse(&v.name)?,
                 decode_limit(v.max_bytes, MAX_DATA_BYTES)?,
@@ -110,15 +111,33 @@ pub fn decode_attribute(
                 _ => return Err(AttributeValueError::Mode),
             };
             (
-                v.lookup,
+                v.target,
                 A::set_xattr(d::XattrName::parse(&v.name)?, data, mode),
             )
         }
-        StorageOp::RemoveXattr(v) => (v.lookup, A::RemoveXattr(d::XattrName::parse(&v.name)?)),
+        StorageOp::RemoveXattr(v) => (v.target, A::RemoveXattr(d::XattrName::parse(&v.name)?)),
         _ => return Err(AttributeValueError::Operation),
     };
-    let (operand, base, links) = super::decode_lookup(lookup)?;
-    Ok((d::AttributeRequest::new(operand, action), base, links))
+    let target = target.ok_or(AttributeValueError::Target)?;
+    let request = d::AttributeRequest::new(target_address(&target)?, action);
+    Ok((request, target))
+}
+
+fn target_address(target: &super::BoundAttribute) -> Result<d::StoragePath, AttributeValueError> {
+    if target.lookup == 0 || target.entry == 0 {
+        return Err(AttributeValueError::Target);
+    }
+    match &target.slot {
+        Some(slot) => {
+            let (_, path) =
+                super::decode_entry_slot(slot).map_err(|_| AttributeValueError::Target)?;
+            if path.is_root() {
+                return Err(AttributeValueError::Target);
+            }
+            Ok(path)
+        }
+        None => Ok(d::StoragePath::root()),
+    }
 }
 
 // Negotiate the effective per-call response limit down to the transport bound.

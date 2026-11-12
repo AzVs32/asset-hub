@@ -25,12 +25,27 @@ struct Lookup {
 }
 
 impl Lookup {
+    fn check_purpose(&self, operation: Operation) -> Result<(), StorageError> {
+        if self.backend.operation() == operation {
+            Ok(())
+        } else {
+            Err(StorageError::without_effects(
+                operation,
+                Failure::InvalidBinding,
+                None,
+            ))
+        }
+    }
+
     fn entry(&self, id: u64) -> Result<ObservedEntry, StorageError> {
-        self.entries.get(&id).cloned().ok_or_else(stale_lookup)
+        self.entries
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| stale_lookup(self.backend.operation()))
     }
 
     fn insert(&mut self, id: u64, entry: ObservedEntry) -> Result<p::ObservedEntry, StorageError> {
-        let wire = c::entry(Operation::ReadLink, entry.entry().clone())?;
+        let wire = c::entry(self.backend.operation(), entry.entry().clone())?;
         self.entries.insert(id, entry);
         Ok(p::ObservedEntry {
             id,
@@ -39,20 +54,21 @@ impl Lookup {
     }
 }
 
-fn stale_lookup() -> StorageError {
+fn stale_lookup(operation: Operation) -> StorageError {
+    StorageError::without_effects(operation, Failure::Backend(BackendFailure::Stale), None)
+}
+
+fn lookup_capacity(operation: Operation) -> StorageError {
     StorageError::without_effects(
-        Operation::ReadLink,
-        Failure::Backend(BackendFailure::Stale),
+        operation,
+        Failure::Backend(BackendFailure::CapacityExceeded),
         None,
     )
 }
 
-fn lookup_capacity() -> StorageError {
-    StorageError::without_effects(
-        Operation::ReadLink,
-        Failure::Backend(BackendFailure::CapacityExceeded),
-        None,
-    )
+fn lookup_purpose(purpose: &str) -> Result<Operation, DriverError> {
+    p::decode_lookup_purpose(purpose)
+        .ok_or_else(|| LifecycleError::new(LifecycleFailure::InvalidRequest).into())
 }
 
 struct Slot<T> {
@@ -513,14 +529,18 @@ impl Session {
                 .into())
             })
     }
-    async fn lookup(&self, handle: u64) -> Result<Arc<Mutex<Lookup>>, StorageError> {
+    async fn lookup(
+        &self,
+        handle: u64,
+        operation: Operation,
+    ) -> Result<Arc<Mutex<Lookup>>, StorageError> {
         self.resources
             .lock()
             .await
             .lookups
             .get(&handle)
             .map(|slot| slot.value.clone())
-            .ok_or_else(stale_lookup)
+            .ok_or_else(|| stale_lookup(operation))
     }
 
     async fn call_inner(&self, op: Op, data: Vec<u8>) -> Result<p::Reply, DriverError> {
@@ -720,9 +740,15 @@ impl Session {
                 }
                 Value::Unit(p::Empty {})
             }
-            Op::BeginLookup(p::Handle { handle }) => {
-                let operation = Operation::ReadLink;
-                if !self.generation.driver.info().capabilities().read_link() {
+            Op::BeginLookup(p::LookupHandle { handle, purpose }) => {
+                let operation = lookup_purpose(&purpose)?;
+                if !self
+                    .generation
+                    .driver
+                    .info()
+                    .capabilities()
+                    .supports(operation)
+                {
                     return Err(unsupported_storage(operation).into());
                 }
                 let storage = self.storage(operation, handle).await?;
@@ -734,6 +760,14 @@ impl Session {
                     )
                 })?;
                 let mut backend = storage.begin_lookup(operation).await?;
+                if backend.operation() != operation {
+                    return Err(StorageError::without_effects(
+                        operation,
+                        Failure::Contract(ContractViolation::InvalidResponse),
+                        None,
+                    )
+                    .into());
+                }
                 let root = backend.root().await?;
                 let mut lookup = Lookup {
                     backend,
@@ -759,57 +793,61 @@ impl Session {
                 lookup,
                 parent,
                 name,
+                purpose,
             }) => {
-                let lookup = self.lookup(lookup).await?;
+                let operation = lookup_purpose(&purpose)?;
+                let lookup = self.lookup(lookup, operation).await?;
                 let mut lookup = lookup.lock().await;
+                lookup.check_purpose(operation)?;
                 let parent = lookup.entry(parent)?;
                 let name = EntryName::parse(&name).map_err(|source| {
                     LifecycleError::with_source(LifecycleFailure::InvalidRequest, source)
                 })?;
                 if lookup.entries.len() >= p::MAX_LOOKUP_ENTRIES {
-                    return Err(lookup_capacity().into());
+                    return Err(lookup_capacity(operation).into());
                 }
                 let entry = lookup.backend.observe(&parent, &name).await?;
-                let id = self.resources.lock().await.next_id(Operation::ReadLink)?;
+                let id = self.resources.lock().await.next_id(operation)?;
                 Value::ObservedEntry(lookup.insert(id, entry)?)
             }
             Op::ReadObservedLink(p::ReadObservedLink {
                 lookup,
                 entry,
                 final_slot,
+                purpose,
             }) => {
-                let lookup = self.lookup(lookup).await?;
+                let operation = lookup_purpose(&purpose)?;
+                let lookup = self.lookup(lookup, operation).await?;
                 let lookup = lookup.lock().await;
+                lookup.check_purpose(operation)?;
                 let entry = lookup.entry(entry)?;
                 let target = if let Some(slot) = final_slot {
-                    let (name, request) = p::decode_link_slot(&slot).map_err(|source| {
+                    let (name, path) = p::decode_entry_slot(&slot).map_err(|source| {
                         LifecycleError::with_source(LifecycleFailure::InvalidRequest, source)
                     })?;
                     let parent = lookup.entry(slot.parent)?;
                     lookup
                         .backend
-                        .execute_read_link(&parent, &name, &entry, request)
+                        .execute_read_link(
+                            &parent,
+                            &name,
+                            &entry,
+                            ah_vfs_storage::ReadLinkRequest::new(path),
+                        )
                         .await?
                 } else {
                     lookup.backend.read_link(&entry).await?
                 };
                 return p::encode_link_target(target).map_err(|reason| {
-                    StorageError::without_effects(
-                        Operation::ReadLink,
-                        Failure::Rejected(reason),
-                        None,
-                    )
-                    .into()
+                    StorageError::without_effects(operation, Failure::Rejected(reason), None).into()
                 });
             }
-            Op::VerifyLookup(p::Handle { handle }) => {
-                self.lookup(handle)
-                    .await?
-                    .lock()
-                    .await
-                    .backend
-                    .verify()
-                    .await?;
+            Op::VerifyLookup(p::LookupHandle { handle, purpose }) => {
+                let operation = lookup_purpose(&purpose)?;
+                let lookup = self.lookup(handle, operation).await?;
+                let lookup = lookup.lock().await;
+                lookup.check_purpose(operation)?;
+                lookup.backend.verify().await?;
                 Value::Unit(p::Empty {})
             }
             _ => return Err(LifecycleError::new(LifecycleFailure::InvalidRequest).into()),
@@ -933,25 +971,30 @@ impl Session {
             | p::StorageOp::GetXattr(_)
             | p::StorageOp::SetXattr(_)
             | p::StorageOp::RemoveXattr(_)) => {
-                let (request, working_directory, intermediate_symlinks) =
-                    p::decode_attribute(attribute, data).map_err(|cause| {
-                        LifecycleError::with_source(LifecycleFailure::InvalidRequest, cause)
-                    })?;
-                let attributes = s.attributes().ok_or_else(|| {
-                    StorageError::without_effects(
-                        operation,
-                        Failure::Contract(ContractViolation::InvalidAttributes),
-                        None,
-                    )
+                let (request, target) = p::decode_attribute(attribute, data).map_err(|cause| {
+                    LifecycleError::with_source(LifecycleFailure::InvalidRequest, cause)
                 })?;
+                let lookup = self.lookup(target.lookup, operation).await?;
+                let lookup = lookup.lock().await;
+                lookup.check_purpose(operation)?;
+                let entry = lookup.entry(target.entry)?;
+                let slot = target
+                    .slot
+                    .map(|slot| {
+                        let parent = lookup.entry(slot.parent)?;
+                        let (name, _) = p::decode_entry_slot(&slot).map_err(|cause| {
+                            LifecycleError::with_source(LifecycleFailure::InvalidRequest, cause)
+                        })?;
+                        Ok::<_, DriverError>((parent, name))
+                    })
+                    .transpose()?;
                 let expected = request.action().expectation();
-                let result = attributes
-                    .execute(
+                let result = lookup
+                    .backend
+                    .execute_attribute(
+                        slot.as_ref().map(|(parent, name)| (parent, name)),
+                        &entry,
                         request,
-                        LookupContext {
-                            working_directory,
-                            intermediate_symlinks,
-                        },
                     )
                     .await?;
                 return p::encode_attribute_result(expected, result).map_err(|reason| {

@@ -17,6 +17,23 @@ const OPERATIONS: &[(&str, d::Operation)] = &[
     ("set-xattr", d::Operation::SetXattr),
     ("remove-xattr", d::Operation::RemoveXattr),
 ];
+/// Stable names for the operations that use a bound lookup.
+pub fn encode_lookup_purpose(operation: d::Operation) -> Option<&'static str> {
+    if operation != d::Operation::ReadLink && !operation.is_attribute() {
+        return None;
+    }
+    OPERATIONS
+        .iter()
+        .find(|(_, op)| *op == operation)
+        .map(|(name, _)| *name)
+}
+
+pub fn decode_lookup_purpose(name: &str) -> Option<d::Operation> {
+    OPERATIONS.iter().find_map(|(tag, op)| {
+        (*tag == name && (*op == d::Operation::ReadLink || op.is_attribute())).then_some(*op)
+    })
+}
+
 const CAUSES: &[(&str, &str, d::Failure)] = &[
     ("caller", "invalid-binding", d::Failure::InvalidBinding),
     (

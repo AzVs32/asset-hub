@@ -1,6 +1,6 @@
 //! Shared protobuf messages, validation and VFS protocol semantics.
 pub mod wire {
-    include!(concat!(env!("OUT_DIR"), "/assethub.vfs.v13.rs"));
+    include!(concat!(env!("OUT_DIR"), "/assethub.vfs.v14.rs"));
 }
 pub use wire::*;
 pub use wire::{reply::Result as Value, request::Operation, storage_call::Operation as StorageOp};
@@ -29,7 +29,7 @@ pub const FILE_DESCRIPTOR_SET: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "
 /// JSON values at application/configuration boundaries, never a wire message.
 pub type JsonObject = std::collections::BTreeMap<String, serde_json::Value>;
 
-pub const PROTOCOL_MAJOR: u32 = 13;
+pub const PROTOCOL_MAJOR: u32 = 14;
 pub const PROTOCOL_MINOR: u32 = 0;
 pub const MAX_CONTROL_BYTES: usize = 1024 * 1024;
 pub const MAX_DATA_BYTES: usize = 8 * 1024 * 1024;
@@ -241,20 +241,22 @@ impl Operation {
     }
 }
 
-pub fn decode_link_slot(
-    slot: &LinkSlot,
-) -> Result<(ah_vfs_storage::EntryName, ah_vfs_storage::ReadLinkRequest), CodecError> {
+pub fn decode_entry_slot(
+    slot: &EntrySlot,
+) -> Result<(ah_vfs_storage::EntryName, ah_vfs_storage::StoragePath), CodecError> {
     if slot.parent == 0 {
         return Err(CodecError::InvalidData);
     }
     let name = ah_vfs_storage::EntryName::parse(&slot.name).map_err(|_| CodecError::InvalidData)?;
     let path =
         ah_vfs_storage::StoragePath::parse(&slot.path).map_err(|_| CodecError::InvalidData)?;
-    Ok((name, ah_vfs_storage::ReadLinkRequest::new(path)))
+    Ok((name, path))
 }
 
 mod failure;
-pub use failure::{decode_storage_error, encode_storage_error};
+pub use failure::{
+    decode_lookup_purpose, decode_storage_error, encode_lookup_purpose, encode_storage_error,
+};
 
 impl StorageOp {
     pub fn storage_operation(&self) -> ah_vfs_storage::Operation {
@@ -280,10 +282,11 @@ impl Operation {
         match self {
             Self::Storage(call) => call.operation.as_ref().map(StorageOp::storage_operation),
             Self::Read(_) | Self::ReaderNext(_) => Some(D::Read),
-            Self::BeginLookup(_)
-            | Self::ObserveChild(_)
-            | Self::ReadObservedLink(_)
-            | Self::VerifyLookup(_) => Some(D::ReadLink),
+            Self::BeginLookup(call) | Self::VerifyLookup(call) => {
+                decode_lookup_purpose(&call.purpose)
+            }
+            Self::ObserveChild(call) => decode_lookup_purpose(&call.purpose),
+            Self::ReadObservedLink(call) => decode_lookup_purpose(&call.purpose),
             Self::Write(_) | Self::WriterChunk(_) | Self::Commit(_) | Self::Abort(_) => {
                 Some(D::Write)
             }

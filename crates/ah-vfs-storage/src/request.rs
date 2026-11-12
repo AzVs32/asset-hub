@@ -28,6 +28,19 @@ pub enum Operation {
     RemoveXattr,
 }
 impl Operation {
+    /// Whether this operation reads or changes permissions or extended attributes.
+    pub fn is_attribute(self) -> bool {
+        matches!(
+            self,
+            Self::GetPermissions
+                | Self::SetPermissions
+                | Self::ListXattrs
+                | Self::GetXattr
+                | Self::SetXattr
+                | Self::RemoveXattr
+        )
+    }
+
     /// Future operations conservatively count as mutations until explicitly classified.
     pub fn may_mutate(self) -> bool {
         !matches!(
@@ -86,9 +99,6 @@ impl ReadRange {
             offset.checked_add(length).ok_or(RangeError::Overflow)?;
         }
         Ok(Self { offset, length })
-    }
-    pub fn end_exclusive(self) -> Option<u64> {
-        self.length.map(|length| self.offset + length)
     }
 }
 /// Inspect the selected entry or the target of its final symbolic link.

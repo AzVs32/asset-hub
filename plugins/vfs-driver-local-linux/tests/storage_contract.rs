@@ -14,9 +14,8 @@ use ah_vfs::domain::namespace::VirtualPath;
 use ah_vfs::domain::{DriverInstance, DriverKey, InstanceId};
 use ah_vfs::infrastructure::mount_repository::SqliteMountRepository;
 use ah_vfs_storage::{
-    AttributeAction as A, AttributeRequest, AttributeResult as R, BackendFailure,
-    IntermediateSymlinks, MutationOutcome, PathExpr, Permissions, StoragePath, XattrName,
-    XattrWriteMode,
+    AttributeAction as A, AttributeResult as R, BackendFailure, IntermediateSymlinks,
+    MutationOutcome, PathExpr, Permissions, StoragePath, XattrName, XattrWriteMode,
 };
 use ah_vfs_storage::{ReadRange, ReadSupport, RenameMode};
 
@@ -337,6 +336,37 @@ async fn xattrs_support_binary_empty_and_bounded_values_with_atomic_existence_po
 }
 
 #[tokio::test]
+async fn attribute_execution_rejects_a_replaced_slot_before_changing_permissions() -> TestResult {
+    use ah_vfs_storage::{AttributeRequest, EntryName, Operation};
+    use std::os::unix::fs::PermissionsExt;
+
+    let f = fixture().await?;
+    let file = f.root.join("file");
+    let moved = f.root.join("original");
+    std::fs::write(&file, b"before")?;
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600))?;
+    let mut lookup = f.storage.begin_lookup(Operation::SetPermissions).await?;
+    let parent = lookup.root().await?;
+    let name = EntryName::parse("file")?;
+    let observed = lookup.observe(&parent, &name).await?;
+    std::fs::rename(&file, &moved)?;
+    std::fs::write(&file, b"after")?;
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644))?;
+
+    let request = AttributeRequest::new(path("file")?, A::SetPermissions(Permissions::new(0o777)?));
+    let error = lookup
+        .execute_attribute(Some((&parent, &name)), &observed, request)
+        .await
+        .err()
+        .ok_or("accepted the replaced slot")?;
+    assert_eq!(error.failure(), Failure::Rejected(Rejection::Conflict));
+    assert_eq!(error.outcome(), MutationOutcome::Unchanged);
+    assert_eq!(moved.metadata()?.permissions().mode() & 0o777, 0o600);
+    assert_eq!(file.metadata()?.permissions().mode() & 0o777, 0o644);
+    Ok(())
+}
+
+#[tokio::test]
 async fn attribute_lookup_preserves_the_final_link_and_obeys_intermediate_policy() -> TestResult {
     use std::os::unix::{fs::PermissionsExt, fs::symlink};
     let f = fixture().await?;
@@ -348,14 +378,16 @@ async fn attribute_lookup_preserves_the_final_link_and_obeys_intermediate_policy
     symlink(&outside_file, f.root.join("link"))?;
     symlink(outside.path(), f.root.join("outside"))?;
     symlink("/", f.root.join("alias"))?;
-    let attributes = f.storage.attributes().ok_or("missing attributes")?;
+    assert!(f.storage.attributes().is_some());
     let execute = |operand: &str, action, intermediate_symlinks| -> Result<_, Box<dyn Error>> {
-        Ok(attributes.execute(
-            AttributeRequest::new(PathExpr::parse(operand)?, action),
+        Ok(ah_vfs::resolve::attribute(
+            f.storage.as_ref(),
+            PathExpr::parse(operand)?,
             LookupContext {
                 working_directory: path("dir")?,
                 intermediate_symlinks,
             },
+            action,
         ))
     };
     use IntermediateSymlinks::{FollowWithinInstance, Reject};

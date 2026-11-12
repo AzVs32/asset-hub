@@ -1,4 +1,4 @@
-use ah_vfs_storage::{ContractViolation, Failure, Operation, Rejection, StorageError};
+use ah_vfs_storage::{ContractViolation, Failure, Operation, StorageError};
 #[path = "../../../tests/common/mod.rs"]
 mod common;
 use super::*;
@@ -167,20 +167,6 @@ impl StorageAttributes for TestStorage {
             ah_vfs_storage::AttributeSupport::Read,
             ah_vfs_storage::AttributeSupport::None,
         )
-    }
-
-    fn execute(
-        &self,
-        request: ah_vfs_storage::AttributeRequest,
-        _: crate::application::port::LookupContext,
-    ) -> StorageFuture<'_, ah_vfs_storage::AttributeResult> {
-        Box::pin(async move {
-            Err(StorageError::without_effects(
-                request.operation(),
-                Failure::Rejected(Rejection::Unsupported),
-                None,
-            ))
-        })
     }
 }
 

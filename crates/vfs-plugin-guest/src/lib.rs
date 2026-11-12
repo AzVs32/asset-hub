@@ -60,12 +60,6 @@ pub mod api {
             ah_vfs_storage::AttributeSupport,
             ah_vfs_storage::AttributeSupport,
         );
-        fn execute(
-            &self,
-            request: ah_vfs_storage::AttributeRequest,
-            working_directory: ah_vfs_storage::StoragePath,
-            intermediate_symlinks: ah_vfs_storage::IntermediateSymlinks,
-        ) -> Result<ah_vfs_storage::AttributeResult>;
     }
     pub trait GuestStorage {
         fn chunk_size(&self) -> std::num::NonZeroUsize;
@@ -88,11 +82,11 @@ pub mod api {
                 ),
             )
         }
-        fn begin_lookup(&self) -> Result<Lookup> {
+        fn begin_lookup(&self, operation: ah_vfs_storage::Operation) -> Result<Lookup> {
             Err(
-                ErrorContext::storage(ah_vfs_storage::Operation::ReadLink).failure(
-                    ah_vfs_storage::Failure::Rejected(ah_vfs_storage::Rejection::Unsupported),
-                ),
+                ErrorContext::storage(operation).failure(ah_vfs_storage::Failure::Rejected(
+                    ah_vfs_storage::Rejection::Unsupported,
+                )),
             )
         }
         fn remove(
@@ -191,6 +185,17 @@ pub mod api {
             name: &ah_vfs_storage::EntryName,
         ) -> Result<(u64, ah_vfs_storage::Entry)>;
         fn read_link(&self, entry: u64) -> Result<ah_vfs_storage::LinkTarget>;
+        /// Apply the canonical request through the same local observations.
+        fn execute_attribute(
+            &self,
+            _slot: Option<(u64, &ah_vfs_storage::EntryName)>,
+            _entry: u64,
+            request: ah_vfs_storage::AttributeRequest,
+        ) -> Result<ah_vfs_storage::AttributeResult> {
+            Err(ErrorContext::storage(request.operation()).failure(
+                ah_vfs_storage::Failure::Rejected(ah_vfs_storage::Rejection::Unsupported),
+            ))
+        }
         fn verify(&self) -> Result<()>;
     }
     pub struct Lookup(pub(crate) Box<dyn GuestLookup>);
@@ -240,6 +245,7 @@ impl Resource {
     }
 }
 struct Lookup {
+    operation: ah_vfs_storage::Operation,
     backend: api::Lookup,
     entries: BTreeMap<u64, Observation>,
 }
@@ -250,6 +256,36 @@ struct Observation {
 }
 
 impl Lookup {
+    fn check_purpose(
+        &self,
+        context: &api::ErrorContext,
+        operation: ah_vfs_storage::Operation,
+    ) -> api::Result<()> {
+        if self.operation == operation {
+            Ok(())
+        } else {
+            Err(context.failure(ah_vfs_storage::Failure::InvalidBinding))
+        }
+    }
+
+    fn check_slot(
+        &self,
+        context: &api::ErrorContext,
+        slot: &p::EntrySlot,
+        entry: &Observation,
+    ) -> api::Result<(u64, ah_vfs_storage::EntryName)> {
+        let (name, path) = p::decode_entry_slot(slot)
+            .map_err(|_| p::Failure::new(p::FailureCode::InvalidRequest))?;
+        let parent = self.entry(context, slot.parent)?;
+        if parent.entry.entry_type() != ah_vfs_storage::EntryType::Directory
+            || parent.entry.path().join(&name).as_ref() != Ok(&path)
+            || entry.entry.path() != &path
+        {
+            return Err(context.failure(ah_vfs_storage::Failure::InvalidBinding));
+        }
+        Ok((parent.local, name))
+    }
+
     fn entry(&self, context: &api::ErrorContext, id: u64) -> api::Result<&Observation> {
         self.entries.get(&id).ok_or_else(|| stale_lookup(context))
     }
@@ -267,6 +303,11 @@ impl Lookup {
             entry: Some(wire),
         })
     }
+}
+
+fn lookup_purpose(purpose: &str) -> api::Result<ah_vfs_storage::Operation> {
+    p::decode_lookup_purpose(purpose)
+        .ok_or_else(|| p::Failure::new(p::FailureCode::InvalidRequest).into())
 }
 
 fn stale_lookup(context: &api::ErrorContext) -> api::Failure {
@@ -516,18 +557,29 @@ impl<D: api::Guest> Dispatcher<D> {
                         | p::StorageOp::RemoveXattr(_)),
                     ),
             }) => {
-                use ah_vfs_storage::{ContractViolation, Failure, StorageError};
-                let (request, base, links) = p::decode_attribute(attribute, data)
+                use ah_vfs_storage::{Failure, StorageError};
+                let (request, target) = p::decode_attribute(attribute, data)
                     .map_err(|_| p::Failure::new(p::FailureCode::InvalidRequest))?;
                 let operation = request.operation();
-                let attributes = self
-                    .storage(&context, handle)?
-                    .attributes()
-                    .ok_or_else(|| {
-                        context.failure(Failure::Contract(ContractViolation::InvalidAttributes))
-                    })?;
+                self.storage(&context, handle)?;
+                let lookup = self.lookup(&context, target.lookup)?;
+                lookup.check_purpose(&context, operation)?;
+                let entry = lookup.entry(&context, target.entry)?;
+                let slot = target
+                    .slot
+                    .as_ref()
+                    .map(|slot| lookup.check_slot(&context, slot, entry))
+                    .transpose()?;
+                if slot.is_none() && !entry.entry.path().is_root() {
+                    return Err(context.failure(Failure::InvalidBinding));
+                }
+                lookup.backend.0.verify()?;
                 let expected = request.action().expectation();
-                let result = attributes.execute(request, base, links)?;
+                let result = lookup.backend.0.execute_attribute(
+                    slot.as_ref().map(|(parent, name)| (*parent, name)),
+                    entry.local,
+                    request,
+                )?;
                 return p::encode_attribute_result(expected, result).map_err(|reason| {
                     StorageError::after_dispatch(operation, Failure::Contract(reason), None).into()
                 });
@@ -613,8 +665,9 @@ impl<D: api::Guest> Dispatcher<D> {
                     .stat(&request, &base, links)?;
                 Value::Entry(encode_entry(&context, &entry)?)
             }
-            Op::BeginLookup(p::Handle { handle }) => {
-                if !capabilities.read_link() {
+            Op::BeginLookup(p::LookupHandle { handle, purpose }) => {
+                let operation = lookup_purpose(&purpose)?;
+                if !capabilities.supports(operation) {
                     return Err(context.failure(ah_vfs_storage::Failure::Rejected(
                         ah_vfs_storage::Rejection::Unsupported,
                     )));
@@ -624,9 +677,10 @@ impl<D: api::Guest> Dispatcher<D> {
                     .next
                     .checked_add(2)
                     .ok_or_else(|| lookup_capacity(&context))?;
-                let mut backend = self.storage(&context, handle)?.begin_lookup()?;
+                let mut backend = self.storage(&context, handle)?.begin_lookup(operation)?;
                 let root = backend.0.root()?;
                 let mut lookup = Lookup {
+                    operation,
                     backend,
                     entries: BTreeMap::new(),
                 };
@@ -642,7 +696,9 @@ impl<D: api::Guest> Dispatcher<D> {
                 lookup,
                 parent,
                 name,
+                purpose,
             }) => {
+                let operation = lookup_purpose(&purpose)?;
                 let name = ah_vfs_storage::EntryName::parse(&name)
                     .map_err(|_| p::Failure::new(p::FailureCode::InvalidRequest))?;
                 let id = self
@@ -652,6 +708,7 @@ impl<D: api::Guest> Dispatcher<D> {
                 let Some(Resource::Lookup(lookup)) = self.resources.get_mut(&lookup) else {
                     return Err(stale_lookup(&context));
                 };
+                lookup.check_purpose(&context, operation)?;
                 let parent = lookup.entry(&context, parent)?.local;
                 if lookup.entries.len() >= p::MAX_LOOKUP_ENTRIES {
                     return Err(lookup_capacity(&context));
@@ -665,19 +722,13 @@ impl<D: api::Guest> Dispatcher<D> {
                 lookup,
                 entry,
                 final_slot,
+                purpose,
             }) => {
                 let lookup = self.lookup(&context, lookup)?;
+                lookup.check_purpose(&context, lookup_purpose(&purpose)?)?;
                 let link = lookup.entry(&context, entry)?;
                 if let Some(slot) = &final_slot {
-                    let (name, request) = p::decode_link_slot(slot)
-                        .map_err(|_| p::Failure::new(p::FailureCode::InvalidRequest))?;
-                    let parent = lookup.entry(&context, slot.parent)?;
-                    if parent.entry.entry_type() != ah_vfs_storage::EntryType::Directory
-                        || parent.entry.path().join(&name).as_ref() != Ok(request.path())
-                        || link.entry.path() != request.path()
-                    {
-                        return Err(context.failure(ah_vfs_storage::Failure::InvalidBinding));
-                    }
+                    lookup.check_slot(&context, slot, link)?;
                 }
                 let target = lookup.backend.0.read_link(link.local)?;
                 if final_slot.is_some() {
@@ -686,8 +737,10 @@ impl<D: api::Guest> Dispatcher<D> {
                 return p::encode_link_target(target)
                     .map_err(|reason| context.failure(ah_vfs_storage::Failure::Rejected(reason)));
             }
-            Op::VerifyLookup(p::Handle { handle }) => {
-                self.lookup(&context, handle)?.backend.0.verify()?;
+            Op::VerifyLookup(p::LookupHandle { handle, purpose }) => {
+                let lookup = self.lookup(&context, handle)?;
+                lookup.check_purpose(&context, lookup_purpose(&purpose)?)?;
+                lookup.backend.0.verify()?;
                 Value::Unit(p::Empty {})
             }
             Op::Read(read) => {

@@ -2,8 +2,8 @@
 
 use super::StorageAttributes;
 use ah_vfs_storage::{
-    AttributeSupport, BoundListRequest, Capabilities, DirectoryPage, DirectorySelection,
-    ListRequest, MutationBinding,
+    AttributeRequest, AttributeResult, AttributeSupport, BoundListRequest, Capabilities,
+    DirectoryPage, DirectorySelection, ListRequest, MutationBinding,
 };
 use ah_vfs_storage::{
     BackendFailure, Entry, EntryName, EntryType, IntermediateSymlinks, LinkTarget, ReadLinkRequest,
@@ -225,7 +225,8 @@ pub trait OperationLookup: Send + Sync {
                     None,
                 ));
             }
-            if parent.entry().entry_type() != EntryType::Directory
+            if self.operation() != op
+                || parent.entry().entry_type() != EntryType::Directory
                 || link.entry().path() != request.path()
                 || parent.entry().path().join(name).as_ref() != Ok(request.path())
             {
@@ -239,6 +240,17 @@ pub trait OperationLookup: Send + Sync {
             self.verify().await?;
             Ok(target)
         })
+    }
+
+    /// Execute one action on the bound entry. The slot is absent only for
+    /// the bound root. Attribute writes retain the backend's mutation guarantee.
+    fn execute_attribute<'a>(
+        &'a self,
+        _slot: Option<(&'a ObservedEntry, &'a EntryName)>,
+        _entry: &'a ObservedEntry,
+        request: AttributeRequest,
+    ) -> StorageFuture<'a, AttributeResult> {
+        unsupported(request.operation())
     }
 
     /// Check observations without following links. Replaced slots in a live

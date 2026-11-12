@@ -96,14 +96,17 @@ impl Storage for LinuxLocalStorage {
 
     fn begin_lookup(&self, operation: Operation) -> StorageFuture<'_, Box<dyn OperationLookup>> {
         Box::pin(async move {
-            if operation != Operation::ReadLink {
+            if operation != Operation::ReadLink && !operation.is_attribute() {
                 return Err(StorageError::without_effects(
                     operation,
                     Failure::Rejected(ah_vfs_storage::Rejection::Unsupported),
                     None,
                 ));
             }
-            Ok(Box::new(lookup::LocalLookup::new(self.dir.clone())) as Box<dyn OperationLookup>)
+            Ok(
+                Box::new(lookup::LocalLookup::new(self.dir.clone(), operation))
+                    as Box<dyn OperationLookup>,
+            )
         })
     }
 

@@ -97,10 +97,6 @@ impl PathExpr {
         self
     }
 
-    pub fn has_trailing_slash(&self) -> bool {
-        self.trailing_slash
-    }
-
     /// The operand denotes a directory if it ends in a slash, `.` or `..`,
     /// including the root operand `/`.
     pub fn requires_directory(&self) -> bool {
@@ -211,7 +207,7 @@ mod tests {
              PathComponent::CurrentDirectory, PathComponent::Name(last)]
                 if first.as_str() == "missing" && last.as_str() == "a"
         ));
-        assert!(path.has_trailing_slash());
+        assert_eq!(path.to_string(), "missing/.././a/");
         assert!(path.requires_directory());
         assert_eq!(PathExpr::parse(&path.to_string())?, path);
 

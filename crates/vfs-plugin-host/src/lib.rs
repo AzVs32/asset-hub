@@ -613,19 +613,22 @@ impl Storage for RemoteStorage {
 
     fn begin_lookup(&self, op: Operation) -> StorageFuture<'_, Box<dyn OperationLookup>> {
         Box::pin(async move {
-            if op != Operation::ReadLink || !self.driver_info.capabilities().read_link() {
+            let Some(purpose) = p::encode_lookup_purpose(op)
+                .filter(|_| self.driver_info.capabilities().supports(op))
+            else {
                 return Err(StorageError::without_effects(
                     op,
                     Failure::Rejected(Rejection::Unsupported),
                     None,
                 ));
-            }
+            };
             let reply = self
                 .resource
                 .runtime
                 .call(
-                    Op::BeginLookup(p::Handle {
+                    Op::BeginLookup(p::LookupHandle {
                         handle: self.resource.handle,
+                        purpose: purpose.into(),
                     }),
                     vec![],
                 )
@@ -654,11 +657,15 @@ impl Storage for RemoteStorage {
                 }
             })?;
             let scope = LookupScope::default();
-            let root = decode_observation(&scope, root.ok_or_else(|| bad_response(op, false))?)?;
+            let root =
+                decode_observation(op, &scope, root.ok_or_else(|| bad_response(op, false))?)?;
             if root.entry().entry_type() != ah_vfs_storage::EntryType::Directory {
                 return Err(bad_response(op, false));
             }
             Ok(Box::new(RemoteLookup {
+                operation: op,
+                purpose,
+                storage: self.resource.handle,
                 resource,
                 scope,
                 root,
@@ -932,16 +939,19 @@ fn closed(operation: Operation) -> StorageError {
     StorageError::without_effects(operation, Failure::Backend(BackendFailure::Closed), None)
 }
 struct RemoteLookup {
+    operation: Operation,
+    purpose: &'static str,
+    storage: u64,
     resource: Resource,
     scope: LookupScope,
     root: ObservedEntry,
 }
 
 fn decode_observation(
+    op: Operation,
     scope: &LookupScope,
     observed: p::ObservedEntry,
 ) -> Result<ObservedEntry, StorageError> {
-    let op = Operation::ReadLink;
     let entry = observed.entry.ok_or_else(|| bad_response(op, false))?;
     Ok(scope.bind(convert::decode_entry(op, entry)?, observed.id))
 }
@@ -950,7 +960,7 @@ impl RemoteLookup {
     fn id(&self, observation: &ObservedEntry) -> Result<u64, StorageError> {
         self.scope.get::<u64>(observation).copied().ok_or_else(|| {
             StorageError::without_effects(
-                Operation::ReadLink,
+                self.operation,
                 Failure::Backend(BackendFailure::Stale),
                 None,
             )
@@ -962,30 +972,31 @@ impl RemoteLookup {
             .runtime
             .call(op, vec![])
             .await
-            .map_err(|error| convert::storage_error(Operation::ReadLink, false, error))
+            .map_err(|error| convert::storage_error(self.operation, false, error))
     }
     async fn read(
         &self,
         link: &ObservedEntry,
-        final_slot: Option<p::LinkSlot>,
+        final_slot: Option<p::EntrySlot>,
     ) -> Result<LinkTarget, StorageError> {
         let reply = self
             .call(Op::ReadObservedLink(p::ReadObservedLink {
                 lookup: self.resource.handle,
                 entry: self.id(link)?,
                 final_slot,
+                purpose: self.purpose.into(),
             }))
             .await?;
         match reply.result {
             Some(Value::Bytes(_)) => Ok(LinkTarget::new(reply.data)),
-            _ => Err(bad_response(Operation::ReadLink, false)),
+            _ => Err(bad_response(self.operation, false)),
         }
     }
 }
 
 impl OperationLookup for RemoteLookup {
     fn operation(&self) -> Operation {
-        Operation::ReadLink
+        self.operation
     }
 
     fn root(&mut self) -> StorageFuture<'_, ObservedEntry> {
@@ -1004,11 +1015,14 @@ impl OperationLookup for RemoteLookup {
                     lookup: self.resource.handle,
                     parent,
                     name: name.as_str().into(),
+                    purpose: self.purpose.into(),
                 }))
                 .await?;
             match reply.result {
-                Some(Value::ObservedEntry(observed)) => decode_observation(&self.scope, observed),
-                _ => Err(bad_response(Operation::ReadLink, false)),
+                Some(Value::ObservedEntry(observed)) => {
+                    decode_observation(self.operation, &self.scope, observed)
+                }
+                _ => Err(bad_response(self.operation, false)),
             }
         })
     }
@@ -1025,7 +1039,14 @@ impl OperationLookup for RemoteLookup {
         request: ReadLinkRequest,
     ) -> StorageFuture<'a, LinkTarget> {
         Box::pin(async move {
-            let slot = p::LinkSlot {
+            if self.operation != Operation::ReadLink {
+                return Err(StorageError::without_effects(
+                    Operation::ReadLink,
+                    Failure::InvalidBinding,
+                    None,
+                ));
+            }
+            let slot = p::EntrySlot {
                 parent: self.id(parent)?,
                 name: name.as_str().into(),
                 path: request.path().as_str().into(),
@@ -1034,16 +1055,90 @@ impl OperationLookup for RemoteLookup {
         })
     }
 
+    fn execute_attribute<'a>(
+        &'a self,
+        slot: Option<(&'a ObservedEntry, &'a EntryName)>,
+        entry: &'a ObservedEntry,
+        request: AttributeRequest,
+    ) -> StorageFuture<'a, AttributeResult> {
+        Box::pin(async move {
+            let operation = request.operation();
+            if operation != self.operation {
+                return Err(StorageError::without_effects(
+                    operation,
+                    Failure::InvalidBinding,
+                    None,
+                ));
+            }
+            let slot = if let Some((parent, name)) = slot {
+                Some(p::EntrySlot {
+                    parent: self.id(parent)?,
+                    name: name.as_str().into(),
+                    path: request.path().as_str().into(),
+                })
+            } else {
+                None
+            };
+            let target = p::BoundAttribute {
+                lookup: self.resource.handle,
+                entry: self.id(entry)?,
+                slot,
+            };
+            let expected = request.action().expectation();
+            let (wire, data) = p::encode_attribute(request, target).map_err(|error| {
+                let reason = match error {
+                    p::AttributeValueError::Limit => Failure::Rejected(Rejection::LimitExceeded),
+                    p::AttributeValueError::Target => Failure::InvalidBinding,
+                    _ => Failure::Rejected(Rejection::Unsupported),
+                };
+                StorageError::without_effects(operation, reason, Some(Box::new(error)))
+            })?;
+            let reply = self
+                .resource
+                .runtime
+                .call(
+                    Op::Storage(p::StorageCall {
+                        handle: self.storage,
+                        operation: Some(wire),
+                    }),
+                    data,
+                )
+                .await
+                .map_err(|error| {
+                    let error = convert::storage_error(operation, operation.may_mutate(), error);
+                    if error.failure() == Failure::Contract(ContractViolation::InvalidResponse) {
+                        let failure = Failure::Contract(ContractViolation::InvalidAttributes);
+                        let wrap = if error.outcome() == ah_vfs_storage::MutationOutcome::Unknown {
+                            StorageError::after_dispatch
+                        } else {
+                            StorageError::without_effects
+                        };
+                        wrap(operation, failure, Some(Box::new(error)))
+                    } else {
+                        error
+                    }
+                })?;
+            p::decode_attribute_result(expected, reply).map_err(|cause| {
+                StorageError::after_dispatch(
+                    operation,
+                    Failure::Contract(ContractViolation::InvalidAttributes),
+                    Some(Box::new(cause)),
+                )
+            })
+        })
+    }
+
     fn verify(&self) -> StorageFuture<'_, ()> {
         Box::pin(async move {
             let reply = self
-                .call(Op::VerifyLookup(p::Handle {
+                .call(Op::VerifyLookup(p::LookupHandle {
                     handle: self.resource.handle,
+                    purpose: self.purpose.into(),
                 }))
                 .await?;
             match reply.result {
                 Some(Value::Unit(_)) => Ok(()),
-                _ => Err(bad_response(Operation::ReadLink, false)),
+                _ => Err(bad_response(self.operation, false)),
             }
         })
     }
@@ -1184,59 +1279,5 @@ impl StorageAttributes for RemoteStorage {
     fn support(&self) -> (AttributeSupport, AttributeSupport) {
         let caps = self.driver_info.capabilities();
         (caps.permissions(), caps.xattrs())
-    }
-
-    fn execute(
-        &self,
-        request: AttributeRequest,
-        context: LookupContext,
-    ) -> StorageFuture<'_, AttributeResult> {
-        Box::pin(async move {
-            let operation = request.operation();
-            if !self.driver_info.capabilities().supports(operation) {
-                return Err(StorageError::without_effects(
-                    operation,
-                    Failure::Rejected(Rejection::Unsupported),
-                    None,
-                ));
-            }
-            let expected = request.action().expectation();
-            let (wire, data) = p::encode_attribute(
-                request,
-                &context.working_directory,
-                context.intermediate_symlinks,
-            )
-            .map_err(|error| {
-                let reason = match error {
-                    p::AttributeValueError::Limit => Rejection::LimitExceeded,
-                    _ => Rejection::Unsupported,
-                };
-                StorageError::without_effects(
-                    operation,
-                    Failure::Rejected(reason),
-                    Some(Box::new(error)),
-                )
-            })?;
-            let reply = self.call(wire, data).await.map_err(|error| {
-                if error.failure() == Failure::Contract(ContractViolation::InvalidResponse) {
-                    let failure = Failure::Contract(ContractViolation::InvalidAttributes);
-                    let wrap = if error.outcome() == ah_vfs_storage::MutationOutcome::Unknown {
-                        StorageError::after_dispatch
-                    } else {
-                        StorageError::without_effects
-                    };
-                    wrap(operation, failure, Some(Box::new(error)))
-                } else {
-                    error
-                }
-            })?;
-            p::decode_attribute_result(expected, reply).map_err(|cause| {
-                StorageError::after_dispatch(
-                    operation,
-                    Failure::Contract(ContractViolation::InvalidAttributes),
-                    Some(Box::new(cause)),
-                )
-            })
-        })
     }
 }

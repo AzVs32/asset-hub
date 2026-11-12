@@ -11,15 +11,16 @@ use ah_vfs::application::driver_info::DriverInfo;
 use ah_vfs::application::dto::{CreateDirRequest, ReadFileRequest, WriteFileRequest};
 use ah_vfs::application::error::EntryError;
 use ah_vfs::application::port::{
-    DriverFuture, Storage, StorageAttributes, StorageFileReader, StorageFileWriter, StorageFuture,
-    validate_storage_extensions,
+    DriverFuture, LookupScope, ObservedEntry, OperationLookup, Storage, StorageAttributes,
+    StorageFileReader, StorageFileWriter, StorageFuture, validate_storage_extensions,
 };
 use ah_vfs::application::service::{EntryService, MountService};
 use ah_vfs::domain::namespace::{ChildMountPolicy, VirtualPath};
 use ah_vfs::domain::{DriverInstance, DriverKey, InstanceId};
 use ah_vfs::infrastructure::mount_repository::SqliteMountRepository;
 use ah_vfs_storage::{
-    AttributeAction, AttributeRequest, AttributeResult, Entry, Permissions, StoragePath, XattrName,
+    AttributeAction, AttributeRequest, AttributeResult, Entry, EntryName, EntryType, LinkTarget,
+    Permissions, StoragePath, XattrName,
 };
 use ah_vfs_storage::{
     AttributeSupport, Capabilities, MutationBinding, ReadRange, ReadSupport, WriteMode, WriteModes,
@@ -372,12 +373,81 @@ impl StorageAttributes for ReadOnlyPermissions {
     fn support(&self) -> (AttributeSupport, AttributeSupport) {
         (AttributeSupport::Read, AttributeSupport::None)
     }
+}
 
-    fn execute(
-        &self,
+struct PermissionStorage(ReadOnlyPermissions);
+impl Storage for PermissionStorage {
+    fn chunk_size(&self) -> NonZeroUsize {
+        NonZeroUsize::MIN
+    }
+    fn begin_lookup(&self, op: Operation) -> StorageFuture<'_, Box<dyn OperationLookup>> {
+        Box::pin(async move {
+            if op != Operation::GetPermissions {
+                return Err(failure(op, Failure::Rejected(Rejection::Unsupported)));
+            }
+            Ok(Box::new(PermissionLookup(LookupScope::default())) as Box<dyn OperationLookup>)
+        })
+    }
+    fn attributes(&self) -> Option<&dyn StorageAttributes> {
+        Some(&self.0)
+    }
+}
+
+struct PermissionLookup(LookupScope);
+
+impl PermissionLookup {
+    fn bind(&self, path: StoragePath, kind: EntryType) -> Result<ObservedEntry, StorageError> {
+        let entry = Entry::new(path, kind, None).map_err(|_| {
+            failure(
+                Operation::GetPermissions,
+                Failure::Contract(ContractViolation::InvalidEntry),
+            )
+        })?;
+        Ok(self.0.bind(entry, ()))
+    }
+}
+
+impl OperationLookup for PermissionLookup {
+    fn operation(&self) -> Operation {
+        Operation::GetPermissions
+    }
+
+    fn root(&mut self) -> StorageFuture<'_, ObservedEntry> {
+        Box::pin(async move { self.bind(StoragePath::root(), EntryType::Directory) })
+    }
+
+    fn observe<'a>(
+        &'a mut self,
+        parent: &'a ObservedEntry,
+        name: &'a EntryName,
+    ) -> StorageFuture<'a, ObservedEntry> {
+        Box::pin(async move {
+            let path = parent.entry().path().join(name).map_err(|_| {
+                failure(self.operation(), Failure::Rejected(Rejection::PathTooLong))
+            })?;
+            self.bind(path, EntryType::file(None))
+        })
+    }
+
+    fn read_link<'a>(&'a self, _: &'a ObservedEntry) -> StorageFuture<'a, LinkTarget> {
+        Box::pin(async move {
+            Err(failure(
+                self.operation(),
+                Failure::Rejected(Rejection::NotSymlink),
+            ))
+        })
+    }
+
+    fn verify(&self) -> StorageFuture<'_, ()> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn execute_attribute<'a>(
+        &'a self,
+        _: Option<(&'a ObservedEntry, &'a EntryName)>,
+        _: &'a ObservedEntry,
         request: AttributeRequest,
-        _: ah_vfs::application::port::LookupContext,
-    ) -> StorageFuture<'_, AttributeResult> {
+    ) -> StorageFuture<'a, AttributeResult> {
         Box::pin(async move {
             if !matches!(request.action(), AttributeAction::GetPermissions) {
                 return Err(failure(
@@ -395,16 +465,6 @@ impl StorageAttributes for ReadOnlyPermissions {
                     )
                 })
         })
-    }
-}
-
-struct PermissionStorage(ReadOnlyPermissions);
-impl Storage for PermissionStorage {
-    fn chunk_size(&self) -> NonZeroUsize {
-        NonZeroUsize::MIN
-    }
-    fn attributes(&self) -> Option<&dyn StorageAttributes> {
-        Some(&self.0)
     }
 }
 

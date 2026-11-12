@@ -311,7 +311,7 @@ fn extensible_payloads_are_built_and_matched_through_the_public_contract() -> Re
 }
 
 #[test]
-fn attribute_requests_admit_only_their_own_capability_family_and_preserve_links() -> Result {
+fn attribute_requests_admit_only_their_own_capability_family() -> Result {
     use std::num::NonZeroUsize;
 
     let none = Capabilities::default();
@@ -323,8 +323,7 @@ fn attribute_requests_admit_only_their_own_capability_family_and_preserve_links(
         none.with_xattrs(AttributeSupport::ReadWrite),
     ];
     let name = XattrName::parse("user.note")?;
-    let path = PathExpr::parse("/work/link")?;
-    let selected = StoragePath::parse("work/link")?;
+    let path = StoragePath::parse("work/link")?;
     for (action, expected, admitted) in [
         (
             AttributeAction::GetPermissions,
@@ -364,17 +363,7 @@ fn attribute_requests_admit_only_their_own_capability_family_and_preserve_links(
             admitted,
             "{expected:?}"
         );
-        assert_eq!(
-            request.lookup().final_symlink(),
-            SymlinkAction::Preserve,
-            "{expected:?}"
-        );
-        assert_eq!(
-            request
-                .lookup()
-                .check_existing_target(&selected, EntryType::Symlink),
-            Ok(())
-        );
+        assert_eq!(request.path(), &path);
     }
     Ok(())
 }

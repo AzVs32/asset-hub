@@ -181,14 +181,17 @@ impl SessionTransport for Peer {
                         modified: None,
                     })
                 }
-                Op::BeginLookup(p::Handle { handle: 1 }) => Value::OpenedLookup(p::OpenedLookup {
-                    handle: self.next.fetch_add(1, Ordering::SeqCst),
-                    root: Some(observation(100, "", p::EntryKind::Dir)),
-                }),
+                Op::BeginLookup(p::LookupHandle { handle: 1, .. }) => {
+                    Value::OpenedLookup(p::OpenedLookup {
+                        handle: self.next.fetch_add(1, Ordering::SeqCst),
+                        root: Some(observation(100, "", p::EntryKind::Dir)),
+                    })
+                }
                 Op::ObserveChild(p::ObserveChild {
                     lookup,
                     parent,
                     name,
+                    ..
                 }) => {
                     assert_eq!(lookup, 2);
                     let observed = match (parent, name.as_str()) {
@@ -203,11 +206,12 @@ impl SessionTransport for Peer {
                     lookup,
                     entry,
                     final_slot,
+                    ..
                 }) => {
                     assert_eq!((lookup, entry), (2, 103));
                     assert_eq!(
                         final_slot,
-                        Some(p::LinkSlot {
+                        Some(p::EntrySlot {
                             parent: 101,
                             name: "link".into(),
                             path: "docs/link".into(),

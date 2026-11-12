@@ -9,7 +9,7 @@ use crate::application::mount_runtime::MountRuntime;
 use crate::application::port::{LookupContext, Storage};
 use crate::application::session::{FileReadHandle, FileWriteHandle};
 use crate::domain::namespace::{Mount, MountTable, VirtualPath};
-use ah_vfs_storage::{AttributeAction, AttributeRequest, AttributeResult, EntryType, StoragePath};
+use ah_vfs_storage::{AttributeAction, AttributeResult, EntryType, StoragePath};
 use ah_vfs_storage::{BackendFailure, DirectoryCursor, ListRequest, ListTarget};
 use ah_vfs_storage::{
     Capabilities, LinkTarget, ReadRequest, RemoveRequest, RenameRequest,
@@ -512,22 +512,15 @@ impl EntryService {
             .ok_or_else(|| EntryError::DriverNotRegistered(reference.driver_key().clone()))?;
         Self::require(operation, driver.info().capabilities().supports(operation))?;
         let operand = mutation_operand(resolution.storage_path()?, operand.ends_with('/'));
-        let expected = action.expectation();
         let storage = self.runtime.storage(reference, driver.as_ref()).await?;
-        let attributes = storage
-            .attributes()
-            .ok_or(EntryError::InvalidStorageResponse(
+        if storage.attributes().is_none() {
+            return Err(EntryError::InvalidStorageResponse(
                 "missing attribute interface",
-            ))?;
-        let result = attributes
-            .execute(
-                AttributeRequest::new(operand, action),
-                LookupContext::default(),
-            )
-            .await?;
-        expected.validate(&result).map_err(|reason| {
-            StorageError::after_dispatch(operation, Failure::Contract(reason), None)
-        })?;
+            ));
+        }
+        let result =
+            crate::resolve::attribute(storage.as_ref(), operand, LookupContext::default(), action)
+                .await?;
         Ok(result)
     }
 }

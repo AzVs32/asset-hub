@@ -200,7 +200,7 @@ fn bounds_apply_to_control_data_and_nested_configuration() {
 fn exported_descriptor_contains_the_complete_language_independent_contract() -> Result {
     let descriptor = prost_types::FileDescriptorSet::decode(p::FILE_DESCRIPTOR_SET)?;
     let file = descriptor.file.first().ok_or("schema")?;
-    assert_eq!(file.package.as_deref(), Some("assethub.vfs.v13"));
+    assert_eq!(file.package.as_deref(), Some("assethub.vfs.v14"));
     let storage_info = file
         .message_type
         .iter()
@@ -259,11 +259,11 @@ fn exported_descriptor_contains_the_complete_language_independent_contract() -> 
     for method in &file.service.first().ok_or("Plugin")?.method {
         assert_eq!(
             method.input_type.as_deref(),
-            Some(".assethub.vfs.v13.Request")
+            Some(".assethub.vfs.v14.Request")
         );
         assert_eq!(
             method.output_type.as_deref(),
-            Some(".assethub.vfs.v13.Reply")
+            Some(".assethub.vfs.v14.Reply")
         );
     }
     Ok(())
@@ -538,14 +538,22 @@ fn mutations_round_trip_shared_bindings_and_reject_non_entry_operands() -> Resul
 }
 
 #[test]
-fn attribute_requests_preserve_lookup_and_move_binary_values_without_copying() -> Result {
+fn attribute_requests_carry_canonical_bound_targets_and_move_binary_values_without_copying()
+-> Result {
     use ah_vfs_storage as d;
     use d::AttributeAction as A;
     use std::num::NonZeroUsize;
 
-    let base = d::StoragePath::parse("work/sub")?;
-    let links = d::IntermediateSymlinks::Reject;
-    let path = d::PathExpr::parse("../entry/")?;
+    let path = d::StoragePath::parse("work/entry")?;
+    let target = p::BoundAttribute {
+        lookup: 2,
+        entry: 4,
+        slot: Some(p::EntrySlot {
+            parent: 3,
+            name: "entry".into(),
+            path: path.as_str().into(),
+        }),
+    };
     let name = d::XattrName::parse("user.key")?;
     let max = NonZeroUsize::new(1024).ok_or("limit")?;
     for action in [
@@ -563,42 +571,39 @@ fn attribute_requests_preserve_lookup_and_move_binary_values_without_copying() -
             A::SetXattr { value, .. } => Some(value.as_ptr()),
             _ => None,
         };
-        let (wire, data) = p::encode_attribute(original, &base, links)?;
+        let (wire, data) = p::encode_attribute(original, target.clone())?;
         if let Some(pointer) = pointer {
             assert_eq!(data.as_ptr(), pointer);
         }
-        let (decoded, decoded_base, decoded_links) = p::decode_attribute(wire, data)?;
+        let (decoded, decoded_target) = p::decode_attribute(wire, data)?;
         if let A::SetXattr { value, .. } = decoded.action() {
             assert_eq!(Some(value.as_ptr()), pointer);
         }
-        assert_eq!(
-            (decoded, decoded_base, decoded_links),
-            (copy, base.clone(), links)
-        );
+        assert_eq!((decoded, decoded_target), (copy, target.clone()));
     }
 
-    let lookup = Some(p::encode_lookup(&path, &base, links));
+    let wire_target = Some(target.clone());
     for wire in [
         p::StorageOp::SetPermissions(p::SetPermissions {
-            lookup: lookup.clone(),
+            target: wire_target.clone(),
             mode: 0o100644,
         }),
         p::StorageOp::GetXattr(p::GetXattr {
-            lookup: lookup.clone(),
+            target: wire_target.clone(),
             name: "user.key".into(),
             max_bytes: 0,
         }),
         p::StorageOp::SetXattr(p::SetXattr {
-            lookup: lookup.clone(),
+            target: wire_target.clone(),
             name: "user.key".into(),
             mode: 0,
         }),
         p::StorageOp::RemoveXattr(p::RemoveXattr {
-            lookup: lookup.clone(),
+            target: wire_target.clone(),
             name: "user.\0bad".into(),
         }),
         p::StorageOp::ListXattrs(p::ListXattrs {
-            lookup,
+            target: wire_target,
             max_bytes: (p::MAX_ATTRIBUTE_NAMES_BYTES + 1).try_into()?,
         }),
     ] {
@@ -623,12 +628,12 @@ fn attribute_requests_preserve_lookup_and_move_binary_values_without_copying() -
         ),
     );
     assert!(matches!(
-        p::encode_attribute(request, &base, links),
+        p::encode_attribute(request, target.clone()),
         Err(p::AttributeValueError::Limit)
     ));
     let request = d::AttributeRequest::new(path, A::list_xattrs(NonZeroUsize::MAX));
-    let (wire, data) = p::encode_attribute(request, &base, links)?;
-    let (bounded, _, _) = p::decode_attribute(wire, data)?;
+    let (wire, data) = p::encode_attribute(request, target.clone())?;
+    let (bounded, _) = p::decode_attribute(wire, data)?;
     assert!(matches!(bounded.action(), A::ListXattrs { max_bytes, .. }
         if max_bytes.get() == p::MAX_ATTRIBUTE_NAMES_BYTES));
     Ok(())

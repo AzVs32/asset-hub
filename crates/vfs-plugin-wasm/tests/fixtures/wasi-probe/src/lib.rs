@@ -164,7 +164,7 @@ impl GuestStorage for Probe {
         NonZeroUsize::new(1024).unwrap_or(NonZeroUsize::MIN)
     }
 
-    fn begin_lookup(&self) -> api::Result<api::Lookup> {
+    fn begin_lookup(&self, _: Operation) -> api::Result<api::Lookup> {
         Ok(api::Lookup::new(LinkLookup))
     }
 

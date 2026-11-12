@@ -1,8 +1,5 @@
 //! Exact portable attribute values; no request/response error classification.
-use super::{
-    BackendFailure, ContractViolation, Operation, PathExpr, PathLookup, SymlinkAction,
-    lookup::ExistingTarget,
-};
+use super::{BackendFailure, ContractViolation, Operation, StoragePath};
 use getset::Getters;
 use std::num::NonZeroUsize;
 use thiserror::Error;
@@ -140,33 +137,29 @@ impl AttributeAction {
 
 /// An attribute request addresses the final directory entry itself.
 ///
-/// Borrow the request for inspection and lookup. Use [`Self::into_parts`] when
-/// a protocol message or queued operation needs to own both operands.
+/// The address is canonical. Use [`Self::into_parts`] when
+/// a protocol message or queued operation needs to own the address and action.
 #[derive(Clone, Debug, Eq, PartialEq, Getters)]
 pub struct AttributeRequest {
     #[getset(get = "pub")]
-    path: PathExpr,
+    path: StoragePath,
     #[getset(get = "pub")]
     action: AttributeAction,
 }
 
 impl AttributeRequest {
-    pub fn new(path: PathExpr, action: AttributeAction) -> Self {
+    pub fn new(path: StoragePath, action: AttributeAction) -> Self {
         Self { path, action }
     }
 
     /// Move out the validated path and action, including any attribute value
     /// buffer, without cloning them.
-    pub fn into_parts(self) -> (PathExpr, AttributeAction) {
+    pub fn into_parts(self) -> (StoragePath, AttributeAction) {
         (self.path, self.action)
     }
 
     pub fn operation(&self) -> Operation {
         self.action.operation()
-    }
-
-    pub fn lookup(&self) -> PathLookup<'_> {
-        PathLookup::new(&self.path, SymlinkAction::Preserve, ExistingTarget::Any)
     }
 }
 

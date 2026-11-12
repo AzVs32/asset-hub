@@ -19,6 +19,8 @@
 //! [`StoragePath`]. The backend returns its exact bytes without following it.
 //! If verification detects that the observed slot has changed, the request
 //! fails with [`Rejection::Conflict`].
+//! An [`AttributeRequest`] also uses a canonical address and applies its
+//! action to the selected entry itself.
 //!
 //! # Logical names and native storage
 //! An [`EntryName`] or [`XattrName`] is identified by its original UTF-8 bytes.

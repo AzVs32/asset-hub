@@ -38,10 +38,11 @@ use crate::application::port::{
     BoundLink, LookupContext, ObservedEntry, OperationLookup, Storage, StorageFuture,
 };
 use ah_vfs_storage::{
-    BackendFailure, ContractViolation, Entry, EntryName, EntryType, Failure, IntermediateSymlinks,
-    LinkTarget, LookupStart, MAX_PATH_BYTES, MAX_PATH_EXPR_BYTES, MissingName, MutationOutcome,
-    NameError, Operation, PathComponent, PathExpr, PathExprError, PathLookup, ReadLinkRequest,
-    Rejection, StatRequest, StorageError, StoragePath, SymlinkAction,
+    AttributeAction, AttributeRequest, AttributeResult, BackendFailure, ContractViolation, Entry,
+    EntryName, EntryType, Failure, IntermediateSymlinks, LinkTarget, LookupStart, MAX_PATH_BYTES,
+    MAX_PATH_EXPR_BYTES, MissingName, MutationOutcome, NameError, Operation, PathComponent,
+    PathExpr, PathExprError, PathLookup, ReadLinkRequest, Rejection, StatRequest, StorageError,
+    StoragePath, SymlinkAction,
 };
 use std::{
     future::{Future, ready},
@@ -56,6 +57,48 @@ pub async fn bind_link(
     context: LookupContext,
 ) -> Result<Box<dyn BoundLink>, StorageError> {
     let op = Operation::ReadLink;
+    let (backend, entry) = resolve_existing(storage, op, operand, context).await?;
+    ReadLinkRequest::new(entry.observed.entry().path().clone())
+        .check_target(entry.observed.entry().entry_type())
+        .map_err(|reason| lookup_error(op, Failure::Rejected(reason)))?;
+    backend.verify().await?;
+    let slot = entry
+        .slot
+        .ok_or_else(|| lookup_error(op, Failure::Contract(ContractViolation::InvalidResponse)))?;
+    Ok(Box::new(ResolvedLink {
+        backend,
+        slot,
+        entry: entry.observed,
+    }))
+}
+
+/// Resolve an attribute operand and apply its action to the observed entry.
+pub async fn attribute(
+    storage: &dyn Storage,
+    operand: PathExpr,
+    context: LookupContext,
+    action: AttributeAction,
+) -> Result<AttributeResult, StorageError> {
+    let op = action.operation();
+    let expected = action.expectation();
+    let (backend, entry) = resolve_existing(storage, op, operand, context).await?;
+    let request = AttributeRequest::new(entry.observed.entry().path().clone(), action);
+    let slot = entry.slot.as_ref().map(|slot| (&slot.parent, &slot.name));
+    let result = backend
+        .execute_attribute(slot, &entry.observed, request)
+        .await?;
+    expected
+        .validate(&result)
+        .map_err(|reason| StorageError::after_dispatch(op, Failure::Contract(reason), None))?;
+    Ok(result)
+}
+
+async fn resolve_existing(
+    storage: &dyn Storage,
+    op: Operation,
+    operand: PathExpr,
+    context: LookupContext,
+) -> Result<(Box<dyn OperationLookup>, HostEntry), StorageError> {
     let mut backend = storage.begin_lookup(op).await?;
     if backend.operation() != op {
         return Err(lookup_error(
@@ -108,18 +151,7 @@ pub async fn bind_link(
         .walk_async(&mut lookup, request.lookup(), directories)
         .await?
         .require_entry(op)?;
-    ReadLinkRequest::new(entry.observed.entry().path().clone())
-        .check_target(entry.observed.entry().entry_type())
-        .map_err(|reason| lookup_error(op, Failure::Rejected(reason)))?;
-    backend.verify().await?;
-    let slot = entry
-        .slot
-        .ok_or_else(|| lookup_error(op, Failure::Contract(ContractViolation::InvalidResponse)))?;
-    Ok(Box::new(ResolvedLink {
-        backend,
-        slot,
-        entry: entry.observed,
-    }))
+    Ok((backend, entry))
 }
 
 /// Resolve and read one link without transmitting an operand to the backend.
