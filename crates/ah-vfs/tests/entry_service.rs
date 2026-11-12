@@ -6,16 +6,14 @@ use ah_vfs::application::driver_catalog::DriverCatalog;
 use ah_vfs::application::driver_info::DriverInfo;
 use ah_vfs::application::dto::*;
 use ah_vfs::application::error::EntryError;
-use ah_vfs::application::port::{
-    DriverFuture, Storage, StorageFileReader, StorageFileWriter, StorageFuture,
-};
+use ah_vfs::application::port::{DriverFuture, Storage, StorageFuture};
 use ah_vfs::application::service::{EntryService, MountService};
 use ah_vfs::domain::namespace::{ChildMountPolicy, VirtualPath};
 use ah_vfs::domain::{DriverInstance, DriverKey, InstanceId};
 use ah_vfs::infrastructure::mount_repository::SqliteMountRepository;
 use ah_vfs_storage::{
     BackendFailure, BoundListRequest, DirectoryIdentity, DirectoryPage, DirectorySelection, Entry,
-    EntryType, ListRequest, PageSize, StoragePath,
+    EntryType, PageSize, StoragePath,
 };
 
 use std::{
@@ -44,16 +42,6 @@ struct TestStorage {
     instance: InstanceId,
     response: Response,
     retired: AtomicBool,
-}
-
-fn unsupported<T: Send + 'static>(operation: Operation) -> StorageFuture<'static, T> {
-    Box::pin(async move {
-        Err(StorageError::without_effects(
-            operation,
-            Failure::Rejected(Rejection::Unsupported),
-            None,
-        ))
-    })
 }
 
 impl common::Backend for TestDriver {
@@ -93,58 +81,32 @@ impl Storage for TestStorage {
     fn chunk_size(&self) -> NonZeroUsize {
         NonZeroUsize::MIN
     }
-    fn stat_entry(
+    fn begin_lookup(
         &self,
-        request: ah_vfs_storage::StatRequest,
-        _: ah_vfs::application::port::LookupContext,
-    ) -> StorageFuture<'_, Entry> {
-        Box::pin(async move {
-            let operand = request.path().to_string();
-            let path = StoragePath::parse(operand.trim_start_matches('/')).map_err(|cause| {
-                StorageError::without_effects(
-                    Operation::Stat,
-                    Failure::Contract(ContractViolation::InvalidEntry),
-                    Some(Box::new(cause)),
-                )
-            })?;
-            let kind = if path.is_root() {
-                EntryType::Directory
-            } else {
-                EntryType::file(Some(if self.instance.as_str() == "leaf" {
-                    42
-                } else {
-                    7
-                }))
-            };
-            Entry::new(path, kind, None).map_err(|cause| invalid_metadata(Operation::Stat, cause))
-        })
-    }
-    fn select_directory<'a>(
-        &'a self,
-        _: &'a ListRequest,
-        _: ah_vfs::application::port::LookupContext,
-    ) -> StorageFuture<'a, DirectorySelection> {
-        Box::pin(async {
-            Ok(DirectorySelection::from_lookup(
-                StoragePath::root(),
-                DirectoryIdentity::from_bytes([1; 16]),
-            ))
-        })
+        operation: Operation,
+    ) -> StorageFuture<'_, Box<dyn ah_vfs::application::port::OperationLookup>> {
+        let size = if self.instance.as_str() == "leaf" {
+            42
+        } else {
+            7
+        };
+        Box::pin(async move { Ok(Box::new(common::TestLookup::new(operation, size)) as _) })
     }
 
-    fn list_page<'a>(
+    fn resume_directory<'a>(
         &'a self,
-        bound: &'a BoundListRequest<'_>,
-    ) -> StorageFuture<'a, DirectoryPage> {
+        _: &'a ah_vfs_storage::DirectoryCursor,
+    ) -> StorageFuture<'a, DirectorySelection> {
+        Box::pin(async { Ok(common::TestLookup::selection()) })
+    }
+
+    fn list_page<'a>(&'a self, bound: &'a BoundListRequest) -> StorageFuture<'a, DirectoryPage> {
         Box::pin(async move {
             if matches!(self.response, Response::RetiredAfterScan) && bound.after().is_some() {
                 self.retired.store(true, Ordering::Relaxed);
             }
             if matches!(self.response, Response::WrongBinding) {
-                let request = ListRequest::new(
-                    ah_vfs_storage::ListTarget::Path(StoragePath::root().to_rooted_expr()),
-                    bound.size(),
-                );
+                let request = ah_vfs_storage::ListRequest::new(StoragePath::root(), bound.size());
                 let wrong = DirectorySelection::from_lookup(
                     StoragePath::root(),
                     DirectoryIdentity::from_bytes([2; 16]),
@@ -173,20 +135,6 @@ impl Storage for TestStorage {
             DirectoryPage::new(bound, entries, names.next().is_some())
                 .map_err(|cause| invalid_metadata(Operation::List, cause))
         })
-    }
-    fn read_file(
-        &self,
-        _: ah_vfs_storage::ReadRequest,
-        _: ah_vfs::application::port::LookupContext,
-    ) -> StorageFuture<'_, Box<dyn StorageFileReader>> {
-        unsupported(Operation::Read)
-    }
-    fn write_file(
-        &self,
-        _: ah_vfs_storage::WriteRequest,
-        _: ah_vfs::application::port::LookupContext,
-    ) -> StorageFuture<'_, Box<dyn StorageFileWriter>> {
-        unsupported(Operation::Write)
     }
 }
 
@@ -375,7 +323,7 @@ async fn mount_points_and_synthetic_dirs_keep_distinct_namespace_behavior() -> T
             Failure::Rejected(Rejection::IsDirectory)
         );
         assert!(matches!(
-            files.create_dir(CreateDirRequest::new(path.as_str(), ah_vfs_storage::CreateDirectoryMode::Recursive)?).await,
+            files.create_dir(CreateDirRequest::new(path.as_str(), ah_vfs::resolve::operand::CreateDirectoryMode::Recursive)?).await,
             Err(EntryError::MountBoundary(boundary)) if boundary == path
         ));
     }

@@ -1,5 +1,8 @@
 use ah_vfs::application::port::*;
 use ah_vfs::domain::InstanceId;
+use ah_vfs::resolve::LookupContext;
+use ah_vfs::resolve::StorageOperations;
+use ah_vfs::resolve::path::RootedPath;
 use ah_vfs_storage::{BackendFailure, Failure, Operation, Rejection, StorageError};
 use ah_vfs_storage::{Entry, StoragePath};
 use std::sync::{
@@ -149,8 +152,7 @@ impl SessionTransport for Peer {
                     Failure::Backend(BackendFailure::Stale),
                     false,
                     None,
-                )
-                .into());
+                ));
             }
             let value = match op {
                 Op::Initialize(p::Initialize {
@@ -166,21 +168,6 @@ impl SessionTransport for Peer {
                     }
                     Value::Unit(p::Empty {})
                 }
-                Op::Storage(p::StorageCall {
-                    operation: Some(p::StorageOp::Stat(stat)),
-                    ..
-                }) => {
-                    let operand = stat
-                        .lookup
-                        .ok_or_else(vfs_plugin_host::convert::protocol_violation)?
-                        .operand;
-                    Value::Entry(p::Entry {
-                        path: operand.trim_start_matches('/').into(),
-                        kind: p::EntryKind::File as i32,
-                        size: Some(current as u64),
-                        modified: None,
-                    })
-                }
                 Op::BeginLookup(p::LookupHandle { handle: 1, .. }) => {
                     Value::OpenedLookup(p::OpenedLookup {
                         handle: self.next.fetch_add(1, Ordering::SeqCst),
@@ -191,13 +178,32 @@ impl SessionTransport for Peer {
                     lookup,
                     parent,
                     name,
-                    ..
+                    purpose,
                 }) => {
-                    assert_eq!(lookup, 2);
+                    let operation = p::decode_lookup_purpose(&purpose)
+                        .ok_or_else(vfs_plugin_host::convert::protocol_violation)?;
                     let observed = match (parent, name.as_str()) {
-                        (100, "docs") => observation(101, "docs", p::EntryKind::Dir),
+                        (100, "docs") => {
+                            assert_eq!(lookup, 2);
+                            observation(101, "docs", p::EntryKind::Dir)
+                        }
                         (101, "sub") => observation(102, "docs/sub", p::EntryKind::Dir),
                         (101, "link") => observation(103, "docs/link", p::EntryKind::Symlink),
+                        (100, "file") if operation == Operation::Write => {
+                            return Err(StorageError::without_effects(
+                                operation,
+                                Failure::Rejected(Rejection::NotFound),
+                                None,
+                            )
+                            .into());
+                        }
+                        (100, "file") => {
+                            let mut entry = observation(104, "file", p::EntryKind::File);
+                            if let Some(entry) = &mut entry.entry {
+                                entry.size = Some(current as u64);
+                            }
+                            entry
+                        }
                         _ => return Err(vfs_plugin_host::convert::protocol_violation()),
                     };
                     Value::ObservedEntry(observed)
@@ -222,12 +228,21 @@ impl SessionTransport for Peer {
                         data: vec![0xff, b'/'],
                     });
                 }
-                Op::Read(_) => Value::Reader(p::Handle {
-                    handle: self.next.fetch_add(1, Ordering::SeqCst),
-                }),
-                Op::Write(_) => Value::Writer(p::Handle {
-                    handle: self.next.fetch_add(1, Ordering::SeqCst),
-                }),
+                Op::Execute(call) => match call.operation {
+                    Some(p::BoundOp::Stat(_)) => Value::Entry(p::Entry {
+                        path: "file".into(),
+                        kind: p::EntryKind::File.into(),
+                        size: Some(current as u64),
+                        modified: None,
+                    }),
+                    Some(p::BoundOp::Read(_)) => Value::Reader(p::Handle {
+                        handle: self.next.fetch_add(1, Ordering::SeqCst),
+                    }),
+                    Some(p::BoundOp::Write(_)) => Value::Writer(p::Handle {
+                        handle: self.next.fetch_add(1, Ordering::SeqCst),
+                    }),
+                    _ => return Err(vfs_plugin_host::convert::protocol_violation()),
+                },
                 Op::Commit(_) => {
                     self.commits.fetch_add(1, Ordering::SeqCst);
                     self.restart();
@@ -281,9 +296,9 @@ async fn stat(storage: &dyn Storage) -> std::result::Result<Entry, StorageError>
     })?;
     storage
         .stat_entry(
-            ah_vfs_storage::StatRequest::new(
+            ah_vfs::resolve::operand::StatOperand::new(
                 path.to_rooted_expr(),
-                ah_vfs_storage::SymlinkAction::Preserve,
+                ah_vfs::resolve::policy::SymlinkAction::Preserve,
             ),
             Default::default(),
         )
@@ -297,7 +312,7 @@ async fn new_opens_share_recovery_and_old_resources_stay_stale() -> Result {
     let old = open(&driver).await?;
     let mut reader = old
         .read_file(
-            ah_vfs_storage::ReadRequest::new(
+            ah_vfs::resolve::operand::ReadOperand::new(
                 StoragePath::parse("file")?.to_rooted_expr(),
                 ah_vfs_storage::ReadRange::FULL,
             ),
@@ -370,7 +385,7 @@ async fn unknown_commit_is_not_replayed_during_recovery() -> Result {
     let old = open(&driver).await?;
     let mut writer = old
         .write_file(
-            ah_vfs_storage::WriteRequest::new(
+            ah_vfs::resolve::operand::WriteOperand::new(
                 StoragePath::parse("file")?.to_rooted_expr(),
                 ah_vfs_storage::WriteMode::CreateNew,
                 ah_vfs_storage::Publication::Staged,
@@ -534,10 +549,10 @@ async fn host_resolves_the_operand_using_only_bound_child_observations() -> Resu
     let storage = open(&driver).await?;
     let target = ah_vfs::resolve::read_link(
         storage.as_ref(),
-        ah_vfs_storage::PathExpr::parse("../link")?,
+        ah_vfs::resolve::path::PathExpr::parse("../link")?,
         LookupContext {
             working_directory: StoragePath::parse("docs/sub")?,
-            intermediate_symlinks: ah_vfs_storage::IntermediateSymlinks::Reject,
+            intermediate_symlinks: ah_vfs::resolve::policy::IntermediateSymlinks::Reject,
         },
     )
     .await?;

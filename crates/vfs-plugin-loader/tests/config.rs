@@ -1,5 +1,9 @@
 use ah_config::Registry;
 use ah_vfs::application::driver_catalog::DriverCatalog;
+use ah_vfs::resolve::StorageOperations;
+use ah_vfs::resolve::operand::{ReadOperand, StatOperand, WriteOperand};
+use ah_vfs::resolve::path::PathExpr;
+use ah_vfs::resolve::policy::SymlinkAction;
 use vfs_plugin_loader::{PluginConfig, PluginLoader, PluginSource, VfsConfig};
 
 type Result = std::result::Result<(), Box<dyn std::error::Error>>;
@@ -60,10 +64,7 @@ async fn configured_plugins_open_real_grpc_and_wasm_storage_sessions() -> Result
         application::{dto::InstanceConfig, port::OpenContext},
         domain::{DriverKey, InstanceId},
     };
-    use ah_vfs_storage::{
-        EntryType, PathExpr, Publication, ReadRange, ReadRequest, StatRequest, SymlinkAction,
-        WriteMode, WriteRequest,
-    };
+    use ah_vfs_storage::{EntryType, Publication, ReadRange, WriteMode};
     use std::{
         path::{Path, PathBuf},
         sync::Arc,
@@ -111,7 +112,7 @@ module = "probe.wasm"
     let config = Registry::for_space("default")?.load_required(&path)?;
     let catalog = PluginLoader::load_from(&config, DriverCatalog::new()).await?;
     assert_eq!(catalog.list().len(), 2);
-    let root = StatRequest::new(PathExpr::parse("/")?, SymlinkAction::Preserve);
+    let root = StatOperand::new(PathExpr::parse("/")?, SymlinkAction::Preserve);
     let wasm = catalog
         .get(&DriverKey::parse("wasi.probe")?)
         .ok_or("Wasm driver")?
@@ -147,14 +148,14 @@ module = "probe.wasm"
     let file = PathExpr::parse("/file")?;
     let mut writer = grpc
         .write_file(
-            WriteRequest::new(file.clone(), WriteMode::CreateNew, Publication::Staged),
+            WriteOperand::new(file.clone(), WriteMode::CreateNew, Publication::Staged),
             Default::default(),
         )
         .await?;
     writer.write_chunk(b"loaded").await?;
     writer.commit().await?;
     let mut reader = grpc
-        .read_file(ReadRequest::new(file, ReadRange::FULL), Default::default())
+        .read_file(ReadOperand::new(file, ReadRange::FULL), Default::default())
         .await?;
     drop(grpc);
     assert_eq!(reader.next_chunk().await?, Some(b"loaded".to_vec()));

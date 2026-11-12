@@ -1,4 +1,3 @@
-use ah_vfs_storage::{Failure, Operation, Rejection, StorageError};
 use common::Backend;
 mod common;
 
@@ -6,14 +5,11 @@ use ah_vfs::application::driver_catalog::DriverCatalog;
 use ah_vfs::application::driver_error::DriverError;
 use ah_vfs::application::driver_info::DriverInfo;
 use ah_vfs::application::error::DriverCatalogError;
-use ah_vfs::application::port::{
-    Driver, DriverFuture, Storage, StorageFileReader, StorageFileWriter, StorageFuture,
-};
+use ah_vfs::application::port::{Driver, DriverFuture, Storage};
 use ah_vfs::domain::namespace::{
     ChildMountPolicy, Mount, MountId, MountTable, MountTableError, VirtualPath,
 };
 use ah_vfs::domain::{DriverInstance, DriverKey, DriverKeyError, InstanceId};
-use ah_vfs_storage::Entry;
 
 use std::future::Future;
 use std::num::NonZeroUsize;
@@ -28,40 +24,9 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 // Catalog tests use an independent fake, not an unfinished storage adapter.
 struct TestStorage;
 
-fn unsupported<T: Send + 'static>(operation: Operation) -> StorageFuture<'static, T> {
-    Box::pin(async move {
-        Err(StorageError::without_effects(
-            operation,
-            Failure::Rejected(Rejection::Unsupported),
-            None,
-        ))
-    })
-}
-
 impl Storage for TestStorage {
     fn chunk_size(&self) -> NonZeroUsize {
         NonZeroUsize::MIN
-    }
-    fn stat_entry(
-        &self,
-        _: ah_vfs_storage::StatRequest,
-        _: ah_vfs::application::port::LookupContext,
-    ) -> StorageFuture<'_, Entry> {
-        unsupported(Operation::Stat)
-    }
-    fn read_file(
-        &self,
-        _: ah_vfs_storage::ReadRequest,
-        _: ah_vfs::application::port::LookupContext,
-    ) -> StorageFuture<'_, Box<dyn StorageFileReader>> {
-        unsupported(Operation::Read)
-    }
-    fn write_file(
-        &self,
-        _: ah_vfs_storage::WriteRequest,
-        _: ah_vfs::application::port::LookupContext,
-    ) -> StorageFuture<'_, Box<dyn StorageFileWriter>> {
-        unsupported(Operation::Write)
     }
 }
 

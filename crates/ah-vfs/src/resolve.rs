@@ -23,9 +23,9 @@
 //! scope returns `Stale`.
 //!
 //! ```
-//! use ah_vfs::application::port::{LookupContext, Storage};
-//! use ah_vfs::resolve::read_link;
-//! use ah_vfs_storage::PathExpr;
+//! use ah_vfs::application::port::Storage;
+//! use ah_vfs::resolve::{LookupContext, read_link};
+//! use ah_vfs::resolve::path::PathExpr;
 //!
 //! async fn read_alias(storage: &dyn Storage) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
 //!     let operand = PathExpr::parse("/docs/alias")?;
@@ -34,21 +34,94 @@
 //! }
 //! ```
 
+#[path = "resolve_operand.rs"]
+pub mod operand;
+#[path = "resolve_path.rs"]
+pub mod path;
+#[path = "resolve_policy.rs"]
+pub mod policy;
+
 use crate::application::port::{
-    BoundLink, LookupContext, ObservedEntry, OperationLookup, Storage, StorageFuture,
+    BoundLink, EntrySlot, ObservedEntry, OperationLookup, Storage, StorageFileReader,
+    StorageFileWriter, StorageFuture,
 };
 use ah_vfs_storage::{
-    AttributeAction, AttributeRequest, AttributeResult, BackendFailure, ContractViolation, Entry,
-    EntryName, EntryType, Failure, IntermediateSymlinks, LinkTarget, LookupStart, MAX_PATH_BYTES,
-    MAX_PATH_EXPR_BYTES, MissingName, MutationOutcome, NameError, Operation, PathComponent,
-    PathExpr, PathExprError, PathLookup, ReadLinkRequest, Rejection, StatRequest, StorageError,
-    StoragePath, SymlinkAction,
+    AttributeAction, AttributeRequest, AttributeResult, CreateDirectoryRequest, DirectorySelection,
+    ListRequest, ReadLinkRequest, ReadRequest, RemoveRequest, RenameRequest, StatRequest,
+    WriteRequest,
 };
+use ah_vfs_storage::{
+    BackendFailure, ContractViolation, Entry, EntryName, EntryType, Failure, LinkTarget,
+    MAX_PATH_BYTES, MutationOutcome, NameError, Operation, Rejection, StorageError, StoragePath,
+};
+use operand::{
+    CreateDirectoryOperand, ListOperand, ReadOperand, RemoveOperand, RenameOperand, StatOperand,
+    WriteOperand,
+};
+use path::{LookupStart, MAX_PATH_EXPR_BYTES, PathComponent, PathExpr, PathExprError};
+use policy::{IntermediateSymlinks, MissingName, PathLookup, SymlinkAction};
 use std::{
+    error::Error,
     future::{Future, ready},
     pin::pin,
     task::{Context, Poll, Waker},
 };
+
+/// A failure raised while resolving a VFS operand or returned by storage.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+#[non_exhaustive]
+pub enum ResolveFailure {
+    #[error("the instance root is protected")]
+    RootProtected,
+    #[error("symbolic links are not allowed by the lookup policy")]
+    SymlinkNotAllowed,
+    #[error("symbolic link traversal limit was exceeded")]
+    TooManySymlinks,
+    #[error("{0}")]
+    Storage(Failure),
+}
+
+impl From<Failure> for ResolveFailure {
+    fn from(failure: Failure) -> Self {
+        Self::Storage(failure)
+    }
+}
+
+impl From<Rejection> for ResolveFailure {
+    fn from(reason: Rejection) -> Self {
+        Self::Storage(Failure::Rejected(reason))
+    }
+}
+
+impl ResolveFailure {
+    /// Retain the resolution classification along with operation and effects.
+    pub fn without_effects(self, operation: Operation) -> StorageError {
+        match self {
+            Self::Storage(failure) => StorageError::without_effects(operation, failure, None),
+            failure => StorageError::without_effects(
+                operation,
+                Failure::InvalidRequest,
+                Some(Box::new(failure)),
+            ),
+        }
+    }
+
+    /// Read a resolution cause, including after recursive effects aggregation.
+    pub fn from_error(error: &StorageError) -> Self {
+        let mut source = error.source();
+        while let Some(cause) = source {
+            if let Some(failure) = cause.downcast_ref::<Self>() {
+                return *failure;
+            }
+            source = cause.source();
+        }
+        Self::Storage(error.failure())
+    }
+}
+
+#[path = "resolve_operations.rs"]
+mod operations;
+pub use operations::{LookupContext, StorageOperations};
 
 /// Resolve a link operand on the caller side and retain the operation scope.
 pub async fn bind_link(
@@ -60,7 +133,7 @@ pub async fn bind_link(
     let (backend, entry) = resolve_existing(storage, op, operand, context).await?;
     ReadLinkRequest::new(entry.observed.entry().path().clone())
         .check_target(entry.observed.entry().entry_type())
-        .map_err(|reason| lookup_error(op, Failure::Rejected(reason)))?;
+        .map_err(|reason| ResolveFailure::from(reason).without_effects(op))?;
     backend.verify().await?;
     let slot = entry
         .slot
@@ -99,13 +172,17 @@ async fn resolve_existing(
     operand: PathExpr,
     context: LookupContext,
 ) -> Result<(Box<dyn OperationLookup>, HostEntry), StorageError> {
-    let mut backend = storage.begin_lookup(op).await?;
-    if backend.operation() != op {
-        return Err(lookup_error(
-            op,
-            Failure::Contract(ContractViolation::InvalidResponse),
-        ));
-    }
+    let request = StatOperand::new(operand, SymlinkAction::Preserve);
+    let (backend, resolution) = resolve_one(storage, op, request.lookup(), context).await?;
+    Ok((backend, resolution.require_entry(op)?))
+}
+
+async fn start(
+    backend: &mut dyn OperationLookup,
+    context: &LookupContext,
+    relative: bool,
+) -> Result<Vec<HostEntry>, StorageError> {
+    let op = backend.operation();
     let root = backend.root().await?;
     if !root.entry().path().is_root() || root.entry().entry_type() != EntryType::Directory {
         return Err(lookup_error(
@@ -113,12 +190,12 @@ async fn resolve_existing(
             Failure::Contract(ContractViolation::InvalidEntry),
         ));
     }
-    let mut lookup = HostLookup(backend.as_mut());
+    let mut lookup = HostLookup(backend);
     let mut directories = vec![HostEntry {
         observed: root,
         slot: None,
     }];
-    if operand.start() == LookupStart::BaseDirectory {
+    if relative {
         let stale = || lookup_error(op, Failure::Backend(BackendFailure::Stale));
         for name in context.working_directory.entry_names() {
             let parent = directories.last().ok_or_else(stale)?;
@@ -133,11 +210,7 @@ async fn resolve_existing(
                     .observe_child(parent, address, &name)
                     .await
                     .map_err(|error| match error.failure() {
-                        Failure::Rejected(
-                            Rejection::NotFound
-                            | Rejection::NotDirectory
-                            | Rejection::SymlinkNotAllowed,
-                        ) => stale(),
+                        Failure::Rejected(Rejection::NotFound | Rejection::NotDirectory) => stale(),
                         _ => error,
                     })?;
             if directory.observed.entry().entry_type() != EntryType::Directory {
@@ -146,12 +219,243 @@ async fn resolve_existing(
             directories.push(directory);
         }
     }
-    let request = StatRequest::new(operand, SymlinkAction::Preserve);
-    let entry = Resolver::new(op, context.intermediate_symlinks)
-        .walk_async(&mut lookup, request.lookup(), directories)
+    Ok(directories)
+}
+
+async fn begin(
+    storage: &(impl Storage + ?Sized),
+    op: Operation,
+) -> Result<Box<dyn OperationLookup>, StorageError> {
+    let backend = storage.begin_lookup(op).await?;
+    if backend.operation() != op {
+        return Err(lookup_error(
+            op,
+            Failure::Contract(ContractViolation::InvalidResponse),
+        ));
+    }
+    Ok(backend)
+}
+
+async fn resolve_one(
+    storage: &(impl Storage + ?Sized),
+    op: Operation,
+    lookup: PathLookup<'_>,
+    context: LookupContext,
+) -> Result<(Box<dyn OperationLookup>, Resolution<HostEntry>), StorageError> {
+    let mut backend = begin(storage, op).await?;
+    let directories = start(
+        backend.as_mut(),
+        &context,
+        lookup.path().start() == LookupStart::BaseDirectory,
+    )
+    .await?;
+    let resolution = Resolver::new(op, context.intermediate_symlinks)
+        .walk_async(&mut HostLookup(backend.as_mut()), lookup, directories)
+        .await?;
+    Ok((backend, resolution))
+}
+
+pub(crate) async fn stat(
+    storage: &(impl Storage + ?Sized),
+    operand: StatOperand,
+    context: LookupContext,
+) -> Result<Entry, StorageError> {
+    let op = Operation::Stat;
+    let (backend, resolved) = resolve_one(storage, op, operand.lookup(), context).await?;
+    let entry = resolved.require_entry(op)?;
+    let request = StatRequest::new(entry.observed.entry().path().clone());
+    backend
+        .execute_stat(entry.slot(), &entry.observed, request)
+        .await
+}
+
+pub(crate) async fn read(
+    storage: &(impl Storage + ?Sized),
+    operand: ReadOperand,
+    context: LookupContext,
+) -> Result<Box<dyn StorageFileReader>, StorageError> {
+    let op = Operation::Read;
+    if let Some(capabilities) = storage.storage_capabilities() {
+        capabilities
+            .require_read_range(operand.range())
+            .map_err(|reason| ResolveFailure::from(reason).without_effects(op))?;
+    }
+    let (backend, resolved) = resolve_one(storage, op, operand.lookup(), context).await?;
+    let entry = resolved.require_entry(op)?;
+    let request = ReadRequest::new(entry.observed.entry().path().clone(), operand.range());
+    request
+        .check_target(entry.observed.entry().entry_type())
+        .map_err(|reason| lookup_error(op, Failure::Rejected(reason)))?;
+    backend.execute_read(entry.require_slot(op)?, request).await
+}
+
+pub(crate) async fn write(
+    storage: &(impl Storage + ?Sized),
+    operand: WriteOperand,
+    context: LookupContext,
+) -> Result<Box<dyn StorageFileWriter>, StorageError> {
+    let op = Operation::Write;
+    if let Some(capabilities) = storage.storage_capabilities() {
+        capabilities
+            .require_write_mode(operand.mode(), operand.publication())
+            .map_err(|reason| ResolveFailure::from(reason).without_effects(op))?;
+    }
+    let (backend, resolved) = resolve_one(storage, op, operand.lookup(), context).await?;
+    let lookup = operand.lookup();
+    let (address, slot) = match &resolved {
+        Resolution::Existing(entry) => {
+            let address = entry.observed.entry().path();
+            lookup
+                .check_address(address)
+                .map_err(|reason| reason.without_effects(op))?;
+            (address, entry.require_slot(op)?)
+        }
+        Resolution::Missing {
+            parent,
+            address,
+            name,
+        } => {
+            operand
+                .check_new_destination(address)
+                .map_err(|reason| reason.without_effects(op))?;
+            (
+                address,
+                EntrySlot {
+                    parent: &parent.observed,
+                    name,
+                    entry: None,
+                },
+            )
+        }
+    };
+    let request = WriteRequest::new(address.clone(), operand.mode(), operand.publication())
+        .map_err(|_| lookup_error(op, Failure::InvalidBinding))?;
+    request
+        .check_target(slot.entry.map(|entry| entry.entry().entry_type()))
+        .map_err(|reason| ResolveFailure::from(reason).without_effects(op))?;
+    backend.execute_write(slot, request).await
+}
+
+pub(crate) async fn create_directory(
+    storage: &(impl Storage + ?Sized),
+    operand: CreateDirectoryOperand,
+    context: LookupContext,
+) -> Result<Entry, StorageError> {
+    let op = Operation::CreateDirectory;
+    let (_, resolution) = resolve_one(storage, op, operand.lookup(), context).await?;
+    Ok(resolution.require_entry(op)?.observed.entry().clone())
+}
+
+pub(crate) async fn remove(
+    storage: &(impl Storage + ?Sized),
+    operand: RemoveOperand,
+    context: LookupContext,
+) -> Result<(), StorageError> {
+    let op = Operation::Remove;
+    let (backend, resolved) = resolve_one(storage, op, operand.lookup(), context).await?;
+    let entry = resolved.require_entry(op)?;
+    let observed = entry.observed.entry();
+    let request = RemoveRequest::new(observed.path().clone(), operand.kind())
+        .map_err(|_| lookup_error(op, Failure::InvalidBinding))?;
+    request
+        .check_target(observed.entry_type())
+        .map_err(|reason| ResolveFailure::from(reason).without_effects(op))?;
+    backend
+        .execute_remove(entry.require_slot(op)?, request)
+        .await
+}
+
+pub(crate) async fn rename(
+    storage: &(impl Storage + ?Sized),
+    operand: RenameOperand,
+    context: LookupContext,
+) -> Result<Entry, StorageError> {
+    let op = Operation::Rename;
+    if let Some(capabilities) = storage.storage_capabilities() {
+        capabilities
+            .require_rename_mode(operand.mode())
+            .map_err(|reason| ResolveFailure::from(reason).without_effects(op))?;
+    }
+    let (source, destination) = operand.lookups();
+    let mut backend = begin(storage, op).await?;
+    let relative = [source, destination]
+        .iter()
+        .any(|lookup| lookup.path().start() == LookupStart::BaseDirectory);
+    let directories = start(backend.as_mut(), &context, relative).await?;
+    let mut resolver = Resolver::new(op, context.intermediate_symlinks);
+    let mut port = HostLookup(backend.as_mut());
+    let selected = resolver
+        .walk_async(&mut port, source, directories.clone())
         .await?
         .require_entry(op)?;
-    Ok((backend, entry))
+    let entry = selected.observed.entry();
+    source
+        .check_existing_target(entry.path(), entry.entry_type())
+        .map_err(|reason| reason.without_effects(op))?;
+    let (parent, name) = resolver
+        .parent_async(&mut port, destination, directories)
+        .await?;
+    let address = parent
+        .observed
+        .entry()
+        .path()
+        .join(&name)
+        .map_err(|_| lookup_error(op, Failure::Rejected(Rejection::PathTooLong)))?;
+    let observed = match port.observe_child(&parent, address.clone(), &name).await {
+        Ok(entry) => Some(entry),
+        Err(error) if error.failure() == Failure::Rejected(Rejection::NotFound) => None,
+        Err(error) => return Err(error),
+    };
+    match &observed {
+        Some(target) => {
+            destination.check_existing_target(&address, target.observed.entry().entry_type())
+        }
+        None => destination
+            .check_missing_target_shape(&address, entry.entry_type() == EntryType::Directory),
+    }
+    .map_err(|reason| reason.without_effects(op))?;
+    if entry.path() == &address {
+        backend.verify().await?;
+        return Ok(entry.clone());
+    }
+    let destination_slot = EntrySlot {
+        parent: &parent.observed,
+        name: &name,
+        entry: observed.as_ref().map(|entry| &entry.observed),
+    };
+    let request = RenameRequest::new(entry.path().clone(), address, operand.mode())
+        .map_err(|_| lookup_error(op, Failure::InvalidBinding))?;
+    backend
+        .execute_rename(selected.require_slot(op)?, destination_slot, request)
+        .await
+}
+
+pub(crate) async fn select_directory(
+    storage: &(impl Storage + ?Sized),
+    operand: &ListOperand,
+    context: LookupContext,
+) -> Result<DirectorySelection, StorageError> {
+    let op = Operation::List;
+    let lookup = operand
+        .lookup()
+        .ok_or_else(|| lookup_error(op, Failure::InvalidBinding))?;
+    let (backend, resolved) = resolve_one(storage, op, lookup, context).await?;
+    let entry = resolved.require_entry(op)?;
+    let observed = entry.observed.entry();
+    lookup
+        .check_existing_target(observed.path(), observed.entry_type())
+        .map_err(|reason| reason.without_effects(op))?;
+    let request = ListRequest::new(observed.path().clone(), operand.size());
+    let selection = backend
+        .select_directory(entry.slot(), &entry.observed, request)
+        .await?;
+    if selection.address() != observed.path() {
+        return Err(lookup_error(
+            op,
+            Failure::Contract(ContractViolation::InvalidPage),
+        ));
+    }
+    Ok(selection)
 }
 
 /// Resolve and read one link without transmitting an operand to the backend.
@@ -170,6 +474,21 @@ pub async fn read_link(
 struct HostEntry {
     observed: ObservedEntry,
     slot: Option<ObservedSlot>,
+}
+
+impl HostEntry {
+    fn slot(&self) -> Option<EntrySlot<'_>> {
+        self.slot.as_ref().map(|slot| EntrySlot {
+            parent: &slot.parent,
+            name: &slot.name,
+            entry: Some(&self.observed),
+        })
+    }
+
+    fn require_slot(&self, op: Operation) -> Result<EntrySlot<'_>, StorageError> {
+        self.slot()
+            .ok_or_else(|| lookup_error(op, Failure::InvalidBinding))
+    }
 }
 
 #[derive(Clone)]
@@ -192,10 +511,7 @@ impl BoundLink for ResolvedLink {
     fn read(&self, request: ReadLinkRequest) -> StorageFuture<'_, LinkTarget> {
         Box::pin(async move {
             if request.path() != self.path() {
-                return Err(lookup_error(
-                    Operation::ReadLink,
-                    Failure::InvalidBinding,
-                ));
+                return Err(lookup_error(Operation::ReadLink, Failure::InvalidBinding));
             }
             self.backend
                 .execute_read_link(&self.slot.parent, &self.slot.name, &self.entry, request)
@@ -241,14 +557,39 @@ impl LookupPort for HostLookup<'_> {
 
     async fn create_child(
         &mut self,
-        _parent: &HostEntry,
-        _address: StoragePath,
-        _name: &EntryName,
+        parent: &HostEntry,
+        address: StoragePath,
+        name: &EntryName,
     ) -> Result<HostEntry, StorageError> {
-        Err(lookup_error(
-            self.0.operation(),
-            Failure::Rejected(Rejection::Unsupported),
-        ))
+        let op = self.0.operation();
+        let request = CreateDirectoryRequest::new(address.clone())
+            .map_err(|_| lookup_error(op, Failure::InvalidBinding))?;
+        let slot = EntrySlot {
+            parent: &parent.observed,
+            name,
+            entry: None,
+        };
+        let observed = self.0.execute_create_directory(slot, request).await?;
+        if observed.entry().path() != &address
+            || observed.entry().entry_type() != EntryType::Directory
+        {
+            return Err(StorageError::after_dispatch(
+                op,
+                Failure::Contract(ContractViolation::InvalidEntry),
+                None,
+            ));
+        }
+        Ok(HostEntry {
+            observed,
+            slot: Some(ObservedSlot {
+                parent: parent.observed.clone(),
+                name: name.clone(),
+            }),
+        })
+    }
+
+    async fn verify_observations(&self) -> Result<(), StorageError> {
+        self.0.verify().await
     }
 }
 
@@ -297,7 +638,8 @@ pub const MAX_SYMLINK_EXPANSIONS: u8 = 40;
 ///
 /// ```
 /// use ah_vfs::resolve::prepare_link_target;
-/// use ah_vfs_storage::{LinkTarget, LookupStart, PathComponent, PathExpr, Rejection, StoragePath};
+/// use ah_vfs::resolve::path::{LookupStart, PathComponent, PathExpr};
+/// use ah_vfs_storage::{LinkTarget, Rejection, StoragePath};
 /// let parent = StoragePath::parse("work")?;
 /// let suffix = PathExpr::parse("../file")?;
 /// let link = LinkTarget::new(b"../a/".to_vec());
@@ -366,18 +708,18 @@ impl SymlinkTraversal {
         &mut self,
         lookup: PathLookup<'_>,
         pending: &[PathComponent],
-    ) -> Result<SymlinkAction, Rejection> {
+    ) -> Result<SymlinkAction, ResolveFailure> {
         let action = if pending.is_empty() {
             lookup.final_symlink()
         } else {
             match self.intermediate {
                 IntermediateSymlinks::FollowWithinInstance => SymlinkAction::FollowWithinInstance,
-                IntermediateSymlinks::Reject => return Err(Rejection::SymlinkNotAllowed),
+                IntermediateSymlinks::Reject => return Err(ResolveFailure::SymlinkNotAllowed),
             }
         };
         if action == SymlinkAction::FollowWithinInstance {
             if self.followed == MAX_SYMLINK_EXPANSIONS {
-                return Err(Rejection::TooManySymlinks);
+                return Err(ResolveFailure::TooManySymlinks);
             }
             self.followed += 1;
         }
@@ -433,14 +775,18 @@ pub struct Resolver {
 /// lookup policy admits it. Backends still bind and verify the parent at execution.
 pub enum Resolution<B> {
     Existing(B),
-    Missing(StoragePath),
+    Missing {
+        parent: B,
+        name: EntryName,
+        address: StoragePath,
+    },
 }
 
 impl<B> Resolution<B> {
     pub fn require_entry(self, operation: Operation) -> Result<B, StorageError> {
         match self {
             Self::Existing(binding) => Ok(binding),
-            Self::Missing(_) => Err(StorageError::without_effects(
+            Self::Missing { .. } => Err(StorageError::without_effects(
                 operation,
                 Failure::Rejected(Rejection::NotFound),
                 None,
@@ -525,10 +871,9 @@ impl Resolver {
         lookup: PathLookup<'_>,
         mut directories: Vec<P::Binding>,
     ) -> Result<(P::Binding, EntryName), StorageError> {
-        let (operand, name) = lookup
-            .path()
-            .split_final_name()
-            .ok_or_else(|| self.include_creation_effects(self.reject(Rejection::RootProtected)))?;
+        let (operand, name) = lookup.path().split_final_name().ok_or_else(|| {
+            self.include_creation_effects(self.reject(ResolveFailure::RootProtected))
+        })?;
         let parent = self
             .segment(
                 backend,
@@ -586,11 +931,17 @@ impl Resolver {
                                 };
                                 match lookup.check_missing_name(&address, missing) {
                                     Ok(()) => {}
-                                    Err(Rejection::NotFound) => return Err(error),
+                                    Err(ResolveFailure::Storage(Failure::Rejected(
+                                        Rejection::NotFound,
+                                    ))) => return Err(error),
                                     Err(reason) => return Err(self.reject(reason)),
                                 }
                                 if self.operation != Operation::CreateDirectory {
-                                    return Ok(Resolution::Missing(address));
+                                    return Ok(Resolution::Missing {
+                                        parent: parent.clone(),
+                                        name: name.clone(),
+                                        address,
+                                    });
                                 }
                                 match backend.create_child(parent, address.clone(), name).await {
                                     Ok(binding) => {
@@ -659,8 +1010,8 @@ impl Resolver {
         Ok(Resolution::Existing(selected))
     }
 
-    fn reject(&self, reason: Rejection) -> StorageError {
-        self.failure(Failure::Rejected(reason))
+    fn reject(&self, reason: impl Into<ResolveFailure>) -> StorageError {
+        reason.into().without_effects(self.operation)
     }
 
     fn stale(&self) -> StorageError {

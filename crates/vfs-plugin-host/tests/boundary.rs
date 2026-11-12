@@ -1,6 +1,11 @@
 use ah_vfs::application::driver_error::DriverError;
 use ah_vfs::application::port::*;
 use ah_vfs::domain::InstanceId;
+use ah_vfs::resolve::LookupContext;
+use ah_vfs::resolve::StorageOperations;
+use ah_vfs::resolve::operand::{ListOperand, ListOperandTarget, RenameOperand};
+use ah_vfs::resolve::path::PathExpr;
+use ah_vfs::resolve::path::RootedPath;
 use ah_vfs_storage::Capabilities;
 use ah_vfs_storage::{BackendFailure, ContractViolation, Failure, Operation};
 use ah_vfs_storage::{Entry, EntryType, StoragePath};
@@ -106,12 +111,6 @@ impl SessionTransport for Peer {
                     .into(),
                 ),
                 Op::Storage(call) => match call.operation {
-                    Some(p::StorageOp::SelectDirectory(_)) => {
-                        Value::SelectedDirectory(p::DirectorySelection {
-                            address: String::new(),
-                            identity: vec![1; 16],
-                        })
-                    }
                     Some(p::StorageOp::List(_)) => {
                         let wrong_address = matches!(
                             self.fault,
@@ -129,14 +128,6 @@ impl SessionTransport for Peer {
                                 identity: vec![if wrong_address { 1 } else { 2 }; 16],
                             }),
                             completion: Some(p::page::Completion::End(p::Empty {})),
-                        })
-                    }
-                    Some(p::StorageOp::Rename(_)) => {
-                        self.renames.fetch_add(1, Ordering::Relaxed);
-                        Value::Entry(p::Entry {
-                            path: "forged".into(),
-                            kind: p::EntryKind::Dir.into(),
-                            ..Default::default()
                         })
                     }
                     Some(p::StorageOp::GetPermissions(_)) => {
@@ -161,16 +152,45 @@ impl SessionTransport for Peer {
                         }),
                     }),
                 }),
-                Op::ObserveChild(child) => Value::ObservedEntry(p::ObservedEntry {
-                    id: 4,
-                    entry: Some(p::Entry {
-                        path: child.name,
-                        kind: p::EntryKind::File.into(),
-                        ..Default::default()
-                    }),
-                }),
-                Op::Write(_) => Value::Writer(p::Handle { handle: 2 }),
-                Op::Read(_) => Value::Reader(p::Handle { handle: 3 }),
+                Op::ObserveChild(child) => {
+                    let operation = p::decode_lookup_purpose(&child.purpose)
+                        .ok_or_else(convert::protocol_violation)?;
+                    if operation == Operation::Write || child.name == "destination" {
+                        return Err(ah_vfs_storage::StorageError::without_effects(
+                            operation,
+                            Failure::Rejected(ah_vfs_storage::Rejection::NotFound),
+                            None,
+                        )
+                        .into());
+                    }
+                    Value::ObservedEntry(p::ObservedEntry {
+                        id: 4,
+                        entry: Some(p::Entry {
+                            path: child.name,
+                            kind: p::EntryKind::File.into(),
+                            ..Default::default()
+                        }),
+                    })
+                }
+                Op::Execute(call) => match call.operation {
+                    Some(p::BoundOp::SelectDirectory(_)) => {
+                        Value::SelectedDirectory(p::DirectorySelection {
+                            address: String::new(),
+                            identity: vec![1; 16],
+                        })
+                    }
+                    Some(p::BoundOp::Rename(_)) => {
+                        self.renames.fetch_add(1, Ordering::Relaxed);
+                        Value::Entry(p::Entry {
+                            path: "forged".into(),
+                            kind: p::EntryKind::Dir.into(),
+                            ..Default::default()
+                        })
+                    }
+                    Some(p::BoundOp::Write(_)) => Value::Writer(p::Handle { handle: 5 }),
+                    Some(p::BoundOp::Read(_)) => Value::Reader(p::Handle { handle: 5 }),
+                    _ => return Err(convert::protocol_violation()),
+                },
                 Op::ReaderNext(_) => Value::Chunk(p::Chunk { eof: false }),
                 Op::Commit(_) => {
                     self.commits.fetch_add(1, Ordering::Relaxed);
@@ -219,7 +239,7 @@ async fn incompatible_versions_and_false_capabilities_are_rejected() -> Result {
 }
 #[tokio::test]
 async fn forged_rename_response_leaves_the_outcome_unknown_without_replay() -> Result {
-    use ah_vfs_storage::{MutationOutcome, PathExpr, RenameMode, RenameRequest};
+    use ah_vfs_storage::{MutationOutcome, RenameMode};
     let (driver, peer) = peer(Fault::Rename).await?;
     let storage = driver
         .open(OpenContext::new(
@@ -227,7 +247,7 @@ async fn forged_rename_response_leaves_the_outcome_unknown_without_replay() -> R
             Default::default(),
         ))
         .await?;
-    let request = RenameRequest::new(
+    let request = RenameOperand::new(
         PathExpr::parse("/source")?,
         PathExpr::parse("/destination")?,
         RenameMode::NoReplace,
@@ -258,7 +278,7 @@ async fn malformed_commit_response_is_unknown_and_is_never_replayed() -> Result 
         .await?;
     let mut writer = storage
         .write_file(
-            ah_vfs_storage::WriteRequest::new(
+            ah_vfs::resolve::operand::WriteOperand::new(
                 StoragePath::parse("file")?.to_rooted_expr(),
                 ah_vfs_storage::WriteMode::CreateNew,
                 ah_vfs_storage::Publication::Staged,
@@ -292,7 +312,7 @@ async fn empty_non_eof_chunks_close_the_read_session() -> Result {
         .await?;
     let mut reader = storage
         .read_file(
-            ah_vfs_storage::ReadRequest::new(
+            ah_vfs::resolve::operand::ReadOperand::new(
                 StoragePath::parse("file")?.to_rooted_expr(),
                 ah_vfs_storage::ReadRange::FULL,
             ),
@@ -359,7 +379,7 @@ fn timestamps_and_unknown_error_codes_preserve_boundary_semantics() -> Result {
 
 #[tokio::test]
 async fn invalid_attribute_replies_are_distinct_from_backend_name_errors() -> Result {
-    use ah_vfs_storage::{AttributeAction, MutationOutcome, PathExpr};
+    use ah_vfs_storage::{AttributeAction, MutationOutcome};
     let (driver, _) = peer(Fault::Attributes(vec![])).await?;
     let storage = driver
         .open(OpenContext::new(
@@ -431,7 +451,7 @@ async fn invalid_attribute_replies_are_distinct_from_backend_name_errors() -> Re
 
 #[tokio::test]
 async fn an_empty_remote_page_cannot_attest_its_own_directory() -> Result {
-    use ah_vfs_storage::{ContractViolation, ListRequest, ListTarget};
+    use ah_vfs_storage::ContractViolation;
     for wrong_address in [false, true] {
         let (driver, _) = peer(Fault::DirectoryPage { wrong_address }).await?;
         let storage = driver
@@ -440,8 +460,8 @@ async fn an_empty_remote_page_cannot_attest_its_own_directory() -> Result {
                 Default::default(),
             ))
             .await?;
-        let request = ListRequest::new(
-            ListTarget::Path(StoragePath::root().to_rooted_expr()),
+        let request = ListOperand::new(
+            ListOperandTarget::Path(StoragePath::root().to_rooted_expr()),
             Default::default(),
         );
         let error = storage

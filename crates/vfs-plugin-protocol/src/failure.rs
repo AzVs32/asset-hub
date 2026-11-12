@@ -19,9 +19,6 @@ const OPERATIONS: &[(&str, d::Operation)] = &[
 ];
 /// Stable names for the operations that use a bound lookup.
 pub fn encode_lookup_purpose(operation: d::Operation) -> Option<&'static str> {
-    if operation != d::Operation::ReadLink && !operation.is_attribute() {
-        return None;
-    }
     OPERATIONS
         .iter()
         .find(|(_, op)| *op == operation)
@@ -29,13 +26,14 @@ pub fn encode_lookup_purpose(operation: d::Operation) -> Option<&'static str> {
 }
 
 pub fn decode_lookup_purpose(name: &str) -> Option<d::Operation> {
-    OPERATIONS.iter().find_map(|(tag, op)| {
-        (*tag == name && (*op == d::Operation::ReadLink || op.is_attribute())).then_some(*op)
-    })
+    OPERATIONS
+        .iter()
+        .find_map(|(tag, op)| (*tag == name).then_some(*op))
 }
 
 const CAUSES: &[(&str, &str, d::Failure)] = &[
     ("caller", "invalid-binding", d::Failure::InvalidBinding),
+    ("caller", "invalid-request", d::Failure::InvalidRequest),
     (
         "rejected",
         "not-found",
@@ -70,21 +68,6 @@ const CAUSES: &[(&str, &str, d::Failure)] = &[
         "rejected",
         "not-symlink",
         d::Failure::Rejected(d::Rejection::NotSymlink),
-    ),
-    (
-        "rejected",
-        "root-protected",
-        d::Failure::Rejected(d::Rejection::RootProtected),
-    ),
-    (
-        "rejected",
-        "symlink-not-allowed",
-        d::Failure::Rejected(d::Rejection::SymlinkNotAllowed),
-    ),
-    (
-        "rejected",
-        "too-many-symlinks",
-        d::Failure::Rejected(d::Rejection::TooManySymlinks),
     ),
     (
         "rejected",

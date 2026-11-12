@@ -137,7 +137,7 @@ async fn host_follows_an_intermediate_link_in_a_real_component() -> Result {
             Default::default(),
         ))
         .await?;
-    let operand = ah_vfs_storage::PathExpr::parse("/alias/link")?;
+    let operand = ah_vfs::resolve::path::PathExpr::parse("/alias/link")?;
     let bytes = ah_vfs::resolve::read_link(storage.as_ref(), operand, Default::default()).await?;
     assert_eq!(bytes.as_bytes(), b"\xff/");
     Ok(())

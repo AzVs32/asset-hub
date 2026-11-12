@@ -1,13 +1,13 @@
 //! Staged Windows writes, published by handle and disposed by handle on abort.
 use super::{TEMP_PREFIX, blocking, fs, lookup, native};
-use ah_vfs::application::port::{LookupContext, StorageFileWriter, StorageFuture};
+use ah_vfs::application::port::{StorageFileWriter, StorageFuture};
 use ah_vfs_storage::{
     BackendFailure, Failure, MutationOutcome, Operation, Rejection, StorageError,
 };
 use ah_vfs_storage::{Entry, StoragePath};
 use ah_vfs_storage::{WriteMode, WriteRequest};
 use cap_std::fs::{Dir, File, OpenOptions, OpenOptionsExt};
-use std::{io::Write, sync::Arc};
+use std::io::Write;
 use windows_sys::Win32::Storage::FileSystem::{DELETE, FILE_GENERIC_WRITE, FILE_READ_ATTRIBUTES};
 
 #[derive(ah_id::Id)]
@@ -27,9 +27,8 @@ struct FileWriteSession {
 
 impl LocalFileWriter {
     pub(super) fn open(
-        root: Arc<Dir>,
+        destination: lookup::WriteDestination,
         request: WriteRequest,
-        context: LookupContext,
     ) -> Result<Self, StorageError> {
         let operation = Operation::Write;
         // FileRenameInfo can refuse an existing target, but cannot compare its identity.
@@ -44,16 +43,10 @@ impl LocalFileWriter {
             parent,
             path,
             ancestors,
-        } = lookup::write_destination(&root, &request, context)?;
+        } = destination;
         let target = path
             .name()
-            .ok_or_else(|| {
-                StorageError::without_effects(
-                    operation,
-                    Failure::Rejected(Rejection::RootProtected),
-                    None,
-                )
-            })?
+            .ok_or_else(|| StorageError::without_effects(operation, Failure::InvalidBinding, None))?
             .as_str()
             .to_owned();
         let temporary = format!("{TEMP_PREFIX}{}", WriteId::new());

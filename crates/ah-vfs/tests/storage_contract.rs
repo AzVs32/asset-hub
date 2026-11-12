@@ -1,5 +1,7 @@
 use ah_vfs::application::driver_error::{LifecycleError, LifecycleFailure};
 use ah_vfs::application::mount_runtime::MountRuntime;
+use ah_vfs::resolve::StorageOperations;
+use ah_vfs::resolve::path::RootedPath;
 use ah_vfs_storage::{
     BackendFailure, ContractViolation, Failure, Operation, Rejection, StorageError,
 };
@@ -110,21 +112,27 @@ impl Storage for TestStorage {
     fn chunk_size(&self) -> NonZeroUsize {
         NonZeroUsize::MIN
     }
-    fn read_file(
-        &self,
-        _: ah_vfs_storage::ReadRequest,
-        _: ah_vfs::application::port::LookupContext,
-    ) -> StorageFuture<'_, Box<dyn StorageFileReader>> {
-        self.calls.fetch_add(1, Ordering::SeqCst);
-        Box::pin(async { Ok(Box::new(TestReader) as Box<dyn StorageFileReader>) })
-    }
-    fn write_file(
-        &self,
-        _: ah_vfs_storage::WriteRequest,
-        _: ah_vfs::application::port::LookupContext,
-    ) -> StorageFuture<'_, Box<dyn StorageFileWriter>> {
-        self.calls.fetch_add(1, Ordering::SeqCst);
-        Box::pin(async { Ok(Box::new(TestWriter { closed: false }) as Box<dyn StorageFileWriter>) })
+    fn begin_lookup(&self, operation: Operation) -> StorageFuture<'_, Box<dyn OperationLookup>> {
+        let calls = self.calls.clone();
+        Box::pin(async move {
+            if !matches!(operation, Operation::Read | Operation::Write) {
+                return Err(failure(
+                    operation,
+                    Failure::Rejected(Rejection::Unsupported),
+                ));
+            }
+            let mut lookup = common::TestLookup::new(operation, 1);
+            let readers = calls.clone();
+            lookup.read = Some(Box::new(move || {
+                readers.fetch_add(1, Ordering::SeqCst);
+                Box::new(TestReader)
+            }));
+            lookup.write = Some(Box::new(move || {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Box::new(TestWriter { closed: false })
+            }));
+            Ok(Box::new(lookup) as Box<dyn OperationLookup>)
+        })
     }
 }
 struct TestDriver {
@@ -263,7 +271,7 @@ async fn unsupported_requests_are_rejected_before_backend_side_effects() -> Test
     );
     let create = CreateDirRequest::new(
         "/absent/child",
-        ah_vfs_storage::CreateDirectoryMode::Recursive,
+        ah_vfs::resolve::operand::CreateDirectoryMode::Recursive,
     )?;
     assert!(
         matches!(unavailable.create_dir(create).await, Err(EntryError::Storage(error))
@@ -562,7 +570,7 @@ async fn read_only_extension_and_missing_base_operations_reject_mutation() -> Te
         calls: Arc::new(AtomicUsize::new(0)),
     };
     assert!(
-        matches!(storage.create_dir(ah_vfs_storage::CreateDirectoryRequest::new(StoragePath::parse("dir")?.to_rooted_expr(), ah_vfs_storage::CreateDirectoryMode::Single), Default::default()).await, Err(error) if error.failure() == Failure::Rejected(Rejection::Unsupported))
+        matches!(storage.create_dir(ah_vfs::resolve::operand::CreateDirectoryOperand::new(StoragePath::parse("dir")?.to_rooted_expr(), ah_vfs::resolve::operand::CreateDirectoryMode::Single), Default::default()).await, Err(error) if error.failure() == Failure::Rejected(Rejection::Unsupported))
     );
     Ok(())
 }

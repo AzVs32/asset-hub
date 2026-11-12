@@ -1,6 +1,30 @@
 use prost::Message;
 use vfs_plugin_protocol::{self as p, Operation as Op, wire};
 type Result = std::result::Result<(), Box<dyn std::error::Error>>;
+fn bound(path: &str, entry: Option<u64>) -> p::BoundSlot {
+    p::BoundSlot {
+        slot: Some(p::EntrySlot {
+            parent: 2,
+            name: path.rsplit('/').next().unwrap_or_default().into(),
+            path: path.into(),
+        }),
+        entry,
+    }
+}
+fn execute(operation: p::BoundOp) -> Op {
+    Op::Execute(p::BoundCall {
+        lookup: 1,
+        operation: Some(operation),
+    })
+}
+fn read(offset: u64, length: Option<u64>) -> Op {
+    execute(p::BoundOp::Read(p::BoundRead {
+        target: Some(bound("file", Some(3))),
+        offset,
+        length,
+    }))
+}
+
 fn config() -> p::Object {
     p::Object::from([
         ("unsigned".into(), u64::MAX.into()),
@@ -45,34 +69,14 @@ fn generated_bindings_preserve_integer_precision_and_field_presence() -> Result 
     let independent = wire::Request {
         generation: "g".into(),
         data: vec![],
-        operation: Some(wire::request::Operation::Read(wire::Read {
-            handle: 1,
-            lookup: Some(p::Lookup {
-                operand: "/file".into(),
-                intermediate_links: p::IntermediateLink::FollowIntermediate.into(),
-                ..Default::default()
-            }),
-            offset: u64::MAX,
-            length: Some(0),
-        })),
+        operation: Some(read(u64::MAX, Some(0))),
     };
     let (_, operation, _) = p::decode_request(&independent.encode_to_vec())?;
-    assert_eq!(
-        operation,
-        Op::Read(p::encode_read(
-            1,
-            &ah_vfs_storage::ReadRequest::new(
-                ah_vfs_storage::PathExpr::parse("/file")?,
-                ah_vfs_storage::ReadRange::new(u64::MAX, Some(0))?
-            ),
-            &ah_vfs_storage::StoragePath::root(),
-            ah_vfs_storage::IntermediateSymlinks::FollowWithinInstance
-        ))
-    );
-    // Encoded independently by protoc --encode from the schema's text format.
+    assert_eq!(operation, read(u64::MAX, Some(0)));
+    // Encoded independently by protoc from a canonical bound read.
     let protoc = [
-        10, 1, 103, 82, 26, 8, 1, 18, 9, 10, 5, 47, 102, 105, 108, 101, 24, 1, 24, 255, 255, 255,
-        255, 255, 255, 255, 255, 255, 1, 32, 0,
+        10, 1, 103, 170, 1, 37, 8, 1, 26, 33, 10, 18, 10, 14, 8, 2, 18, 4, 102, 105, 108, 101, 26,
+        4, 102, 105, 108, 101, 16, 3, 16, 255, 255, 255, 255, 255, 255, 255, 255, 255, 1, 24, 0,
     ];
     assert_eq!(independent.encode_to_vec(), protoc);
     Ok(())
@@ -200,7 +204,12 @@ fn bounds_apply_to_control_data_and_nested_configuration() {
 fn exported_descriptor_contains_the_complete_language_independent_contract() -> Result {
     let descriptor = prost_types::FileDescriptorSet::decode(p::FILE_DESCRIPTOR_SET)?;
     let file = descriptor.file.first().ok_or("schema")?;
-    assert_eq!(file.package.as_deref(), Some("assethub.vfs.v14"));
+    assert_eq!(file.package.as_deref(), Some("assethub.vfs.v15"));
+    assert!(
+        file.message_type
+            .iter()
+            .all(|message| message.name.as_deref() != Some("Lookup"))
+    );
     let storage_info = file
         .message_type
         .iter()
@@ -220,12 +229,13 @@ fn exported_descriptor_contains_the_complete_language_independent_contract() -> 
         .find(|m| m.name.as_deref() == Some("Request"))
         .ok_or("Request")?;
     assert_eq!(request.oneof_decl.len(), 1);
-    assert_eq!(request.field.len(), 20);
+    assert_eq!(request.field.len(), 19);
     for name in [
         "begin_lookup",
         "observe_child",
         "read_observed_link",
         "verify_lookup",
+        "execute",
     ] {
         assert!(
             request
@@ -259,11 +269,11 @@ fn exported_descriptor_contains_the_complete_language_independent_contract() -> 
     for method in &file.service.first().ok_or("Plugin")?.method {
         assert_eq!(
             method.input_type.as_deref(),
-            Some(".assethub.vfs.v14.Request")
+            Some(".assethub.vfs.v15.Request")
         );
         assert_eq!(
             method.output_type.as_deref(),
-            Some(".assethub.vfs.v14.Reply")
+            Some(".assethub.vfs.v15.Reply")
         );
     }
     Ok(())
@@ -390,16 +400,7 @@ fn malformed_protobuf_retains_the_original_decode_error() -> Result {
 #[test]
 fn read_rejects_an_overflowing_range_before_dispatch() -> Result {
     let request = wire::Request {
-        operation: Some(Op::Read(wire::Read {
-            handle: 1,
-            lookup: Some(p::Lookup {
-                operand: "../file".into(),
-                working_directory: "docs".into(),
-                intermediate_links: p::IntermediateLink::RejectIntermediate.into(),
-            }),
-            offset: u64::MAX,
-            length: Some(1),
-        })),
+        operation: Some(read(u64::MAX, Some(1))),
         ..Default::default()
     };
     assert!(matches!(
@@ -411,126 +412,116 @@ fn read_rejects_an_overflowing_range_before_dispatch() -> Result {
 
 #[test]
 fn read_preserves_absent_and_explicit_lengths() -> Result {
-    use ah_vfs_storage as d;
-
-    let path = d::PathExpr::parse("../file/")?;
-    let base = d::StoragePath::parse("docs")?;
-    let links = d::IntermediateSymlinks::Reject;
     for length in [None, Some(0), Some(42)] {
-        let request = d::ReadRequest::new(path.clone(), d::ReadRange::new(3, length)?);
-        let operation = Op::Read(p::encode_read(1, &request, &base, links));
-        let bytes = p::encode_request("g", &operation, vec![])?;
-        let (_, Op::Read(read), _) = p::decode_request(&bytes)? else {
+        let bytes = p::encode_request("g", &read(3, length), vec![])?;
+        let (_, Op::Execute(read), _) = p::decode_request(&bytes)? else {
             return Err("missing read request".into());
         };
-        assert_eq!(p::decode_read(read)?, (request, base.clone(), links));
+        let (generation, p::bound::Execution::Read(slot, request)) = p::decode_bound_call(read)?
+        else {
+            return Err("missing canonical read request".into());
+        };
+        assert_eq!(generation, 1);
+        assert_eq!(slot.entry, Some(3));
+        assert_eq!(request.path().as_str(), "file");
+        assert_eq!(request.range(), ah_vfs_storage::ReadRange::new(3, length)?);
     }
     Ok(())
 }
 
 #[test]
 fn write_round_trips_binding_and_rejects_implicit_modes() -> Result {
-    use ah_vfs_storage as d;
-    let request = d::WriteRequest::new(
-        d::PathExpr::parse("../out")?,
-        d::WriteMode::Replace,
-        d::Publication::Atomic,
-    );
-    let base = d::StoragePath::parse("work/sub")?;
-    let links = d::IntermediateSymlinks::Reject;
-    let wire = p::encode_write(7, &request, &base, links);
-    assert_eq!(wire.handle, 7);
-    assert_eq!(p::decode_write(wire.clone())?, (request, base, links));
+    let wire = p::BoundWrite {
+        target: Some(bound("work/out", None)),
+        mode: p::WriteMode::Replace.into(),
+        publication: p::Publication::Atomic.into(),
+    };
+    let Op::Execute(call) = execute(p::BoundOp::Write(wire.clone())) else {
+        return Err("missing write call".into());
+    };
+    let (_, p::bound::Execution::Write(slot, request)) = p::decode_bound_call(call)? else {
+        return Err("missing canonical write request".into());
+    };
+    assert!(slot.entry.is_none());
+    assert_eq!(request.path().as_str(), "work/out");
+    assert_eq!(request.mode(), ah_vfs_storage::WriteMode::Replace);
     for invalid in [
-        p::Write {
+        p::BoundWrite {
             mode: 0,
             ..wire.clone()
         },
-        p::Write {
+        p::BoundWrite {
             publication: i32::MAX,
-            ..wire.clone()
-        },
-    ] {
-        let operation = Op::Write(invalid);
-        assert!(matches!(
-            p::encode_request("generation", &operation, vec![]),
-            Err(p::CodecError::InvalidData)
-        ));
-    }
-    Ok(())
-}
-
-#[test]
-fn create_directory_preserves_ordered_lookup_and_rejects_invalid_modes() -> Result {
-    use ah_vfs_storage as d;
-    let request = d::CreateDirectoryRequest::new(
-        d::PathExpr::parse("../missing/")?,
-        d::CreateDirectoryMode::Recursive,
-    );
-    let base = d::StoragePath::parse("work/sub")?;
-    let links = d::IntermediateSymlinks::Reject;
-    let wire = p::encode_create_directory(&request, &base, links);
-    assert_eq!(
-        p::decode_create_directory(wire.clone())?,
-        (request, base, links)
-    );
-    for mode in [0, i32::MAX] {
-        let op = Op::Storage(p::StorageCall {
-            handle: 1,
-            operation: Some(p::StorageOp::CreateDirectory(p::CreateDirectory {
-                mode,
-                ..wire.clone()
-            })),
-        });
-        assert!(matches!(
-            p::encode_request("generation", &op, vec![]),
-            Err(p::CodecError::InvalidData)
-        ));
-    }
-    Ok(())
-}
-
-#[test]
-fn mutations_round_trip_shared_bindings_and_reject_non_entry_operands() -> Result {
-    use ah_vfs_storage as d;
-    let base = d::StoragePath::parse("work/sub")?;
-    let links = d::IntermediateSymlinks::Reject;
-    let remove = d::RemoveRequest::new(
-        d::PathExpr::parse("../directory/")?,
-        d::RemoveKind::EmptyDirectory,
-    )?;
-    let wire = p::encode_remove(&remove, &base, links);
-    assert_eq!(
-        p::decode_remove(wire.clone())?,
-        (remove, base.clone(), links)
-    );
-    assert!(p::decode_remove(p::Remove { kind: 0, ..wire }).is_err());
-    let rename = d::RenameRequest::new(
-        d::PathExpr::parse("../source/")?,
-        d::PathExpr::parse("/target/")?,
-        d::RenameMode::Replace,
-    )?;
-    let wire = p::encode_rename(&rename, &base, links);
-    assert_eq!(p::decode_rename(wire.clone())?, (rename, base, links));
-    for invalid in [
-        p::Rename {
-            mode: 0,
-            ..wire.clone()
-        },
-        p::Rename {
-            destination: "/".into(),
             ..wire
         },
     ] {
         assert!(matches!(
-            p::encode_request(
-                "generation",
-                &Op::Storage(p::StorageCall {
-                    handle: 1,
-                    operation: Some(p::StorageOp::Rename(invalid)),
-                }),
-                vec![]
-            ),
+            p::encode_request("g", &execute(p::BoundOp::Write(invalid)), vec![]),
+            Err(p::CodecError::InvalidData)
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn create_directory_accepts_only_one_canonical_address_and_binding() -> Result {
+    let op = execute(p::BoundOp::CreateDirectory(bound("work/new", None)));
+    assert!(p::encode_request("g", &op, vec![]).is_ok());
+    for target in [
+        bound("../new", None),
+        bound("/", None),
+        bound("", None),
+        bound("dir/", None),
+    ] {
+        let op = execute(p::BoundOp::CreateDirectory(target));
+        assert!(matches!(
+            p::encode_request("g", &op, vec![]),
+            Err(p::CodecError::InvalidData)
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn mutations_round_trip_shared_bindings_and_reject_non_entry_addresses() -> Result {
+    let remove = p::BoundRemove {
+        target: Some(bound("work/directory", Some(3))),
+        kind: p::remove::Kind::EmptyDirectory.into(),
+    };
+    let Op::Execute(call) = execute(p::BoundOp::Remove(remove.clone())) else {
+        return Err("missing removal call".into());
+    };
+    let (_, p::bound::Execution::Remove(slot, request)) = p::decode_bound_call(call)? else {
+        return Err("missing canonical removal request".into());
+    };
+    assert_eq!(slot.entry, Some(3));
+    assert_eq!(request.path().as_str(), "work/directory");
+    assert!(
+        p::encode_request(
+            "g",
+            &execute(p::BoundOp::Remove(p::BoundRemove { kind: 0, ..remove })),
+            vec![]
+        )
+        .is_err()
+    );
+    let rename = p::BoundRename {
+        source: Some(bound("work/source", Some(3))),
+        destination: Some(bound("target", None)),
+        mode: p::rename::Mode::Replace.into(),
+    };
+    assert!(p::encode_request("g", &execute(p::BoundOp::Rename(rename.clone())), vec![]).is_ok());
+    for invalid in [
+        p::BoundRename {
+            mode: 0,
+            ..rename.clone()
+        },
+        p::BoundRename {
+            destination: Some(bound("/", None)),
+            ..rename
+        },
+    ] {
+        assert!(matches!(
+            p::encode_request("g", &execute(p::BoundOp::Rename(invalid)), vec![]),
             Err(p::CodecError::InvalidData)
         ));
     }
@@ -698,10 +689,7 @@ fn attribute_replies_apply_limits_before_decoding_and_preserve_empty_values() ->
 #[test]
 fn listing_validates_limits_and_cursor_before_enumeration() -> Result {
     use ah_vfs_storage as d;
-    let request = d::ListRequest::new(
-        d::ListTarget::Path(d::StoragePath::root().to_rooted_expr()),
-        d::PageSize::new(1)?,
-    );
+    let request = d::ListRequest::new(d::StoragePath::root(), d::PageSize::new(1)?);
     let selection = d::DirectorySelection::from_lookup(
         d::StoragePath::root(),
         d::DirectoryIdentity::from_bytes([1; 16]),
@@ -824,10 +812,7 @@ fn page_replies_require_the_selected_directory_and_explicit_completion() -> Resu
     use ah_vfs_storage as d;
     use p::page::Completion;
 
-    let request = d::ListRequest::new(
-        d::ListTarget::Path(d::PathExpr::parse("/alias/")?),
-        d::PageSize::new(1)?,
-    );
+    let request = d::ListRequest::new(d::StoragePath::parse("docs")?, d::PageSize::new(1)?);
     let bound = request.bind_selection(d::DirectorySelection::from_lookup(
         d::StoragePath::parse("docs")?,
         d::DirectoryIdentity::from_bytes([7; 16]),

@@ -94,7 +94,7 @@ fn diagnostics_are_typed_private_and_do_not_change_failure_or_outcome() -> Resul
 }
 #[test]
 fn malformed_responses_and_stored_corruption_are_distinct_failure_families() -> Result {
-    let request = ListRequest::new(ListTarget::Path(PathExpr::parse("/")?), PageSize::DEFAULT);
+    let request = ListRequest::new(StoragePath::root(), PageSize::DEFAULT);
     let bound = request.bind_selection(DirectorySelection::from_lookup(
         StoragePath::root(),
         DirectoryIdentity::from_bytes([1; 16]),
@@ -163,7 +163,8 @@ fn write_admission_checks_modes_and_atomicity_before_side_effects() -> Result {
                 Capabilities::default().with_write(WriteSupport::staged(modes, atomic_publish));
             for mode in [WriteMode::CreateNew, WriteMode::Replace] {
                 for publication in [Publication::Staged, Publication::Atomic] {
-                    let request = WriteRequest::new(PathExpr::parse("file")?, mode, publication);
+                    let request =
+                        WriteRequest::new(StoragePath::parse("file")?, mode, publication)?;
                     let mode_supported = modes == WriteModes::Both
                         || matches!(
                             (modes, mode),
@@ -179,10 +180,10 @@ fn write_admission_checks_modes_and_atomicity_before_side_effects() -> Result {
     }
     let capabilities = Capabilities::default();
     let request = WriteRequest::new(
-        PathExpr::parse("file")?,
+        StoragePath::parse("file")?,
         WriteMode::CreateNew,
         Publication::Staged,
-    );
+    )?;
     let cause = capabilities
         .require_write(&request)
         .err()
@@ -194,8 +195,8 @@ fn write_admission_checks_modes_and_atomicity_before_side_effects() -> Result {
 }
 #[test]
 fn read_admission_distinguishes_sequential_prefixes_from_arbitrary_ranges() -> Result {
-    let prefix = ReadRequest::new(PathExpr::parse("file")?, ReadRange::new(0, Some(3))?);
-    let range = ReadRequest::new(PathExpr::parse("file")?, ReadRange::new(1, Some(3))?);
+    let prefix = ReadRequest::new(StoragePath::parse("file")?, ReadRange::new(0, Some(3))?);
+    let range = ReadRequest::new(StoragePath::parse("file")?, ReadRange::new(1, Some(3))?);
     let sequential = Capabilities::default().with_read(ReadSupport::Sequential);
     assert!(sequential.require_read(&prefix).is_ok());
     assert_eq!(sequential.require_read(&range), Err(Rejection::Unsupported));
@@ -262,8 +263,11 @@ fn rename_admission_preserves_the_requested_replacement_guarantee() -> Result {
             (RenameMode::NoReplace, no_replace),
             (RenameMode::Replace, replace),
         ] {
-            let request =
-                RenameRequest::new(PathExpr::parse("file")?, PathExpr::parse("file")?, mode)?;
+            let request = RenameRequest::new(
+                StoragePath::parse("file")?,
+                StoragePath::parse("file")?,
+                mode,
+            )?;
             assert_eq!(capabilities.require_rename(&request).is_ok(), supported);
         }
     }
@@ -365,5 +369,72 @@ fn attribute_requests_admit_only_their_own_capability_family() -> Result {
         );
         assert_eq!(request.path(), &path);
     }
+    Ok(())
+}
+
+#[test]
+fn canonical_target_checks_preserve_rejection_precedence() -> Result {
+    let address = StoragePath::parse("entry")?;
+    let file = EntryType::file(None);
+    let directory = EntryType::Directory;
+    let read = ReadRequest::new(address.clone(), ReadRange::FULL);
+    let create = WriteRequest::new(address.clone(), WriteMode::CreateNew, Publication::Atomic)?;
+    let replace = WriteRequest::new(address.clone(), WriteMode::Replace, Publication::Atomic)?;
+    let mkdir = CreateDirectoryRequest::new(address.clone())?;
+    let unlink = RemoveRequest::new(address.clone(), RemoveKind::NonDirectory)?;
+    let rmdir = RemoveRequest::new(address.clone(), RemoveKind::EmptyDirectory)?;
+    for (entry, read_result) in [
+        (file, Ok(())),
+        (directory, Err(Rejection::IsDirectory)),
+        (EntryType::Symlink, Err(Rejection::NotRegularFile)),
+        (EntryType::Other, Err(Rejection::NotRegularFile)),
+    ] {
+        assert_eq!(read.check_target(entry), read_result);
+        assert_eq!(
+            create.check_target(Some(entry)),
+            Err(Rejection::AlreadyExists)
+        );
+        assert_eq!(replace.check_target(Some(entry)), read_result);
+        assert_eq!(
+            mkdir.check_target(Some(entry)),
+            Err(Rejection::AlreadyExists)
+        );
+        if entry == directory {
+            assert_eq!(unlink.check_target(entry), Err(Rejection::IsDirectory));
+            assert!(rmdir.check_target(entry).is_ok());
+        } else {
+            assert!(unlink.check_target(entry).is_ok());
+            assert_eq!(rmdir.check_target(entry), Err(Rejection::NotDirectory));
+        }
+    }
+    for write in [create, replace] {
+        assert!(write.check_target(None).is_ok());
+    }
+    assert!(mkdir.check_target(None).is_ok());
+
+    let target = StoragePath::parse("target")?;
+    let no_replace = RenameRequest::new(address.clone(), target.clone(), RenameMode::NoReplace)?;
+    let rename = RenameRequest::new(address, target, RenameMode::Replace)?;
+    assert_eq!(
+        no_replace.decide_destination(file, RenameDestination::NonEmptyDirectory),
+        Err(Rejection::AlreadyExists)
+    );
+    assert_eq!(
+        rename.decide_destination(file, RenameDestination::NonEmptyDirectory),
+        Err(Rejection::IsDirectory)
+    );
+    assert_eq!(
+        rename.decide_destination(directory, RenameDestination::NonEmptyDirectory),
+        Err(Rejection::DirectoryNotEmpty)
+    );
+    assert_eq!(
+        rename.decide_destination(directory, RenameDestination::Occupied(file)),
+        Err(Rejection::NotDirectory)
+    );
+    assert!(
+        rename
+            .decide_destination(directory, RenameDestination::Missing)
+            .is_ok()
+    );
     Ok(())
 }

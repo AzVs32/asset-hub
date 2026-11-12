@@ -3,11 +3,11 @@
 use super::StorageAttributes;
 use ah_vfs_storage::{
     AttributeRequest, AttributeResult, AttributeSupport, BoundListRequest, Capabilities,
-    DirectoryPage, DirectorySelection, ListRequest, MutationBinding,
+    CreateDirectoryRequest, DirectoryCursor, DirectoryPage, DirectorySelection, ListRequest,
+    MutationBinding, ReadRequest, RemoveRequest, RenameRequest, StatRequest, WriteRequest,
 };
 use ah_vfs_storage::{
-    BackendFailure, Entry, EntryName, EntryType, IntermediateSymlinks, LinkTarget, ReadLinkRequest,
-    ReadRequest, StatRequest, StoragePath, WriteRequest,
+    BackendFailure, Entry, EntryName, EntryType, LinkTarget, ReadLinkRequest, StoragePath,
 };
 use ah_vfs_storage::{Failure, Operation, Rejection, StorageError};
 
@@ -16,20 +16,8 @@ use std::{any::Any, future::Future, num::NonZeroUsize, pin::Pin, sync::Arc};
 /// A boxed asynchronous result that allows storage ports to be used as trait objects.
 pub type StorageFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, StorageError>> + Send + 'a>>;
 
-/// Per-call inputs for resolving pathname operands on the opened storage instance.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct LookupContext {
-    /// An instance-relative base address for relative operands. Each lookup
-    /// resolves it from the instance root. A later call
-    /// may select a different directory at the same address. Absolute operands
-    /// start at the root.
-    pub working_directory: StoragePath,
-    /// The policy for links before the final component of an operand.
-    pub intermediate_symlinks: IntermediateSymlinks,
-}
-
 /// Operations on one configured storage instance, using instance-local addresses.
-/// Optional operations default to UnsupportedOperation. Implementors reject
+/// Optional operations default to an Unsupported rejection. Implementors reject
 /// unsupported requests before side effects. Native backend
 /// limitations never silently weaken atomicity, range or staged-write contracts.
 /// Prefix adapters define persistent empty dirs and file/prefix collision policy.
@@ -52,18 +40,14 @@ pub trait Storage: Send + Sync {
         MutationBinding::ParentPinned
     }
 
+    /// The declared capabilities, when available on the opened port.
+    fn storage_capabilities(&self) -> Option<Capabilities> {
+        None
+    }
+
     /// Preferred transfer chunk size, shared by reads and writes. Plugin proxies
     /// cache a validated, bounded value during open; this getter performs no I/O.
     fn chunk_size(&self) -> NonZeroUsize;
-
-    /// Retrieve metadata for the entry selected by the request's lookup policy.
-    fn stat_entry(
-        &self,
-        _request: StatRequest,
-        _context: LookupContext,
-    ) -> StorageFuture<'_, Entry> {
-        unsupported(Operation::Stat)
-    }
 
     /// Open a backend scope for one operation. The caller controls traversal
     /// through exact child names and observes links without following them.
@@ -71,83 +55,17 @@ pub trait Storage: Send + Sync {
         unsupported(operation)
     }
 
-    /// Resolve the initial operand or independently verify the cursor's directory.
-    fn select_directory<'a>(
+    /// Verify a cursor's selection against the backend's retained identity.
+    fn resume_directory<'a>(
         &'a self,
-        _request: &'a ListRequest,
-        _context: LookupContext,
+        _cursor: &'a DirectoryCursor,
     ) -> StorageFuture<'a, DirectorySelection> {
         unsupported(Operation::List)
     }
 
     /// Enumerate through the binding. Reject an expired or replaced directory.
-    fn list_page<'a>(
-        &'a self,
-        _bound: &'a BoundListRequest<'_>,
-    ) -> StorageFuture<'a, DirectoryPage> {
+    fn list_page<'a>(&'a self, _bound: &'a BoundListRequest) -> StorageFuture<'a, DirectoryPage> {
         unsupported(Operation::List)
-    }
-
-    /// Select a directory separately before enumerating a page.
-    fn list_entries<'a>(
-        &'a self,
-        request: &'a ListRequest,
-        context: LookupContext,
-    ) -> StorageFuture<'a, DirectoryPage> {
-        Box::pin(async move {
-            let selection = self.select_directory(request, context).await?;
-            let bound = request.bind_selection(selection).map_err(|reason| {
-                StorageError::without_effects(Operation::List, Failure::Backend(reason), None)
-            })?;
-            self.list_page(&bound).await
-        })
-    }
-
-    /// Resolve the request once and open a range-limited stream bound to the selected file.
-    /// Check capabilities before acquiring a reader. Empty ranges and offsets at or
-    /// past EOF still perform lookup and return a stream at EOF for a regular file.
-    fn read_file(
-        &self,
-        _request: ReadRequest,
-        _context: LookupContext,
-    ) -> StorageFuture<'_, Box<dyn StorageFileReader>> {
-        unsupported(Operation::Read)
-    }
-
-    /// Stage a complete-file write. The target changes only when commit publishes it.
-    fn write_file(
-        &self,
-        _request: WriteRequest,
-        _context: LookupContext,
-    ) -> StorageFuture<'_, Box<dyn StorageFileWriter>> {
-        unsupported(Operation::Write)
-    }
-
-    /// Create a directory in the backend.
-    fn create_dir(
-        &self,
-        _request: ah_vfs_storage::CreateDirectoryRequest,
-        _context: LookupContext,
-    ) -> StorageFuture<'_, Entry> {
-        unsupported(Operation::CreateDirectory)
-    }
-
-    /// Remove one entry of the requested kind, preserving the final link.
-    fn remove_entry(
-        &self,
-        _request: ah_vfs_storage::RemoveRequest,
-        _context: LookupContext,
-    ) -> StorageFuture<'_, ()> {
-        unsupported(Operation::Remove)
-    }
-
-    /// Resolve both operands in one instance and perform a single atomic rename.
-    fn move_entry(
-        &self,
-        _request: ah_vfs_storage::RenameRequest,
-        _context: LookupContext,
-    ) -> StorageFuture<'_, Entry> {
-        unsupported(Operation::Rename)
     }
 }
 
@@ -187,7 +105,50 @@ impl LookupScope {
     }
 }
 
-/// No-follow primitives within one backend namespace and generation.
+/// A final name together with the parent and the observed presence or absence.
+/// The backend accepts absence only for a slot it observed missing in this scope.
+#[derive(Clone, Copy)]
+pub struct EntrySlot<'a> {
+    pub parent: &'a ObservedEntry,
+    pub name: &'a EntryName,
+    pub entry: Option<&'a ObservedEntry>,
+}
+
+impl EntrySlot<'_> {
+    pub fn validate(self, operation: Operation, address: &StoragePath) -> Result<(), StorageError> {
+        if self
+            .entry
+            .is_some_and(|entry| !Arc::ptr_eq(&entry.scope, &self.parent.scope))
+        {
+            return Err(StorageError::without_effects(
+                operation,
+                Failure::Backend(BackendFailure::Stale),
+                None,
+            ));
+        }
+        if self.parent.entry().entry_type() != EntryType::Directory
+            || self.parent.entry().path().join(self.name).as_ref() != Ok(address)
+            || self
+                .entry
+                .is_some_and(|entry| entry.entry().path() != address)
+        {
+            return Err(StorageError::without_effects(
+                operation,
+                Failure::InvalidBinding,
+                None,
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// No-follow primitives and canonical execution within one backend generation.
+///
+/// Verify the provided observations before effects. Return Stale for a
+/// foreign or expired binding and Conflict for an observed slot changed in
+/// the live namespace. The driver declares whether final-slot verification
+/// is atomic with the effect. A staged write retains the bindings it needs
+/// to recheck the destination before publication.
 pub trait OperationLookup: Send + Sync {
     fn operation(&self) -> Operation;
 
@@ -240,6 +201,94 @@ pub trait OperationLookup: Send + Sync {
             self.verify().await?;
             Ok(target)
         })
+    }
+
+    /// Fetch metadata from the same observation used to resolve the operand.
+    fn execute_stat<'a>(
+        &'a self,
+        slot: Option<EntrySlot<'a>>,
+        entry: &'a ObservedEntry,
+        request: StatRequest,
+    ) -> StorageFuture<'a, Entry> {
+        Box::pin(async move {
+            let op = Operation::Stat;
+            if let Some(slot) = slot {
+                slot.validate(op, request.path())?;
+            }
+            if self.operation() != op
+                || request.path() != entry.entry().path()
+                || slot.is_none() != request.path().is_root()
+                || slot.is_some_and(|slot| {
+                    !slot
+                        .entry
+                        .is_some_and(|expected| std::ptr::eq(expected, entry))
+                })
+            {
+                return Err(StorageError::without_effects(
+                    op,
+                    Failure::InvalidBinding,
+                    None,
+                ));
+            }
+            self.verify().await?;
+            Ok(entry.entry().clone())
+        })
+    }
+
+    /// Open a read stream for the bound file.
+    fn execute_read<'a>(
+        &'a self,
+        _slot: EntrySlot<'a>,
+        _request: ReadRequest,
+    ) -> StorageFuture<'a, Box<dyn StorageFileReader>> {
+        unsupported(Operation::Read)
+    }
+
+    /// Stage a write for the bound slot. Commit rechecks the observations.
+    fn execute_write<'a>(
+        &'a self,
+        _slot: EntrySlot<'a>,
+        _request: WriteRequest,
+    ) -> StorageFuture<'a, Box<dyn StorageFileWriter>> {
+        unsupported(Operation::Write)
+    }
+
+    /// Create one directory at a previously observed missing name.
+    fn execute_create_directory<'a>(
+        &'a mut self,
+        _slot: EntrySlot<'a>,
+        _request: CreateDirectoryRequest,
+    ) -> StorageFuture<'a, ObservedEntry> {
+        unsupported(Operation::CreateDirectory)
+    }
+
+    /// Remove the entry in the bound slot.
+    fn execute_remove<'a>(
+        &'a self,
+        _slot: EntrySlot<'a>,
+        _request: RemoveRequest,
+    ) -> StorageFuture<'a, ()> {
+        unsupported(Operation::Remove)
+    }
+
+    /// Rename using two slots from this scope.
+    fn execute_rename<'a>(
+        &'a self,
+        _source: EntrySlot<'a>,
+        _destination: EntrySlot<'a>,
+        _request: RenameRequest,
+    ) -> StorageFuture<'a, Entry> {
+        unsupported(Operation::Rename)
+    }
+
+    /// Retain the observed directory for listing and subsequent pages.
+    fn select_directory<'a>(
+        &'a self,
+        _slot: Option<EntrySlot<'a>>,
+        _entry: &'a ObservedEntry,
+        _request: ListRequest,
+    ) -> StorageFuture<'a, DirectorySelection> {
+        unsupported(Operation::List)
     }
 
     /// Execute one action on the bound entry. The slot is absent only for

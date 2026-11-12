@@ -397,8 +397,7 @@ impl SessionTransport for GrpcSession {
                     Failure::Backend(BackendFailure::Stale),
                     false,
                     None,
-                )
-                .into());
+                ));
             }
             if !operation.is_resource() {
                 return Err(LifecycleError::new(LifecycleFailure::InvalidRequest).into());
@@ -464,7 +463,7 @@ async fn run_session(
                 let reply=incoming.message().await.map_err(|s|transport_error(s,&pending.operation))?
                     .ok_or_else(||transport_error(Status::unavailable("session closed"),&pending.operation))?;
                 decode(reply,&pending.operation)
-            })=>result.unwrap_or_else(|_|Err(c::call_error(&pending.operation, Failure::Backend(BackendFailure::TimedOut), true, None).into())),
+            })=>result.unwrap_or_else(|_|Err(c::call_error(&pending.operation, Failure::Backend(BackendFailure::TimedOut), true, None))),
         };
         let broken = result.as_ref().err().is_some_and(|error| {
             error.lifecycle_error().is_some()

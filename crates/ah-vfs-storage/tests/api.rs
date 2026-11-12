@@ -4,13 +4,13 @@ type Result = std::result::Result<(), Box<dyn Error>>;
 
 #[test]
 fn defaults_produce_valid_minimal_values() -> Result {
-    let read = ReadRequest::new(PathExpr::parse("file")?, ReadRange::FULL);
+    let read = ReadRequest::new(StoragePath::parse("file")?, ReadRange::FULL);
     assert_eq!(read.range(), ReadRange::FULL);
     assert_eq!(ReadRange::new(0, None)?, ReadRange::FULL);
     let entry = Entry::new(StoragePath::parse("file")?, EntryType::file(None), None)?;
     assert_eq!(entry.entry_type(), EntryType::file(None));
     assert!(entry.modified().is_none());
-    let query = ListRequest::new(ListTarget::Path(PathExpr::parse("/")?), PageSize::DEFAULT);
+    let query = ListRequest::new(StoragePath::root(), PageSize::DEFAULT);
     assert_eq!(query.size(), PageSize::DEFAULT);
     let bound = query.bind_selection(DirectorySelection::from_lookup(
         StoragePath::root(),
@@ -40,7 +40,7 @@ fn optional_members_accept_boundary_options_without_weakening_validation() -> Re
         Some(std::time::UNIX_EPOCH),
     )?;
     assert_eq!(entry.modified(), Some(std::time::UNIX_EPOCH));
-    let query = ListRequest::new(ListTarget::Path(PathExpr::parse("/")?), PageSize::DEFAULT);
+    let query = ListRequest::new(StoragePath::root(), PageSize::DEFAULT);
     let bound = query.bind_selection(DirectorySelection::from_lookup(
         StoragePath::root(),
         DirectoryIdentity::from_bytes([1; 16]),
@@ -77,25 +77,25 @@ fn optional_members_accept_boundary_options_without_weakening_validation() -> Re
 
 #[test]
 fn generic_helpers_compose_public_constructors() -> Result {
-    fn from_operand<T>(
+    fn from_address<T>(
         input: &str,
-        construct: impl FnOnce(PathExpr) -> T,
-    ) -> std::result::Result<T, PathExprError> {
-        PathExpr::parse(input).map(construct)
+        construct: impl FnOnce(StoragePath) -> T,
+    ) -> std::result::Result<T, PathError> {
+        StoragePath::parse(input).map(construct)
     }
 
     let link = ReadLinkRequest::new(StoragePath::parse("work/link")?);
     assert_eq!(link.path().to_string(), "work/link");
-    let remove = from_operand("/work/file", |path| {
+    let remove = from_address("work/file", |path| {
         RemoveRequest::new(path, RemoveKind::NonDirectory)
     })??;
     assert_eq!(remove.kind(), RemoveKind::NonDirectory);
     assert_eq!(
-        from_operand(".", |path| RemoveRequest::new(
+        from_address("", |path| RemoveRequest::new(
             path,
             RemoveKind::NonDirectory
         ))?,
-        Err(RequestPathError::ExpectedEntryName),
+        Err(RequestPathError::RootNotAllowed),
     );
     fn declare(configure: impl FnOnce(Capabilities) -> Capabilities) -> Capabilities {
         configure(Capabilities::default())
@@ -103,58 +103,6 @@ fn generic_helpers_compose_public_constructors() -> Result {
     let capabilities = declare(|value| value.with_read_link(true));
     assert!(capabilities.supports(Operation::ReadLink));
     assert!(!capabilities.supports(Operation::Read));
-    Ok(())
-}
-
-#[test]
-fn external_executors_can_match_closed_grammar_and_policies() -> Result {
-    fn rooted(start: LookupStart) -> bool {
-        match start {
-            LookupStart::InstanceRoot => true,
-            LookupStart::BaseDirectory => false,
-        }
-    }
-    fn component_text(component: &PathComponent) -> &str {
-        match component {
-            PathComponent::Name(name) => name.as_str(),
-            PathComponent::CurrentDirectory => ".",
-            PathComponent::ParentDirectory => "..",
-        }
-    }
-    fn follows(action: SymlinkAction) -> bool {
-        match action {
-            SymlinkAction::FollowWithinInstance => true,
-            SymlinkAction::Preserve => false,
-        }
-    }
-    fn requires_reconciliation(outcome: MutationOutcome) -> bool {
-        match outcome {
-            MutationOutcome::Unchanged => false,
-            MutationOutcome::Unknown => true,
-        }
-    }
-
-    let operand = PathExpr::parse("/work/./../file")?;
-    assert!(rooted(operand.start()));
-    assert_eq!(
-        operand
-            .components()
-            .iter()
-            .map(component_text)
-            .collect::<Vec<_>>(),
-        ["work", ".", "..", "file"]
-    );
-    assert!(!follows(
-        StatRequest::new(operand, SymlinkAction::Preserve)
-            .lookup()
-            .final_symlink()
-    ));
-    let error = StorageError::after_dispatch(
-        Operation::Write,
-        Failure::Backend(BackendFailure::TimedOut),
-        None,
-    );
-    assert!(requires_reconciliation(error.outcome()));
     Ok(())
 }
 

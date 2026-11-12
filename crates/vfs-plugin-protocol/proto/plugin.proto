@@ -1,5 +1,5 @@
 syntax = "proto3";
-package assethub.vfs.v14;
+package assethub.vfs.v15;
 
 // The sole plugin message schema, shared by gRPC and the WASM call export.
 // Request/Reply control fields are limited to 1 MiB, data to 8 MiB. Missing
@@ -128,19 +128,9 @@ message Initialize { Object settings = 1; }
 message Config { Object config = 1; }
 message Migrate { uint32 from_version = 1; Object config = 2; }
 message Open { string id = 1; Object config = 2; } // config is required; absence is InvalidRequest.
-enum IntermediateLink { INTERMEDIATE_LINK_UNSPECIFIED = 0; FOLLOW_INTERMEDIATE = 1; REJECT_INTERMEDIATE = 2; }
-enum FinalLink { FINAL_LINK_UNSPECIFIED = 0; FOLLOW_FINAL = 1; PRESERVE_FINAL = 2; }
-message Lookup {
-  string operand = 1; // PathExpr grammar.
-  string working_directory = 2; // Instance-relative StoragePath.
-  IntermediateLink intermediate_links = 3;
-}
-message Stat { Lookup lookup = 1; FinalLink final_link = 2; }
 // Each lookup belongs to the enclosing session generation. Observation IDs
 // are issued by the plugin and are usable only in the lookup that issued them.
 // The purpose identifies the storage operation for the lookup and its errors.
-// Values: read-link, get-permissions, set-permissions, list-xattrs,
-// get-xattr, set-xattr and remove-xattr.
 message LookupHandle { uint64 handle = 1; string purpose = 2; }
 message ObserveChild { uint64 lookup = 1; uint64 parent = 2; string name = 3; string purpose = 4; }
 // A traversal read omits final_slot. Execution includes the bound parent,
@@ -149,28 +139,41 @@ message ReadObservedLink { uint64 lookup = 1; uint64 entry = 2; EntrySlot final_
 message EntrySlot { uint64 parent = 1; string name = 2; string path = 3; }
 message ObservedEntry { uint64 id = 1; Entry entry = 2; }
 message OpenedLookup { uint64 handle = 1; ObservedEntry root = 2; }
+// References to plugin-issued observations within one lookup. An omitted
+// entry for a final slot represents a name that was observed missing.
+message BoundSlot { EntrySlot slot = 1; optional uint64 entry = 2; }
+message BoundTarget { EntrySlot slot = 1; uint64 entry = 2; } // slot absent only for root
+message BoundRead { BoundSlot target = 1; uint64 offset = 2; optional uint64 length = 3; }
+message BoundWrite { BoundSlot target = 1; WriteMode mode = 2; Publication publication = 3; }
+message BoundRemove { BoundSlot target = 1; Remove.Kind kind = 2; }
+message BoundRename { BoundSlot source = 1; BoundSlot destination = 2; Rename.Mode mode = 3; }
+message BoundList { BoundTarget target = 1; uint32 size = 2; }
+message BoundCall {
+  uint64 lookup = 1;
+  oneof operation {
+    BoundTarget stat = 2;
+    BoundRead read = 3;
+    BoundWrite write = 4;
+    BoundSlot create_directory = 5;
+    BoundRemove remove = 6;
+    BoundRename rename = 7;
+    BoundList select_directory = 8;
+  }
+}
 message DirectorySelection { string address = 1; bytes identity = 2; }
 // A live pagination position. The backend verifies the selection on resume.
 message DirectoryCheckpoint { DirectorySelection selection = 1; string after = 2; }
 // Selection is a separate exchange from enumeration.
-message SelectDirectory {
-  oneof target { Lookup lookup = 1; DirectoryCheckpoint resume = 2; }
-  uint32 size = 3;
-}
 message List {
   DirectorySelection selection = 1;
   optional string after = 2;
   uint32 size = 3;
 }
-enum CreateDirectoryMode { CREATE_DIRECTORY_MODE_UNSPECIFIED = 0; SINGLE = 1; RECURSIVE = 2; }
-message CreateDirectory { Lookup lookup = 1; CreateDirectoryMode mode = 2; }
 message Remove {
   enum Kind { KIND_UNSPECIFIED = 0; NON_DIRECTORY = 1; EMPTY_DIRECTORY = 2; }
-  Lookup lookup = 1; Kind kind = 2;
 }
 message Rename {
   enum Mode { MODE_UNSPECIFIED = 0; NO_REPLACE = 1; REPLACE = 2; }
-  Lookup source = 1; string destination = 2; Mode mode = 3;
 }
 // An absent slot addresses the observed root. A present slot carries the
 // canonical address and the parent observation for the final name.
@@ -182,27 +185,22 @@ message SetXattr { BoundAttribute target = 1; string name = 2; XattrWriteMode mo
 message RemoveXattr { BoundAttribute target = 1; string name = 2; }
 message StorageCall {
   uint64 handle = 1;
-  reserved 21;
+  reserved 10, 12, 13, 14, 21, 22;
   oneof operation {
-    Stat stat = 10;
-    List list = 11; CreateDirectory create_directory = 12;
-    Remove remove = 13;
-    Rename rename = 14; // Atomic rename within the instance.
+    List list = 11;
     BoundAttribute get_permissions = 15;
     SetPermissions set_permissions = 16; ListXattrs list_xattrs = 17;
     GetXattr get_xattr = 18; SetXattr set_xattr = 19; RemoveXattr remove_xattr = 20;
-    SelectDirectory select_directory = 22;
+    DirectoryCheckpoint resume_directory = 23;
   }
 }
 // File-byte range. Absent length reads through EOF; present zero is an empty
 // range. Resources retain their original Store/session and are never reopened/replayed.
-message Read { uint64 handle = 1; Lookup lookup = 2; uint64 offset = 3; optional uint64 length = 4; }
 // Writes stage a whole file until Commit. Unsupported atomic/mode requests fail
 // before staging. Commit and Abort are terminal, including errors/cancellation;
 // uncertain mutation results are MUTATION_OUTCOME_UNKNOWN and must never be replayed.
 enum WriteMode { WRITE_MODE_UNSPECIFIED = 0; CREATE_NEW = 1; REPLACE = 2; }
 enum Publication { PUBLICATION_UNSPECIFIED = 0; STAGED = 1; ATOMIC = 2; }
-message Write { uint64 handle = 1; Lookup lookup = 2; WriteMode mode = 3; Publication publication = 4; }
 // Each WASM storage Store and gRPC storage session opens exactly one Storage,
 // with handle 1. Child handles increase across kinds and are never reused.
 message Handle { uint64 handle = 1; }
@@ -214,16 +212,18 @@ message Request {
   string generation = 1;
   // Binary bytes for WriterChunk/SetXattr only; all other requests leave it empty.
   bytes data = 2;
+  reserved 10, 11;
   oneof operation {
     Empty describe = 3; Initialize initialize = 4; Config prepare = 5;
     Migrate migrate = 6; Config test_connection = 7;
-    Open open = 8; StorageCall storage = 9; Read read = 10; Write write = 11;
+    Open open = 8; StorageCall storage = 9;
     Handle reader_next = 12; Handle writer_chunk = 13; Handle commit = 14;
     Handle abort = 15; ResourceRef release = 16;
     LookupHandle begin_lookup = 17; // Storage handle.
     ObserveChild observe_child = 18;
     ReadObservedLink read_observed_link = 19;
     LookupHandle verify_lookup = 20; // Lookup handle.
+    BoundCall execute = 21;
   }
 }
 message Prepared { Object config = 1; Object details = 2; }
@@ -256,7 +256,7 @@ service Plugin {
   // Storage resources can only be opened and used through Session.
   rpc Invoke(Request) returns (Reply);
   // One duplex stream owns one Storage and every child reader, writer and lookup. Its first
-  // request is Open. Subsequent requests are Storage/Read/Write/ReaderNext/
+  // request is Open. Subsequent requests are Storage/Execute/ReaderNext/
   // WriterChunk/Commit/Abort/BeginLookup/ObserveChild/ReadObservedLink/VerifyLookup/Release,
   // with one ordered Reply per request.
   // Requests are serialized within a session; separate Storage sessions run

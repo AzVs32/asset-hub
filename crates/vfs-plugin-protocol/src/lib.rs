@@ -1,6 +1,6 @@
 //! Shared protobuf messages, validation and VFS protocol semantics.
 pub mod wire {
-    include!(concat!(env!("OUT_DIR"), "/assethub.vfs.v14.rs"));
+    include!(concat!(env!("OUT_DIR"), "/assethub.vfs.v15.rs"));
 }
 pub use wire::*;
 pub use wire::{reply::Result as Value, request::Operation, storage_call::Operation as StorageOp};
@@ -15,11 +15,7 @@ pub use attributes::{
 };
 pub use codec::*;
 pub use directory::*;
-pub use lookup::{
-    LookupValueError, decode_create_directory, decode_lookup, decode_read, decode_remove,
-    decode_rename, decode_stat, decode_write, encode_create_directory, encode_link_target,
-    encode_lookup, encode_read, encode_remove, encode_rename, encode_stat, encode_write,
-};
+pub use lookup::encode_link_target;
 pub use values::{
     EntryValueError, decode_capabilities, decode_entry, decode_time, encode_capabilities,
     encode_entry, encode_time,
@@ -29,7 +25,7 @@ pub const FILE_DESCRIPTOR_SET: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "
 /// JSON values at application/configuration boundaries, never a wire message.
 pub type JsonObject = std::collections::BTreeMap<String, serde_json::Value>;
 
-pub const PROTOCOL_MAJOR: u32 = 14;
+pub const PROTOCOL_MAJOR: u32 = 15;
 pub const PROTOCOL_MINOR: u32 = 0;
 pub const MAX_CONTROL_BYTES: usize = 1024 * 1024;
 pub const MAX_DATA_BYTES: usize = 8 * 1024 * 1024;
@@ -178,8 +174,6 @@ impl Operation {
         matches!(
             self,
             Self::Storage(_)
-                | Self::Read(_)
-                | Self::Write(_)
                 | Self::ReaderNext(_)
                 | Self::WriterChunk(_)
                 | Self::Commit(_)
@@ -188,15 +182,14 @@ impl Operation {
                 | Self::ObserveChild(_)
                 | Self::ReadObservedLink(_)
                 | Self::VerifyLookup(_)
+                | Self::Execute(_)
                 | Self::Release(_)
         )
     }
     /// Whether the reply can allocate a new resource in this session.
     pub fn allocates_resource(&self) -> bool {
-        matches!(
-            self,
-            Self::Open(_) | Self::Read(_) | Self::Write(_) | Self::BeginLookup(_)
-        )
+        matches!(self, Self::Open(_) | Self::BeginLookup(_))
+            || matches!(self, Self::Execute(call) if matches!(call.operation, Some(BoundOp::Read(_) | BoundOp::Write(_))))
     }
 
     /// Check the result alternative before exposing a transport response.
@@ -213,25 +206,28 @@ impl Operation {
             Self::Migrate(_) => matches!(value, Value::Config(_)),
 
             Self::Open(_) => matches!(value, Value::Storage(_)),
-            Self::Read(_) => matches!(value, Value::Reader(_)),
-            Self::Write(_) => matches!(value, Value::Writer(_)),
             Self::ReaderNext(_) => matches!(value, Value::Chunk(_)),
             Self::Commit(_) => matches!(value, Value::Entry(_)),
             Self::BeginLookup(_) => matches!(value, Value::OpenedLookup(_)),
             Self::ObserveChild(_) => matches!(value, Value::ObservedEntry(_)),
             Self::ReadObservedLink(_) => matches!(value, Value::Bytes(_)),
+            Self::Execute(call) => match &call.operation {
+                Some(BoundOp::Stat(_) | BoundOp::Rename(_)) => matches!(value, Value::Entry(_)),
+                Some(BoundOp::Read(_)) => matches!(value, Value::Reader(_)),
+                Some(BoundOp::Write(_)) => matches!(value, Value::Writer(_)),
+                Some(BoundOp::CreateDirectory(_)) => matches!(value, Value::ObservedEntry(_)),
+                Some(BoundOp::Remove(_)) => matches!(value, Value::Unit(_)),
+                Some(BoundOp::SelectDirectory(_)) => matches!(value, Value::SelectedDirectory(_)),
+                None => false,
+            },
             Self::Storage(call) => match &call.operation {
-                Some(StorageOp::Stat(_) | StorageOp::CreateDirectory(_) | StorageOp::Rename(_)) => {
-                    matches!(value, Value::Entry(_))
-                }
                 Some(StorageOp::List(_)) => matches!(value, Value::Page(_)),
-                Some(StorageOp::SelectDirectory(_)) => matches!(value, Value::SelectedDirectory(_)),
+                Some(StorageOp::ResumeDirectory(_)) => matches!(value, Value::SelectedDirectory(_)),
                 Some(StorageOp::GetPermissions(_)) => matches!(value, Value::Permissions(_)),
                 Some(StorageOp::ListXattrs(_)) => matches!(value, Value::Names(_)),
                 Some(StorageOp::GetXattr(_)) => matches!(value, Value::Bytes(_)),
                 Some(
-                    StorageOp::Remove(_)
-                    | StorageOp::SetPermissions(_)
+                    StorageOp::SetPermissions(_)
                     | StorageOp::SetXattr(_)
                     | StorageOp::RemoveXattr(_),
                 ) => matches!(value, Value::Unit(_)),
@@ -253,6 +249,9 @@ pub fn decode_entry_slot(
     Ok((name, path))
 }
 
+pub mod bound;
+pub use bound::decode_bound_call;
+
 mod failure;
 pub use failure::{
     decode_lookup_purpose, decode_storage_error, encode_lookup_purpose, encode_storage_error,
@@ -262,11 +261,7 @@ impl StorageOp {
     pub fn storage_operation(&self) -> ah_vfs_storage::Operation {
         use ah_vfs_storage::Operation as D;
         match self {
-            Self::Stat(_) => D::Stat,
-            Self::List(_) | Self::SelectDirectory(_) => D::List,
-            Self::CreateDirectory(_) => D::CreateDirectory,
-            Self::Remove(_) => D::Remove,
-            Self::Rename(_) => D::Rename,
+            Self::List(_) | Self::ResumeDirectory(_) => D::List,
             Self::GetPermissions(_) => D::GetPermissions,
             Self::SetPermissions(_) => D::SetPermissions,
             Self::ListXattrs(_) => D::ListXattrs,
@@ -276,26 +271,44 @@ impl StorageOp {
         }
     }
 }
+pub use bound_call::Operation as BoundOp;
+
+impl BoundOp {
+    pub fn storage_operation(&self) -> ah_vfs_storage::Operation {
+        use ah_vfs_storage::Operation as D;
+        match self {
+            Self::Stat(_) => D::Stat,
+            Self::Read(_) => D::Read,
+            Self::Write(_) => D::Write,
+            Self::CreateDirectory(_) => D::CreateDirectory,
+            Self::Remove(_) => D::Remove,
+            Self::Rename(_) => D::Rename,
+            Self::SelectDirectory(_) => D::List,
+        }
+    }
+}
+
 impl Operation {
     pub fn storage_operation(&self) -> Option<ah_vfs_storage::Operation> {
         use ah_vfs_storage::Operation as D;
         match self {
             Self::Storage(call) => call.operation.as_ref().map(StorageOp::storage_operation),
-            Self::Read(_) | Self::ReaderNext(_) => Some(D::Read),
+            Self::ReaderNext(_) => Some(D::Read),
             Self::BeginLookup(call) | Self::VerifyLookup(call) => {
                 decode_lookup_purpose(&call.purpose)
             }
             Self::ObserveChild(call) => decode_lookup_purpose(&call.purpose),
             Self::ReadObservedLink(call) => decode_lookup_purpose(&call.purpose),
-            Self::Write(_) | Self::WriterChunk(_) | Self::Commit(_) | Self::Abort(_) => {
-                Some(D::Write)
-            }
+            Self::Execute(call) => call.operation.as_ref().map(BoundOp::storage_operation),
+            Self::WriterChunk(_) | Self::Commit(_) | Self::Abort(_) => Some(D::Write),
             _ => None,
         }
     }
     /// Private staging and abort cannot publish covered state.
     pub fn may_publish(&self) -> bool {
         matches!(self, Self::Commit(_))
+            || matches!(self, Self::Execute(call) if matches!(call.operation,
+                Some(BoundOp::CreateDirectory(_) | BoundOp::Remove(_) | BoundOp::Rename(_))))
             || matches!(self, Self::Storage(call) if call.operation.as_ref().is_some_and(|op| op.storage_operation().may_mutate()))
     }
 }

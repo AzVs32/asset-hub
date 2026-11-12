@@ -1,4 +1,4 @@
-use ah_vfs_storage::{ContractViolation, Failure, Operation, StorageError};
+use ah_vfs_storage::{Operation, StorageError};
 #[path = "../../../tests/common/mod.rs"]
 mod common;
 use super::*;
@@ -12,7 +12,7 @@ use crate::application::service::{EntryService, InstanceService, MountService};
 use crate::domain::namespace::{ChildMountPolicy, MountId, MountTableError, VirtualPath};
 use crate::domain::{DriverKey, InstanceId};
 use ah_vfs_storage::Capabilities;
-use ah_vfs_storage::{Entry, EntryType, StoragePath};
+
 use std::{
     error::Error,
     future::{Future, pending, poll_fn},
@@ -131,28 +131,11 @@ impl Storage for TestStorage {
     fn chunk_size(&self) -> NonZeroUsize {
         NonZeroUsize::MIN
     }
-    fn stat_entry(
+    fn begin_lookup(
         &self,
-        request: ah_vfs_storage::StatRequest,
-        _: crate::application::port::LookupContext,
-    ) -> StorageFuture<'_, Entry> {
-        Box::pin(async move {
-            let operand = request.path().to_string();
-            let path = StoragePath::parse(operand.trim_start_matches('/')).map_err(|cause| {
-                StorageError::without_effects(
-                    Operation::Stat,
-                    Failure::Contract(ContractViolation::InvalidEntry),
-                    Some(Box::new(cause)),
-                )
-            })?;
-            Entry::new(path, EntryType::file(Some(1)), None).map_err(|cause| {
-                StorageError::without_effects(
-                    Operation::Stat,
-                    Failure::Contract(ContractViolation::InvalidResponse),
-                    Some(Box::new(cause)),
-                )
-            })
-        })
+        operation: Operation,
+    ) -> StorageFuture<'_, Box<dyn crate::application::port::OperationLookup>> {
+        Box::pin(async move { Ok(Box::new(common::TestLookup::new(operation, 1)) as _) })
     }
 }
 

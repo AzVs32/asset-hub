@@ -125,7 +125,7 @@ impl DirectorySupport {
         }
     }
 }
-/// All supported renames are atomic within one instance, never copy/delete.
+/// All supported renames are atomic within one backend namespace, never copy/delete.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum RenameSupport {
     #[default]
@@ -169,11 +169,17 @@ impl AttributeSupport {
 }
 
 /// The guarantee against replacement of the final name before a mutation.
+///
+/// No-replace rename, create-new publication and single-directory creation
+/// check destination absence atomically under either level. Occupied slots
+/// yield [`Rejection::AlreadyExists`] or [`Rejection::Conflict`] with unchanged effects.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum MutationBinding {
-    /// The parent is fixed and the final slot is checked before the mutation.
-    /// Another writer can replace that slot between the check and the effect.
+    /// The parent and generation are enforced through the effect. The final
+    /// slot is checked before dispatch. A mismatch at that check is a conflict
+    /// with unchanged effects. A later replacement can occupy the name when
+    /// the effect runs, including a different entry type during rename.
     #[default]
     ParentPinned,
     /// The final slot is checked atomically with the effect. A mismatch is
@@ -181,7 +187,7 @@ pub enum MutationBinding {
     FinalSlotAtomic,
 }
 
-/// Driver-wide operation and guarantee declarations, shared by all instances.
+/// Driver-wide operation and guarantee declarations, shared by all opened backends.
 /// Composition is infallible because each supported mode carries its prerequisites.
 /// The default declaration supports no operations. Each `with_*` method
 /// updates one capability. Backend/path/authorization restrictions
@@ -193,7 +199,7 @@ pub struct Capabilities {
     list: bool,
     remove: bool,
     read: ReadSupport,
-    /// Reading a link's stored target is independent of following it in lookup.
+    /// Reading a symbolic link returns its stored target bytes.
     read_link: bool,
     write: WriteSupport,
     directories: DirectorySupport,
@@ -286,13 +292,28 @@ impl Capabilities {
         }
     }
     pub fn require_read(self, request: &ReadRequest) -> Result<(), Rejection> {
-        require(self.read.supports(request.range()))
+        self.require_read_range(request.range())
     }
     pub fn require_write(self, request: &WriteRequest) -> Result<(), Rejection> {
-        require(self.write.supports(request.mode(), request.publication()))
+        self.require_write_mode(request.mode(), request.publication())
     }
     pub fn require_rename(self, request: &RenameRequest) -> Result<(), Rejection> {
-        require(self.rename.supports(request.mode()))
+        self.require_rename_mode(request.mode())
+    }
+    pub fn require_read_range(self, range: ReadRange) -> Result<(), Rejection> {
+        require(self.read.supports(range))
+    }
+
+    pub fn require_write_mode(
+        self,
+        mode: WriteMode,
+        publication: Publication,
+    ) -> Result<(), Rejection> {
+        require(self.write.supports(mode, publication))
+    }
+
+    pub fn require_rename_mode(self, mode: RenameMode) -> Result<(), Rejection> {
+        require(self.rename.supports(mode))
     }
 }
 fn require(supported: bool) -> Result<(), Rejection> {

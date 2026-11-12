@@ -224,3 +224,127 @@ impl InstanceRecordRepository for Records {
         })
     }
 }
+
+/// Small no-follow namespace for testing service routing and byte-stream calls.
+pub struct TestLookup {
+    pub operation: ah_vfs_storage::Operation,
+    pub scope: LookupScope,
+    pub size: u64,
+    pub read: Option<Box<dyn Fn() -> Box<dyn StorageFileReader> + Send + Sync>>,
+    pub write: Option<Box<dyn Fn() -> Box<dyn StorageFileWriter> + Send + Sync>>,
+}
+
+use ah_vfs_storage as storage;
+
+impl TestLookup {
+    pub fn new(operation: storage::Operation, size: u64) -> Self {
+        Self {
+            operation,
+            scope: LookupScope::default(),
+            size,
+            read: None,
+            write: None,
+        }
+    }
+
+    fn bind(
+        &self,
+        path: storage::StoragePath,
+        kind: storage::EntryType,
+    ) -> Result<ObservedEntry, storage::StorageError> {
+        let entry = storage::Entry::new(path, kind, None).map_err(|cause| {
+            storage::StorageError::without_effects(
+                self.operation,
+                storage::Failure::Contract(storage::ContractViolation::InvalidEntry),
+                Some(Box::new(cause)),
+            )
+        })?;
+        Ok(self.scope.bind(entry, ()))
+    }
+
+    fn reject(&self, reason: storage::Rejection) -> storage::StorageError {
+        storage::StorageError::without_effects(
+            self.operation,
+            storage::Failure::Rejected(reason),
+            None,
+        )
+    }
+
+    pub fn selection() -> storage::DirectorySelection {
+        storage::DirectorySelection::from_lookup(
+            storage::StoragePath::root(),
+            storage::DirectoryIdentity::from_bytes([1; 16]),
+        )
+    }
+}
+
+impl OperationLookup for TestLookup {
+    fn operation(&self) -> storage::Operation {
+        self.operation
+    }
+
+    fn root(&mut self) -> StorageFuture<'_, ObservedEntry> {
+        Box::pin(async { self.bind(storage::StoragePath::root(), storage::EntryType::Directory) })
+    }
+
+    fn observe<'a>(
+        &'a mut self,
+        parent: &'a ObservedEntry,
+        name: &'a storage::EntryName,
+    ) -> StorageFuture<'a, ObservedEntry> {
+        Box::pin(async move {
+            if self.operation == storage::Operation::Write {
+                return Err(self.reject(storage::Rejection::NotFound));
+            }
+            let path = parent
+                .entry()
+                .path()
+                .join(name)
+                .map_err(|_| self.reject(storage::Rejection::PathTooLong))?;
+            self.bind(path, storage::EntryType::file(Some(self.size)))
+        })
+    }
+
+    fn read_link<'a>(&'a self, _: &'a ObservedEntry) -> StorageFuture<'a, storage::LinkTarget> {
+        Box::pin(async { Err(self.reject(storage::Rejection::NotSymlink)) })
+    }
+
+    fn verify(&self) -> StorageFuture<'_, ()> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn execute_read<'a>(
+        &'a self,
+        _: EntrySlot<'a>,
+        _: storage::ReadRequest,
+    ) -> StorageFuture<'a, Box<dyn StorageFileReader>> {
+        Box::pin(async move {
+            self.read
+                .as_ref()
+                .map(|open| open())
+                .ok_or_else(|| self.reject(storage::Rejection::Unsupported))
+        })
+    }
+
+    fn execute_write<'a>(
+        &'a self,
+        _: EntrySlot<'a>,
+        _: storage::WriteRequest,
+    ) -> StorageFuture<'a, Box<dyn StorageFileWriter>> {
+        Box::pin(async move {
+            self.write
+                .as_ref()
+                .map(|open| open())
+                .ok_or_else(|| self.reject(storage::Rejection::Unsupported))
+        })
+    }
+
+    fn select_directory<'a>(
+        &'a self,
+        _: Option<EntrySlot<'a>>,
+        _: &'a ObservedEntry,
+        _: storage::ListRequest,
+    ) -> StorageFuture<'a, storage::DirectorySelection> {
+        Box::pin(async { Ok(Self::selection()) })
+    }
+}

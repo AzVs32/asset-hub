@@ -1,7 +1,6 @@
 use ah_vfs_storage::{
     AttributeAction, AttributeRequest, AttributeResult, AttributeSupport, BackendFailure, Failure,
-    IntermediateSymlinks, MutationBinding, Operation, PathExpr, Permissions, Rejection,
-    StorageError, StoragePath,
+    MutationBinding, Operation, Permissions, Rejection, StorageError, StoragePath,
 };
 use std::cell::{Cell, RefCell};
 use vfs_plugin_guest::{Dispatcher, api::*};
@@ -100,35 +99,8 @@ impl GuestStorage for Store {
             MutationBinding::ParentPinned
         }
     }
-    fn stat(
-        &self,
-        request: &ah_vfs_storage::StatRequest,
-        base: &StoragePath,
-        links: IntermediateSymlinks,
-    ) -> Result<ah_vfs_storage::Entry> {
-        direct_stat(request, base, links, |_| entry(0))
-    }
     fn begin_lookup(&self, operation: Operation) -> Result<Lookup> {
-        Ok(Lookup::new(ObservedFixture(operation)))
-    }
-    fn read(
-        &self,
-        _: ah_vfs_storage::ReadRequest,
-        _: ah_vfs_storage::StoragePath,
-        _: ah_vfs_storage::IntermediateSymlinks,
-    ) -> Result<Reader> {
-        Ok(Reader::new(Input(Cell::new(false))))
-    }
-    fn write(
-        &self,
-        _: ah_vfs_storage::WriteRequest,
-        _: ah_vfs_storage::StoragePath,
-        _: ah_vfs_storage::IntermediateSymlinks,
-    ) -> Result<Writer> {
-        Ok(Writer::new(Output {
-            fail: self.fail,
-            bytes: RefCell::new(vec![]),
-        }))
+        Ok(Lookup::new(ObservedFixture(operation, self.fail)))
     }
 }
 impl GuestAttributes for Store {
@@ -218,6 +190,94 @@ fn open(dispatcher: &mut Dispatcher<Driver>, fail: bool) -> TestResult<u64> {
         _ => Err("storage envelope".into()),
     }
 }
+fn bind_operation(
+    dispatcher: &mut Dispatcher<Driver>,
+    storage: u64,
+    purpose: &str,
+) -> TestResult<(u64, p::BoundSlot)> {
+    let Value::OpenedLookup(scope) = call(
+        dispatcher,
+        Op::BeginLookup(p::LookupHandle {
+            handle: storage,
+            purpose: purpose.into(),
+        }),
+        vec![],
+    )?
+    .into_value()?
+    else {
+        return Err("missing lookup scope".into());
+    };
+    let parent = scope.root.ok_or("missing root")?.id;
+    let observed = call(
+        dispatcher,
+        Op::ObserveChild(p::ObserveChild {
+            lookup: scope.handle,
+            parent,
+            name: "file".into(),
+            purpose: purpose.into(),
+        }),
+        vec![],
+    );
+    let entry = if purpose == "write" {
+        let error = observed.err().ok_or("write expected missing slot")?;
+        let failure = error
+            .downcast_ref::<p::Failure>()
+            .ok_or("expected storage error")?;
+        assert_eq!(
+            p::decode_storage_error(failure.storage.clone().ok_or("missing failure")?)?.failure(),
+            Failure::Rejected(Rejection::NotFound)
+        );
+        None
+    } else {
+        let Value::ObservedEntry(entry) = observed?.into_value()? else {
+            return Err("missing file observation".into());
+        };
+        Some(entry.id)
+    };
+    Ok((
+        scope.handle,
+        p::BoundSlot {
+            slot: Some(p::EntrySlot {
+                parent,
+                name: "file".into(),
+                path: "file".into(),
+            }),
+            entry,
+        },
+    ))
+}
+
+fn execute(lookup: u64, operation: p::BoundOp) -> Op {
+    Op::Execute(p::BoundCall {
+        lookup,
+        operation: Some(operation),
+    })
+}
+
+fn write_op(dispatcher: &mut Dispatcher<Driver>, storage: u64) -> TestResult<Op> {
+    let (lookup, slot) = bind_operation(dispatcher, storage, "write")?;
+    Ok(execute(
+        lookup,
+        p::BoundOp::Write(p::BoundWrite {
+            target: Some(slot),
+            mode: p::WriteMode::CreateNew.into(),
+            publication: p::Publication::Staged.into(),
+        }),
+    ))
+}
+
+fn read_op(dispatcher: &mut Dispatcher<Driver>, storage: u64) -> TestResult<Op> {
+    let (lookup, slot) = bind_operation(dispatcher, storage, "read")?;
+    Ok(execute(
+        lookup,
+        p::BoundOp::Read(p::BoundRead {
+            target: Some(slot),
+            offset: 0,
+            length: None,
+        }),
+    ))
+}
+
 #[test]
 fn metadata_and_commit_are_tagged_protobuf_results() -> TestResult {
     let mut dispatcher = setup()?;
@@ -226,20 +286,8 @@ fn metadata_and_commit_are_tagged_protobuf_results() -> TestResult {
         Value::Description(_)
     ));
     let storage = open(&mut dispatcher, false)?;
-    let reply = call(
-        &mut dispatcher,
-        Op::Write(p::encode_write(
-            storage,
-            &ah_vfs_storage::WriteRequest::new(
-                ah_vfs_storage::PathExpr::parse("/file")?,
-                ah_vfs_storage::WriteMode::CreateNew,
-                ah_vfs_storage::Publication::Staged,
-            ),
-            &ah_vfs_storage::StoragePath::root(),
-            ah_vfs_storage::IntermediateSymlinks::FollowWithinInstance,
-        )),
-        vec![],
-    )?;
+    let operation = write_op(&mut dispatcher, storage)?;
+    let reply = call(&mut dispatcher, operation, vec![])?;
     let Value::Writer(p::Handle { handle }) = reply.into_value()? else {
         return Err("writer".into());
     };
@@ -269,21 +317,9 @@ fn metadata_and_commit_are_tagged_protobuf_results() -> TestResult {
 fn failed_commit_is_terminal_and_release_never_publishes() -> TestResult {
     let mut dispatcher = setup()?;
     let storage = open(&mut dispatcher, true)?;
-    let Value::Writer(p::Handle { handle }) = call(
-        &mut dispatcher,
-        Op::Write(p::encode_write(
-            storage,
-            &ah_vfs_storage::WriteRequest::new(
-                ah_vfs_storage::PathExpr::parse("/file")?,
-                ah_vfs_storage::WriteMode::CreateNew,
-                ah_vfs_storage::Publication::Staged,
-            ),
-            &ah_vfs_storage::StoragePath::root(),
-            ah_vfs_storage::IntermediateSymlinks::FollowWithinInstance,
-        )),
-        vec![],
-    )?
-    .into_value()?
+    let operation = write_op(&mut dispatcher, storage)?;
+    let Value::Writer(p::Handle { handle }) =
+        call(&mut dispatcher, operation, vec![])?.into_value()?
     else {
         return Err("writer".into());
     };
@@ -304,21 +340,9 @@ fn failed_commit_is_terminal_and_release_never_publishes() -> TestResult {
             None
         )))
     );
-    let Value::Writer(p::Handle { handle }) = call(
-        &mut dispatcher,
-        Op::Write(p::encode_write(
-            storage,
-            &ah_vfs_storage::WriteRequest::new(
-                ah_vfs_storage::PathExpr::parse("/file")?,
-                ah_vfs_storage::WriteMode::CreateNew,
-                ah_vfs_storage::Publication::Staged,
-            ),
-            &ah_vfs_storage::StoragePath::root(),
-            ah_vfs_storage::IntermediateSymlinks::FollowWithinInstance,
-        )),
-        vec![],
-    )?
-    .into_value()?
+    let operation = write_op(&mut dispatcher, storage)?;
+    let Value::Writer(p::Handle { handle }) =
+        call(&mut dispatcher, operation, vec![])?.into_value()?
     else {
         return Err("writer".into());
     };
@@ -337,20 +361,9 @@ fn failed_commit_is_terminal_and_release_never_publishes() -> TestResult {
 fn readers_binary_data_and_generation_checks_do_not_rebind_resources() -> TestResult {
     let mut dispatcher = setup()?;
     let storage = open(&mut dispatcher, false)?;
-    let Value::Reader(p::Handle { handle }) = call(
-        &mut dispatcher,
-        Op::Read(p::encode_read(
-            storage,
-            &ah_vfs_storage::ReadRequest::new(
-                ah_vfs_storage::PathExpr::parse("/file")?,
-                ah_vfs_storage::ReadRange::new(0, None)?,
-            ),
-            &ah_vfs_storage::StoragePath::root(),
-            ah_vfs_storage::IntermediateSymlinks::FollowWithinInstance,
-        )),
-        vec![],
-    )?
-    .into_value()?
+    let operation = read_op(&mut dispatcher, storage)?;
+    let Value::Reader(p::Handle { handle }) =
+        call(&mut dispatcher, operation, vec![])?.into_value()?
     else {
         return Err("reader".into());
     };
@@ -396,19 +409,16 @@ fn readers_binary_data_and_generation_checks_do_not_rebind_resources() -> TestRe
         p::decode_reply(&dispatcher.call(&wrong))?,
         Err(p::Failure::new(p::FailureCode::InvalidRequest))
     );
+    let (lookup, slot) = bind_operation(&mut dispatcher, storage, "stat")?;
     call(
         &mut dispatcher,
-        Op::Storage(p::StorageCall {
-            handle: storage,
-            operation: Some(p::StorageOp::Stat(p::Stat {
-                lookup: Some(p::Lookup {
-                    operand: "/file".into(),
-                    working_directory: String::new(),
-                    intermediate_links: p::IntermediateLink::FollowIntermediate.into(),
-                }),
-                final_link: p::FinalLink::PreserveFinal.into(),
-            })),
-        }),
+        execute(
+            lookup,
+            p::BoundOp::Stat(p::BoundTarget {
+                slot: slot.slot,
+                entry: slot.entry.ok_or("missing stat entry")?,
+            }),
+        ),
         vec![],
     )?;
     Ok(())
@@ -428,16 +438,8 @@ fn each_store_has_one_storage_and_released_reader_ids_are_not_reused() -> TestRe
         Err(p::Failure::new(p::FailureCode::InvalidRequest))
     );
     assert_eq!(OPENS.with(Cell::get), 1);
-    let read = Op::Read(p::encode_read(
-        storage,
-        &ah_vfs_storage::ReadRequest::new(
-            PathExpr::parse("/file")?,
-            ah_vfs_storage::ReadRange::FULL,
-        ),
-        &StoragePath::root(),
-        IntermediateSymlinks::FollowWithinInstance,
-    ));
-    for id in 2..=p::MAX_RESOURCES as u64 {
+    let read = read_op(&mut dispatcher, storage)?;
+    for id in 5..=(p::MAX_RESOURCES as u64 + 2) {
         assert_eq!(
             call(&mut dispatcher, read.clone(), vec![])?.into_value()?,
             Value::Reader(p::Handle { handle: id })
@@ -456,14 +458,14 @@ fn each_store_has_one_storage_and_released_reader_ids_are_not_reused() -> TestRe
         &mut dispatcher,
         Op::Release(p::ResourceRef {
             kind: p::ResourceKind::Reader.into(),
-            handle: 2,
+            handle: 5,
         }),
         vec![],
     )?;
     assert_eq!(
         call(&mut dispatcher, read, vec![])?.into_value()?,
         Value::Reader(p::Handle {
-            handle: p::MAX_RESOURCES as u64 + 1,
+            handle: p::MAX_RESOURCES as u64 + 3,
         })
     );
     assert_eq!(
@@ -490,7 +492,7 @@ fn storage_failure(error: StorageError) -> p::Failure {
     vfs_plugin_guest::api::Failure::from(error).into()
 }
 
-struct ObservedFixture(Operation);
+struct ObservedFixture(Operation, bool);
 impl GuestLookup for ObservedFixture {
     fn root(&mut self) -> Result<(u64, ah_vfs_storage::Entry)> {
         let entry = ah_vfs_storage::Entry::new(
@@ -508,6 +510,11 @@ impl GuestLookup for ObservedFixture {
         name: &ah_vfs_storage::EntryName,
     ) -> Result<(u64, ah_vfs_storage::Entry)> {
         assert_eq!(parent, 70);
+        if self.0 == Operation::Write {
+            return Err(
+                ErrorContext::storage(self.0).failure(Failure::Rejected(Rejection::NotFound))
+            );
+        }
         let kind = if self.0 == Operation::ReadLink {
             assert_eq!(name.as_str(), "opaque");
             ah_vfs_storage::EntryType::Symlink
@@ -521,6 +528,25 @@ impl GuestLookup for ObservedFixture {
         let entry = ah_vfs_storage::Entry::new(path, kind, None)
             .map_err(|_| p::Failure::new(p::FailureCode::InvalidRequest))?;
         Ok((71, entry))
+    }
+
+    fn execute_stat(
+        &self,
+        _: u64,
+        _: ah_vfs_storage::StatRequest,
+    ) -> Result<ah_vfs_storage::Entry> {
+        entry(0)
+    }
+
+    fn execute_read(&self, _: EntrySlot<'_>, _: ah_vfs_storage::ReadRequest) -> Result<Reader> {
+        Ok(Reader::new(Input(Cell::new(false))))
+    }
+
+    fn execute_write(&self, _: EntrySlot<'_>, _: ah_vfs_storage::WriteRequest) -> Result<Writer> {
+        Ok(Writer::new(Output {
+            fail: self.1,
+            bytes: RefCell::new(vec![]),
+        }))
     }
 
     fn execute_attribute(

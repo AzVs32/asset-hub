@@ -1,6 +1,15 @@
 //! Exercise the VFS resolver against an isolated namespace that never follows links.
+use ah_vfs::resolve::operand::{
+    CreateDirectoryMode, CreateDirectoryOperand, ListOperand, ListOperandTarget, ReadOperand,
+    RemoveOperand, RenameOperand, StatOperand, WriteOperand,
+};
+use ah_vfs::resolve::path::{
+    LookupStart, MAX_PATH_EXPR_BYTES, PathComponent, PathExpr, RootedPath,
+};
+use ah_vfs::resolve::policy::{IntermediateSymlinks, MissingName, PathLookup, SymlinkAction};
 use ah_vfs::resolve::{
-    LookupPort, MAX_SYMLINK_EXPANSIONS, Resolver, SymlinkTraversal, prepare_link_target,
+    LookupPort, MAX_SYMLINK_EXPANSIONS, ResolveFailure, Resolver, SymlinkTraversal,
+    prepare_link_target,
 };
 use ah_vfs_storage::*;
 use std::{collections::BTreeMap, error::Error, sync::Arc};
@@ -51,8 +60,8 @@ fn listed_native_spellings_reopen_the_same_exact_slots() -> TestResult {
         ("docs/e\u{301}", Node::Directory),
     ])?;
     let root = StoragePath::root();
-    let request = ListRequest::new(
-        ListTarget::Path(PathExpr::parse("/docs")?),
+    let request = ListOperand::new(
+        ListOperandTarget::Path(PathExpr::parse("/docs")?),
         PageSize::DEFAULT,
     );
     let directory = namespace.select(
@@ -89,7 +98,7 @@ fn listed_native_spellings_reopen_the_same_exact_slots() -> TestResult {
             .iter()
             .zip(["docs/Report", "docs/e\u{301}", "docs/report", "docs/é"])
     {
-        let stat = StatRequest::new(entry.path().to_rooted_expr(), SymlinkAction::Preserve);
+        let stat = StatOperand::new(entry.path().to_rooted_expr(), SymlinkAction::Preserve);
         let selected = namespace.select(
             stat.lookup(),
             &cwd,
@@ -181,9 +190,11 @@ impl Namespace {
         lookup: PathLookup<'_>,
         cwd: &StoragePath,
         links: IntermediateSymlinks,
-    ) -> Result<StoragePath, Failure> {
+    ) -> Result<StoragePath, ResolveFailure> {
         let op = Operation::Stat;
-        let directories = self.directories(cwd, op).map_err(|error| error.failure())?;
+        let directories = self
+            .directories(cwd, op)
+            .map_err(|error| ResolveFailure::from_error(&error))?;
         let selected = Resolver::new(op, links)
             .walk(
                 &mut Fixture {
@@ -194,16 +205,14 @@ impl Namespace {
                 directories,
             )
             .and_then(|selected| selected.require_entry(op))
-            .map_err(|error| error.failure())?;
-        lookup
-            .check_existing_target(selected.entry.path(), selected.entry.entry_type())
-            .map_err(Failure::Rejected)?;
+            .map_err(|error| ResolveFailure::from_error(&error))?;
+        lookup.check_existing_target(selected.entry.path(), selected.entry.entry_type())?;
         Ok(selected.entry.path().clone())
     }
 
     fn mkdir_recursive(
         &mut self,
-        request: &CreateDirectoryRequest,
+        request: &CreateDirectoryOperand,
     ) -> Result<StoragePath, StorageError> {
         let op = Operation::CreateDirectory;
         let directories = self.directories(&StoragePath::root(), op)?;
@@ -222,12 +231,14 @@ impl Namespace {
 
     fn rename_decision(
         &mut self,
-        request: &RenameRequest,
+        request: &RenameOperand,
         cwd: &StoragePath,
-    ) -> Result<RenameDecision, Failure> {
+    ) -> Result<RenameDecision, ResolveFailure> {
         let op = Operation::Rename;
         let (source, destination) = request.lookups();
-        let directories = self.directories(cwd, op).map_err(|error| error.failure())?;
+        let directories = self
+            .directories(cwd, op)
+            .map_err(|error| ResolveFailure::from_error(&error))?;
         let mut resolver = Resolver::new(op, IntermediateSymlinks::default());
         let mut backend = Fixture {
             namespace: self,
@@ -235,45 +246,92 @@ impl Namespace {
         };
         let (parent, name) = resolver
             .parent(&mut backend, source, directories.clone())
-            .map_err(|error| error.failure())?;
+            .map_err(|error| ResolveFailure::from_error(&error))?;
         let source_address = parent
             .entry
             .path()
             .join(&name)
-            .map_err(|_| Failure::Rejected(Rejection::PathTooLong))?;
+            .map_err(|_| ResolveFailure::from(Rejection::PathTooLong))?;
         let source_entry = backend
             .observe(&parent, source_address)
-            .map_err(|error| error.failure())?;
+            .map_err(|error| ResolveFailure::from_error(&error))?;
         let kind = source_entry.entry.entry_type();
-        source
-            .check_existing_target(source_entry.entry.path(), kind)
-            .map_err(Failure::Rejected)?;
+        source.check_existing_target(source_entry.entry.path(), kind)?;
 
         let (parent, name) = resolver
             .parent(&mut backend, destination, directories)
-            .map_err(|error| error.failure())?;
+            .map_err(|error| ResolveFailure::from_error(&error))?;
         let address = parent
             .entry
             .path()
             .join(&name)
-            .map_err(|_| Failure::Rejected(Rejection::PathTooLong))?;
+            .map_err(|_| ResolveFailure::from(Rejection::PathTooLong))?;
         let observation = match self.nodes.get(&address).map(|node| node.kind()) {
-            None => RenameDestination::Missing,
-            Some(_) if source_entry.entry.path() == &address => RenameDestination::SameSlot,
+            None => ObservedDestination::Missing,
+            Some(_) if source_entry.entry.path() == &address => ObservedDestination::SameSlot,
             Some(EntryType::Directory)
                 if self
                     .nodes
                     .keys()
                     .any(|child| child.parent().as_ref() == Some(&address)) =>
             {
-                RenameDestination::NonEmptyDirectory
+                ObservedDestination::NonEmptyDirectory
             }
-            Some(kind) => RenameDestination::Occupied(kind),
+            Some(kind) => ObservedDestination::Occupied(kind),
         };
-        request
-            .decide_destination(&address, kind, observation)
-            .map_err(Failure::Rejected)
+        decide_destination(request, &address, kind, observation)
     }
+}
+
+/// The destination observed within the same bound operation as the source.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ObservedDestination {
+    Missing,
+    /// The same directory entry slot, identified by its parent identity and name.
+    /// A different name for the same underlying object is a distinct slot.
+    SameSlot,
+    /// An occupied, distinct slot. A directory in this variant is empty.
+    Occupied(EntryType),
+    NonEmptyDirectory,
+}
+
+/// Whether the executor needs to issue an atomic move for a validated rename.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RenameDecision {
+    Unchanged,
+    Move,
+}
+
+fn decide_destination(
+    operand: &RenameOperand,
+    address: &StoragePath,
+    source: EntryType,
+    destination: ObservedDestination,
+) -> Result<RenameDecision, ResolveFailure> {
+    let lookup = operand.lookups().1;
+    let canonical = match destination {
+        ObservedDestination::Missing => {
+            lookup.check_missing_target_shape(address, source == EntryType::Directory)?;
+            ah_vfs_storage::RenameDestination::Missing
+        }
+        ObservedDestination::SameSlot => {
+            lookup.check_existing_target(address, source)?;
+            return Ok(RenameDecision::Unchanged);
+        }
+        ObservedDestination::Occupied(kind) => {
+            lookup.check_existing_target(address, kind)?;
+            ah_vfs_storage::RenameDestination::Occupied(kind)
+        }
+        ObservedDestination::NonEmptyDirectory => {
+            lookup.check_existing_target(address, EntryType::Directory)?;
+            ah_vfs_storage::RenameDestination::NonEmptyDirectory
+        }
+    };
+    let source_address = address.clone();
+    let request = RenameRequest::new(source_address, address.clone(), operand.mode())
+        .map_err(|_| ResolveFailure::Storage(Failure::InvalidRequest))?;
+    request.decide_destination(source, canonical)?;
+    Ok(RenameDecision::Move)
 }
 
 struct Fixture<'a> {
@@ -351,7 +409,7 @@ fn final_slot_atomic_rejects_same_type_replacements_before_the_effect() -> TestR
     ] {
         let mut namespace = Namespace::new([("target", before)])?;
         let path = StoragePath::parse("target")?;
-        let stat = StatRequest::new(PathExpr::parse("/target")?, SymlinkAction::Preserve);
+        let stat = StatOperand::new(PathExpr::parse("/target")?, SymlinkAction::Preserve);
         let op = Operation::Remove;
         let directories = namespace.directories(&StoragePath::root(), op)?;
         let bound = Resolver::new(op, IntermediateSymlinks::default())
@@ -409,19 +467,13 @@ fn parent_navigation_does_not_skip_failed_prefixes_and_stays_inside_root() -> Te
     ])?;
     let root = StoragePath::root();
     for (path, expected) in [
-        (
-            "missing/../target",
-            Err(Failure::Rejected(Rejection::NotFound)),
-        ),
-        (
-            "file/../target",
-            Err(Failure::Rejected(Rejection::NotDirectory)),
-        ),
+        ("missing/../target", Err(Rejection::NotFound.into())),
+        ("file/../target", Err(Rejection::NotDirectory.into())),
         ("dir/../target", Ok(StoragePath::parse("target")?)),
         ("/../../target", Ok(StoragePath::parse("target")?)),
         ("dir/back", Ok(StoragePath::parse("target")?)),
     ] {
-        let read = ReadRequest::new(PathExpr::parse(path)?, ReadRange::FULL);
+        let read = ReadOperand::new(PathExpr::parse(path)?, ReadRange::FULL);
         assert_eq!(
             fs.select(read.lookup(), &root, IntermediateSymlinks::default()),
             expected,
@@ -445,43 +497,23 @@ fn expanded_links_keep_intermediate_final_and_trailing_slash_rules() -> TestResu
     let follow = SymlinkAction::FollowWithinInstance;
     let preserve = SymlinkAction::Preserve;
     for (path, final_link, expected) in [
-        (
-            "alias/file",
-            follow,
-            Err(Failure::Rejected(Rejection::SymlinkNotAllowed)),
-        ),
-        (
-            "nested",
-            follow,
-            Err(Failure::Rejected(Rejection::SymlinkNotAllowed)),
-        ),
+        ("alias/file", follow, Err(ResolveFailure::SymlinkNotAllowed)),
+        ("nested", follow, Err(ResolveFailure::SymlinkNotAllowed)),
         ("end", follow, Ok(StoragePath::parse("dir/file")?)),
         ("end", preserve, Ok(StoragePath::parse("end")?)),
         ("alias/", follow, Ok(StoragePath::parse("dir")?)),
-        (
-            "alias/",
-            preserve,
-            Err(Failure::Rejected(Rejection::NotDirectory)),
-        ),
-        (
-            "end/",
-            follow,
-            Err(Failure::Rejected(Rejection::NotDirectory)),
-        ),
-        (
-            "target_slash",
-            follow,
-            Err(Failure::Rejected(Rejection::NotDirectory)),
-        ),
+        ("alias/", preserve, Err(Rejection::NotDirectory.into())),
+        ("end/", follow, Err(Rejection::NotDirectory.into())),
+        ("target_slash", follow, Err(Rejection::NotDirectory.into())),
     ] {
-        let stat = StatRequest::new(PathExpr::parse(path)?, final_link);
+        let stat = StatOperand::new(PathExpr::parse(path)?, final_link);
         assert_eq!(
             fs.select(stat.lookup(), &root, IntermediateSymlinks::Reject),
             expected,
             "{path} {final_link:?}"
         );
     }
-    let stat = StatRequest::new(PathExpr::parse("nested")?, follow);
+    let stat = StatOperand::new(PathExpr::parse("nested")?, follow);
     assert_eq!(
         fs.select(stat.lookup(), &root, IntermediateSymlinks::default())?,
         StoragePath::parse("dir/file")?,
@@ -499,15 +531,12 @@ fn cycles_exhaust_the_budget_and_dangling_links_cannot_create_their_targets() ->
     let root = StoragePath::root();
     let links = IntermediateSymlinks::default();
     for (path, rejection) in [
-        ("first", Rejection::TooManySymlinks),
-        ("dangling", Rejection::NotFound),
+        ("first", ResolveFailure::TooManySymlinks),
+        ("dangling", Rejection::NotFound.into()),
     ] {
-        let stat = StatRequest::new(PathExpr::parse(path)?, SymlinkAction::FollowWithinInstance);
-        assert_eq!(
-            fs.select(stat.lookup(), &root, links),
-            Err(Failure::Rejected(rejection))
-        );
-        let read_link = StatRequest::new(PathExpr::parse(path)?, SymlinkAction::Preserve);
+        let stat = StatOperand::new(PathExpr::parse(path)?, SymlinkAction::FollowWithinInstance);
+        assert_eq!(fs.select(stat.lookup(), &root, links), Err(rejection));
+        let read_link = StatOperand::new(PathExpr::parse(path)?, SymlinkAction::Preserve);
         assert_eq!(
             fs.select(read_link.lookup(), &root, links)?,
             StoragePath::parse(path)?
@@ -516,7 +545,7 @@ fn cycles_exhaust_the_budget_and_dangling_links_cannot_create_their_targets() ->
 
     for path in ["dangling", "dangling/new"] {
         let request =
-            CreateDirectoryRequest::new(PathExpr::parse(path)?, CreateDirectoryMode::Recursive);
+            CreateDirectoryOperand::new(PathExpr::parse(path)?, CreateDirectoryMode::Recursive);
         let error = fs
             .mkdir_recursive(&request)
             .err()
@@ -531,7 +560,7 @@ fn cycles_exhaust_the_budget_and_dangling_links_cannot_create_their_targets() ->
 #[test]
 fn recursive_creation_reports_known_partial_effects_separately_from_failure() -> TestResult {
     let mut fs = Namespace::new([("file", Node::File)])?;
-    let request = CreateDirectoryRequest::new(
+    let request = CreateDirectoryOperand::new(
         PathExpr::parse("created/../file/child")?,
         CreateDirectoryMode::Recursive,
     );
@@ -559,7 +588,7 @@ fn recursive_creation_does_not_claim_a_competing_operations_effect() -> TestResu
     let mut fs = Namespace::new([("file", Node::File)])?;
     let parent = StoragePath::parse("competing")?;
     fs.competing_creation = Some(parent.clone());
-    let request = CreateDirectoryRequest::new(
+    let request = CreateDirectoryOperand::new(
         PathExpr::parse("competing/../file/child")?,
         CreateDirectoryMode::Recursive,
     );
@@ -578,7 +607,7 @@ fn recursive_creation_does_not_claim_a_competing_operations_effect() -> TestResu
 fn recursive_creation_includes_effects_when_final_verification_fails() -> TestResult {
     let mut fs = Namespace::new([])?;
     fs.fail_final_verification = true;
-    let request = CreateDirectoryRequest::new(
+    let request = CreateDirectoryOperand::new(
         PathExpr::parse("parent/child")?,
         CreateDirectoryMode::Recursive,
     );
@@ -614,21 +643,21 @@ fn rename_checks_resolved_slots_before_replacement_emptiness() -> TestResult {
         (
             "alias/./source/",
             RenameMode::NoReplace,
-            Err(Failure::Rejected(Rejection::AlreadyExists)),
+            Err(Rejection::AlreadyExists.into()),
         ),
         (
             "busy/",
             RenameMode::Replace,
-            Err(Failure::Rejected(Rejection::DirectoryNotEmpty)),
+            Err(Rejection::DirectoryNotEmpty.into()),
         ),
         (
             "busy/",
             RenameMode::NoReplace,
-            Err(Failure::Rejected(Rejection::AlreadyExists)),
+            Err(Rejection::AlreadyExists.into()),
         ),
         ("empty/", RenameMode::Replace, Ok(RenameDecision::Move)),
     ] {
-        let rename = RenameRequest::new(
+        let rename = RenameOperand::new(
             PathExpr::parse("/work//source")?,
             PathExpr::parse(destination)?,
             mode,
@@ -639,14 +668,14 @@ fn rename_checks_resolved_slots_before_replacement_emptiness() -> TestResult {
             "{destination} {mode:?}"
         );
     }
-    let missing = RenameRequest::new(
+    let missing = RenameOperand::new(
         PathExpr::parse("missing")?,
         PathExpr::parse("alias/missing")?,
         RenameMode::Replace,
     )?;
     assert_eq!(
         fs.rename_decision(&missing, &cwd),
-        Err(Failure::Rejected(Rejection::NotFound))
+        Err(Rejection::NotFound.into())
     );
     Ok(())
 }
@@ -655,8 +684,8 @@ fn rename_checks_resolved_slots_before_replacement_emptiness() -> TestResult {
 fn directory_creation_has_one_existing_target_policy_for_each_mode() -> TestResult {
     let address = StoragePath::parse("dir")?;
     let operand = PathExpr::parse("dir")?;
-    let single_request = CreateDirectoryRequest::new(operand.clone(), CreateDirectoryMode::Single);
-    let recursive_request = CreateDirectoryRequest::new(operand, CreateDirectoryMode::Recursive);
+    let single_request = CreateDirectoryOperand::new(operand.clone(), CreateDirectoryMode::Single);
+    let recursive_request = CreateDirectoryOperand::new(operand, CreateDirectoryMode::Recursive);
     assert_eq!(
         single_request.lookup().final_symlink(),
         SymlinkAction::Preserve
@@ -666,21 +695,25 @@ fn directory_creation_has_one_existing_target_policy_for_each_mode() -> TestResu
         SymlinkAction::FollowWithinInstance
     );
     for (entry_type, single, recursive) in [
-        (EntryType::Directory, Err(Rejection::AlreadyExists), Ok(())),
+        (
+            EntryType::Directory,
+            Err(Rejection::AlreadyExists.into()),
+            Ok(()),
+        ),
         (
             EntryType::file(Some(0)),
-            Err(Rejection::AlreadyExists),
-            Err(Rejection::NotDirectory),
+            Err(Rejection::AlreadyExists.into()),
+            Err(Rejection::NotDirectory.into()),
         ),
         (
             EntryType::Symlink,
-            Err(Rejection::AlreadyExists),
-            Err(Rejection::NotDirectory),
+            Err(Rejection::AlreadyExists.into()),
+            Err(Rejection::NotDirectory.into()),
         ),
         (
             EntryType::Other,
-            Err(Rejection::AlreadyExists),
-            Err(Rejection::NotDirectory),
+            Err(Rejection::AlreadyExists.into()),
+            Err(Rejection::NotDirectory.into()),
         ),
     ] {
         assert_eq!(
@@ -705,10 +738,10 @@ fn file_and_entry_operations_use_different_final_link_policies() -> TestResult {
     let link = StoragePath::parse("work/link")?;
     let target = StoragePath::parse("work/target")?;
     let file = EntryType::file(None);
-    let read = ReadRequest::new(path.clone(), ReadRange::FULL);
-    let link_lookup = StatRequest::new(path.clone(), SymlinkAction::Preserve);
+    let read = ReadOperand::new(path.clone(), ReadRange::FULL);
+    let link_lookup = StatOperand::new(path.clone(), SymlinkAction::Preserve);
     let read_link = ReadLinkRequest::new(link.clone());
-    let remove = RemoveRequest::new(path, RemoveKind::NonDirectory)?;
+    let remove = RemoveOperand::new(path, RemoveKind::NonDirectory)?;
 
     assert_eq!(
         read.lookup().final_symlink(),
@@ -729,12 +762,12 @@ fn file_and_entry_operations_use_different_final_link_policies() -> TestResult {
         Ok(())
     );
 
-    let slash = RemoveRequest::new(PathExpr::parse("link/")?, RemoveKind::NonDirectory)?;
+    let slash = RemoveOperand::new(PathExpr::parse("link/")?, RemoveKind::NonDirectory)?;
     assert_eq!(
         slash
             .lookup()
             .check_existing_target(&link, EntryType::Symlink),
-        Err(Rejection::NotDirectory)
+        Err(Rejection::NotDirectory.into())
     );
     Ok(())
 }
@@ -743,7 +776,7 @@ fn file_and_entry_operations_use_different_final_link_policies() -> TestResult {
 fn destination_rules_apply_to_absent_and_existing_entries() -> TestResult {
     let file = EntryType::file(None);
     let address = StoragePath::parse("work/dest")?;
-    let create = WriteRequest::new(
+    let create = WriteOperand::new(
         PathExpr::parse("dest")?,
         WriteMode::CreateNew,
         Publication::Atomic,
@@ -751,42 +784,48 @@ fn destination_rules_apply_to_absent_and_existing_entries() -> TestResult {
     assert_eq!(create.check_new_destination(&address), Ok(()));
     assert_eq!(
         create.lookup().check_existing_target(&address, file),
-        Err(Rejection::AlreadyExists)
+        Err(Rejection::AlreadyExists.into())
     );
 
-    let write = WriteRequest::new(
+    let write = WriteOperand::new(
         PathExpr::parse("dest/")?,
         WriteMode::CreateNew,
         Publication::Atomic,
     );
     assert_eq!(
         write.check_new_destination(&address),
-        Err(Rejection::NotDirectory)
+        Err(Rejection::NotDirectory.into())
     );
-    let rename = RenameRequest::new(
+    let rename = RenameOperand::new(
         PathExpr::parse("src")?,
         PathExpr::parse("dest/")?,
         RenameMode::Replace,
     )?;
     assert_eq!(
-        rename.decide_destination(&address, EntryType::Directory, RenameDestination::Missing),
+        decide_destination(
+            &rename,
+            &address,
+            EntryType::Directory,
+            ObservedDestination::Missing
+        ),
         Ok(RenameDecision::Move)
     );
     assert_eq!(
-        rename.decide_destination(&address, file, RenameDestination::Missing),
-        Err(Rejection::NotDirectory)
+        decide_destination(&rename, &address, file, ObservedDestination::Missing),
+        Err(Rejection::NotDirectory.into())
     );
     assert_eq!(
-        rename.decide_destination(&address, file, RenameDestination::SameSlot),
-        Err(Rejection::NotDirectory)
+        decide_destination(&rename, &address, file, ObservedDestination::SameSlot),
+        Err(Rejection::NotDirectory.into())
     );
     assert_eq!(
-        rename.decide_destination(
+        decide_destination(
+            &rename,
             &address,
             file,
-            RenameDestination::Occupied(EntryType::Directory)
+            ObservedDestination::Occupied(EntryType::Directory)
         ),
-        Err(Rejection::IsDirectory)
+        Err(Rejection::IsDirectory.into())
     );
     Ok(())
 }
@@ -794,8 +833,8 @@ fn destination_rules_apply_to_absent_and_existing_entries() -> TestResult {
 #[test]
 fn effective_suffix_controls_link_policy_even_after_expansion() -> TestResult {
     let path = PathExpr::parse("/a//link/")?;
-    let stat = StatRequest::new(path.clone(), SymlinkAction::Preserve);
-    let read = ReadRequest::new(path, ReadRange::FULL);
+    let stat = StatOperand::new(path.clone(), SymlinkAction::Preserve);
+    let read = ReadOperand::new(path, ReadRange::FULL);
     let parent = StoragePath::parse("a")?;
     let link_address = parent.join(&EntryName::parse("link")?)?;
     let mut links = SymlinkTraversal::new(IntermediateSymlinks::Reject);
@@ -806,7 +845,7 @@ fn effective_suffix_controls_link_policy_even_after_expansion() -> TestResult {
     assert_eq!(
         stat.lookup()
             .check_existing_target(&link_address, EntryType::Symlink),
-        Err(Rejection::NotDirectory)
+        Err(Rejection::NotDirectory.into())
     );
 
     assert_eq!(
@@ -829,7 +868,7 @@ fn effective_suffix_controls_link_policy_even_after_expansion() -> TestResult {
     assert!(target.requires_directory());
     assert_eq!(
         links.encounter(read.lookup(), &target.components()[3..]),
-        Err(Rejection::SymlinkNotAllowed)
+        Err(ResolveFailure::SymlinkNotAllowed)
     );
     assert_eq!(
         links.encounter(read.lookup(), &[]),
@@ -838,14 +877,14 @@ fn effective_suffix_controls_link_policy_even_after_expansion() -> TestResult {
     assert_eq!(
         read.lookup()
             .check_existing_target(&StoragePath::root(), EntryType::Directory),
-        Err(Rejection::IsDirectory)
+        Err(Rejection::IsDirectory.into())
     );
     Ok(())
 }
 
 #[test]
 fn rename_shares_an_expansion_budget_across_its_two_operands() -> TestResult {
-    let rename = RenameRequest::new(
+    let rename = RenameOperand::new(
         PathExpr::parse("prefix/source")?,
         PathExpr::parse("/alias/destination")?,
         RenameMode::NoReplace,
@@ -866,7 +905,7 @@ fn rename_shares_an_expansion_budget_across_its_two_operands() -> TestResult {
     );
     assert_eq!(
         links.encounter(destination, destination_suffix),
-        Err(Rejection::TooManySymlinks)
+        Err(ResolveFailure::TooManySymlinks)
     );
     assert_eq!(
         links.encounter(destination, &[]),
@@ -944,9 +983,12 @@ fn link_target_bytes_are_lossless_and_following_checks_expanded_length() -> Test
 fn creation_policy_distinguishes_operand_names_from_dangling_targets() -> TestResult {
     let path = PathExpr::parse("prefix/../new/")?;
     let address = StoragePath::parse("prefix")?;
-    let single = CreateDirectoryRequest::new(path.clone(), CreateDirectoryMode::Single);
-    let recursive = CreateDirectoryRequest::new(path, CreateDirectoryMode::Recursive);
-    for (request, intermediate) in [(&single, Err(Rejection::NotFound)), (&recursive, Ok(()))] {
+    let single = CreateDirectoryOperand::new(path.clone(), CreateDirectoryMode::Single);
+    let recursive = CreateDirectoryOperand::new(path, CreateDirectoryMode::Recursive);
+    for (request, intermediate) in [
+        (&single, Err(Rejection::NotFound.into())),
+        (&recursive, Ok(())),
+    ] {
         let lookup = request.lookup();
         assert_eq!(
             lookup.check_missing_name(&address, MissingName::OperandIntermediate),
@@ -958,20 +1000,20 @@ fn creation_policy_distinguishes_operand_names_from_dangling_targets() -> TestRe
         );
         assert_eq!(
             lookup.check_missing_name(&address, MissingName::LinkTarget),
-            Err(Rejection::NotFound)
+            Err(Rejection::NotFound.into())
         );
     }
 
-    let read = ReadRequest::new(PathExpr::parse("prefix/../new/")?, ReadRange::FULL);
+    let read = ReadOperand::new(PathExpr::parse("prefix/../new/")?, ReadRange::FULL);
     assert_eq!(
         read.lookup()
             .check_missing_name(&address, MissingName::OperandIntermediate),
-        Err(Rejection::NotFound)
+        Err(Rejection::NotFound.into())
     );
     assert_eq!(
         read.lookup()
             .check_missing_name(&address, MissingName::OperandFinal),
-        Err(Rejection::NotFound)
+        Err(Rejection::NotFound.into())
     );
     Ok(())
 }

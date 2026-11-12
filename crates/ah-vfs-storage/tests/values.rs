@@ -40,29 +40,6 @@ fn addresses_preserve_identity_and_all_entry_points_share_validation() -> Result
 }
 
 #[test]
-fn selected_entry_addresses_become_exact_instance_rooted_request_operands() -> Result {
-    let maximum = "x".repeat(MAX_PATH_BYTES);
-    for text in ["", "file", "docs/Report", "文档/é/e\u{301}", &maximum] {
-        let address = StoragePath::parse(text)?;
-        let entry_type = if address.is_root() {
-            EntryType::Directory
-        } else {
-            EntryType::file(None)
-        };
-        let selected = Entry::new(address, entry_type, None)?;
-        let request = StatRequest::new(selected.path().to_rooted_expr(), SymlinkAction::Preserve);
-
-        let operand = request.lookup().path();
-        assert_eq!(operand.start(), LookupStart::InstanceRoot);
-        assert_eq!(operand.requires_directory(), selected.path().is_root());
-        let rendered = operand.to_string();
-        assert_eq!(rendered.strip_prefix('/'), Some(text));
-        assert_eq!(&PathExpr::parse(&rendered)?, operand);
-    }
-    Ok(())
-}
-
-#[test]
 fn invalid_addresses_cannot_enter_through_owned_or_parsed_conversions() {
     for path in [
         "/absolute",
@@ -163,79 +140,37 @@ fn authoritative_backend_names_are_decoded_exactly_or_rejected() -> Result {
     Ok(())
 }
 #[test]
-fn operation_requests_protect_the_selected_root_and_validate_entry_operands() -> Result {
+fn canonical_mutation_requests_reject_root() -> Result {
     let root = StoragePath::root();
-    let write = WriteRequest::new(
-        PathExpr::parse("alias")?,
-        WriteMode::CreateNew,
-        Publication::Atomic,
+    let file = StoragePath::parse("file")?;
+    assert_eq!(
+        WriteRequest::new(root.clone(), WriteMode::CreateNew, Publication::Atomic),
+        Err(RequestPathError::RootNotAllowed)
     );
     assert_eq!(
-        write.lookup().check_address(&root),
-        Err(Rejection::RootProtected)
-    );
-
-    let rename = RenameRequest::new(
-        PathExpr::parse("a")?,
-        PathExpr::parse("b")?,
-        RenameMode::NoReplace,
-    )?;
-    assert_eq!(
-        rename.lookups().0.check_address(&root),
-        Err(Rejection::RootProtected)
+        RemoveRequest::new(root.clone(), RemoveKind::NonDirectory),
+        Err(RequestPathError::RootNotAllowed)
     );
     assert_eq!(
-        rename.lookups().1.check_address(&root),
-        Err(Rejection::RootProtected)
-    );
-    let remove = RemoveRequest::new(PathExpr::parse("link")?, RemoveKind::NonDirectory)?;
-    assert_eq!(
-        remove.lookup().check_address(&root),
-        Err(Rejection::RootProtected)
-    );
-    for operand in ["/", ".", "..", "a/../"] {
-        assert_eq!(
-            RemoveRequest::new(PathExpr::parse(operand)?, RemoveKind::EmptyDirectory),
-            Err(RequestPathError::ExpectedEntryName),
-        );
-        assert_eq!(
-            RenameRequest::new(
-                PathExpr::parse("a")?,
-                PathExpr::parse(operand)?,
-                RenameMode::NoReplace
-            ),
-            Err(RequestPathError::ExpectedEntryName),
-        );
-        assert_eq!(
-            RenameRequest::new(
-                PathExpr::parse(operand)?,
-                PathExpr::parse("b")?,
-                RenameMode::Replace
-            ),
-            Err(RequestPathError::ExpectedEntryName),
-        );
-    }
-    let maximum = PathExpr::parse(&format!("/{}/", "a".repeat(MAX_PATH_BYTES)))?;
-    assert_eq!(
-        RemoveRequest::new(maximum.clone(), RemoveKind::EmptyDirectory)?.path(),
-        &maximum
+        RenameRequest::new(file.clone(), root.clone(), RenameMode::Replace),
+        Err(RequestPathError::RootNotAllowed)
     );
     assert_eq!(
-        RenameRequest::new(PathExpr::parse("a")?, maximum.clone(), RenameMode::Replace)?
-            .destination(),
-        &maximum
+        RenameRequest::new(root.clone(), file, RenameMode::NoReplace),
+        Err(RequestPathError::RootNotAllowed)
     );
-
-    let recursive =
-        CreateDirectoryRequest::new(PathExpr::parse("/")?, CreateDirectoryMode::Recursive);
     assert_eq!(
-        recursive
-            .lookup()
-            .check_existing_target(&root, EntryType::Directory),
-        Ok(())
+        CreateDirectoryRequest::new(root.clone()),
+        Err(RequestPathError::RootNotAllowed)
+    );
+    assert_eq!(StatRequest::new(root.clone()).path(), &root);
+    assert_eq!(
+        ReadRequest::new(root.clone(), ReadRange::FULL).path(),
+        &root
     );
     Ok(())
 }
+
 #[test]
 fn ranges_handle_empty_reads_eof_and_integer_boundaries() -> Result {
     assert_eq!(ReadRange::default(), ReadRange::FULL);
@@ -358,16 +293,13 @@ fn selected(address: &str, identity: u8) -> Result<DirectorySelection> {
 
 #[test]
 fn directory_pages_check_scope_order_cursor_limit_and_forward_progress() -> Result {
-    let request = ListRequest::new(
-        ListTarget::Path(PathExpr::parse("/alias/")?),
-        PageSize::new(2)?,
-    );
+    let request = ListRequest::new(StoragePath::parse("dir")?, PageSize::new(2)?);
     let bound = request.bind_selection(selected("dir", 1)?)?;
     let page = DirectoryPage::new(&bound, vec![entry("dir/a")?, entry("dir/b")?], true)?;
     let cursor = page.continuation().ok_or("continuation")?;
     assert_eq!(cursor.after().as_str(), "b");
     assert_eq!(cursor.selection(), bound.selection());
-    let next = ListRequest::new(ListTarget::Continue(cursor), request.size());
+    let next = ListRequest::continuing(cursor, request.size());
     let resumed = next.bind_selection(bound.selection().clone())?;
     let last = DirectoryPage::new(&resumed, vec![entry("dir/c")?], false)?;
     assert!(last.continuation().is_none());
@@ -413,7 +345,7 @@ fn directory_pages_check_scope_order_cursor_limit_and_forward_progress() -> Resu
             .is_empty()
     );
 
-    let root = ListRequest::new(ListTarget::Path(PathExpr::parse("/")?), PageSize::DEFAULT);
+    let root = ListRequest::new(StoragePath::root(), PageSize::DEFAULT);
     let bound_root = root.bind_selection(selected("", 2)?)?;
     assert!(DirectoryPage::new(&bound_root, vec![entry("a")?], false).is_ok());
     let root_entry = Entry::new(StoragePath::root(), EntryType::Directory, None)?;
@@ -426,10 +358,7 @@ fn directory_pages_check_scope_order_cursor_limit_and_forward_progress() -> Resu
 
 #[test]
 fn decoder_checks_directory_claims_against_lookup_even_for_empty_pages() -> Result {
-    let request = ListRequest::new(
-        ListTarget::Path(PathExpr::parse("/alias/")?),
-        PageSize::DEFAULT,
-    );
+    let request = ListRequest::new(StoragePath::parse("dir")?, PageSize::DEFAULT);
     let bound = request.bind_selection(selected("dir", 1)?)?;
     let actual = bound.selection();
     let correct = DirectoryPage::from_parts(
@@ -474,27 +403,19 @@ fn decoder_checks_directory_claims_against_lookup_even_for_empty_pages() -> Resu
 }
 
 #[test]
-fn continuation_keeps_its_binding_after_alias_or_working_directory_changes() -> Result {
-    for (operand, first_address, changed_address) in [
-        ("/alias/", "dir", "retargeted"),
-        ("dir/", "work-a/dir", "work-b/dir"),
-    ] {
-        let request = ListRequest::new(
-            ListTarget::Path(PathExpr::parse(operand)?),
-            PageSize::DEFAULT,
-        );
-        assert!(request.lookup().is_some());
+fn continuation_requires_the_same_directory_address_and_identity() -> Result {
+    for (first_address, changed_address) in [("dir", "retargeted"), ("work-a/dir", "work-b/dir")] {
+        let request = ListRequest::new(StoragePath::parse(first_address)?, PageSize::DEFAULT);
+        assert!(request.after().is_none());
         let original = selected(first_address, 1)?;
         let bound = request.bind_selection(original.clone())?;
         let first = DirectoryPage::new(&bound, vec![entry(&format!("{first_address}/a"))?], true)?;
-        let request = ListRequest::new(
-            ListTarget::Continue(first.continuation().ok_or("continuation")?),
+        let request = ListRequest::continuing(
+            first.continuation().ok_or("continuation")?,
             PageSize::DEFAULT,
         );
-        assert!(request.lookup().is_none());
+        assert!(request.after().is_some());
 
-        // Simulate the directory a fresh lookup would see after retargeting
-        // the alias or changing the working directory.
         for wrong in [
             selected(changed_address, 2)?,
             selected(first_address, 3)?,
@@ -516,10 +437,7 @@ fn continuation_keeps_its_binding_after_alias_or_working_directory_changes() -> 
 
 #[test]
 fn response_decoding_checks_the_supplied_continuation_instead_of_replacing_it() -> Result {
-    let request = ListRequest::new(
-        ListTarget::Path(PathExpr::parse("/alias/")?),
-        PageSize::DEFAULT,
-    );
+    let request = ListRequest::new(StoragePath::parse("dir")?, PageSize::DEFAULT);
     let bound = request.bind_selection(selected("dir", 1)?)?;
     let actual = bound.selection();
     let decode = |entries, next| {
@@ -548,7 +466,7 @@ fn response_decoding_checks_the_supplied_continuation_instead_of_replacing_it() 
 
 #[test]
 fn a_full_page_requires_an_explicit_choice_between_final_and_continuing() -> Result {
-    let request = ListRequest::new(ListTarget::Path(PathExpr::parse("/")?), PageSize::new(1)?);
+    let request = ListRequest::new(StoragePath::root(), PageSize::new(1)?);
     let bound = request.bind_selection(selected("", 1)?)?;
     for has_more in [false, true] {
         let page = DirectoryPage::new(&bound, vec![entry("a")?], has_more)?;

@@ -83,10 +83,11 @@
 //! or Unavailable, cached storage is invalidated, and new opens use the new
 //! generation. Existing streams are never silently reopened or replayed.
 //!
-//! A ReadLink lookup issues a root observation and binds each child by parent
-//! observation and exact name. The host resolves link targets and supplies a
-//! canonical request for the final read. Observation IDs belong to the lookup
-//! that issued them. Unknown or retired lookup or observation IDs return
+//! One lookup issues a root observation and binds each child by parent
+//! observation and exact name. The host walks the operand and supplies a
+//! canonical request plus the parent, name, and observed final entry or absence.
+//! Both operands of a rename use the same lookup and expansion budget.
+//! Observation IDs belong to the lookup that issued them. Unknown or retired lookup or observation IDs return
 //! `Stale`. Replaced slots detected in a live lookup return `Conflict`.
 //!
 //! Reader EOF is sticky. Cancellation of an in-flight next call may close the
@@ -130,8 +131,8 @@ pub use driver::{Driver, DriverFuture};
 pub use mount_repository::{MountRepository, MountRepositoryFuture};
 pub use storage::validate_storage_extensions;
 pub use storage::{
-    BoundLink, LookupContext, LookupScope, ObservedEntry, OperationLookup, Storage,
-    StorageFileReader, StorageFileWriter, StorageFuture,
+    BoundLink, EntrySlot, LookupScope, ObservedEntry, OperationLookup, Storage, StorageFileReader,
+    StorageFileWriter, StorageFuture,
 };
 
 mod storage_attributes;

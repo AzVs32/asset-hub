@@ -195,21 +195,8 @@ pub fn validate_request(request: &Request) -> Result<()> {
             check_object(field(&v.config)?, 0)?;
         }
         O::Storage(v) => match field(&v.operation)? {
-            StorageOp::Stat(request) => {
-                super::decode_stat(request.clone()).map_err(|_| CodecError::InvalidData)?;
-            }
-            StorageOp::Remove(request) => {
-                super::decode_remove(request.clone()).map_err(|_| CodecError::InvalidData)?;
-            }
-            StorageOp::Rename(request) => {
-                super::decode_rename(request.clone()).map_err(|_| CodecError::InvalidData)?;
-            }
-            StorageOp::CreateDirectory(request) => {
-                super::decode_create_directory(request.clone())
-                    .map_err(|_| CodecError::InvalidData)?;
-            }
-            StorageOp::SelectDirectory(request) => {
-                super::decode_select_directory(request.clone())
+            StorageOp::ResumeDirectory(checkpoint) => {
+                super::decode_checkpoint(checkpoint.clone())
                     .map_err(|_| CodecError::InvalidData)?;
             }
             StorageOp::List(request) => {
@@ -225,12 +212,6 @@ pub fn validate_request(request: &Request) -> Result<()> {
                     .map_err(|_| CodecError::InvalidData)?;
             }
         },
-        O::Read(read) => {
-            super::decode_read(read.clone()).map_err(|_| CodecError::InvalidData)?;
-        }
-        O::Write(write) => {
-            super::decode_write(write.clone()).map_err(|_| CodecError::InvalidData)?;
-        }
         O::Release(v) => check_resource(v)?,
         O::BeginLookup(v) | O::VerifyLookup(v)
             if v.handle == 0 || super::decode_lookup_purpose(&v.purpose).is_none() =>
@@ -245,11 +226,19 @@ pub fn validate_request(request: &Request) -> Result<()> {
         {
             return Err(CodecError::InvalidData);
         }
+        O::Execute(call) => {
+            super::decode_bound_call(call.clone()).map_err(|_| CodecError::InvalidData)?;
+        }
         O::ReadObservedLink(v) => {
             if v.lookup == 0 || v.entry == 0 || super::decode_lookup_purpose(&v.purpose).is_none() {
                 return Err(CodecError::InvalidData);
             }
             if let Some(slot) = &v.final_slot {
+                if super::decode_lookup_purpose(&v.purpose)
+                    != Some(ah_vfs_storage::Operation::ReadLink)
+                {
+                    return Err(CodecError::InvalidData);
+                }
                 if super::decode_lookup_purpose(&v.purpose)
                     != Some(ah_vfs_storage::Operation::ReadLink)
                 {

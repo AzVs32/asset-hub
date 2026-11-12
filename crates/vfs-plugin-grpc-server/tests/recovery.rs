@@ -2,11 +2,14 @@ use ah_vfs::application::driver_info::DriverInfo;
 use ah_vfs::application::dto::*;
 use ah_vfs::application::port::*;
 use ah_vfs::domain::InstanceId;
+use ah_vfs::resolve::StorageOperations;
+use ah_vfs::resolve::operand::RemoveOperand;
+use ah_vfs::resolve::path::RootedPath;
+use ah_vfs_storage::RemoveKind;
 use ah_vfs_storage::{
     BackendFailure, ContractViolation, Failure, Operation, Rejection, StorageError,
 };
 use ah_vfs_storage::{Entry, EntryType, StoragePath};
-use ah_vfs_storage::{RemoveKind, RemoveRequest};
 use std::{
     num::NonZeroUsize,
     sync::{
@@ -139,20 +142,103 @@ impl Storage for BackendStorage {
     fn chunk_size(&self) -> NonZeroUsize {
         NonZeroUsize::MIN
     }
-    fn stat_entry(
-        &self,
-        request: ah_vfs_storage::StatRequest,
-        _: ah_vfs::application::port::LookupContext,
-    ) -> StorageFuture<'_, Entry> {
+    fn begin_lookup(&self, operation: Operation) -> StorageFuture<'_, Box<dyn OperationLookup>> {
         Box::pin(async move {
-            let operand = request.path().to_string();
-            let path = StoragePath::parse(operand.trim_start_matches('/')).map_err(|cause| {
+            Ok(Box::new(BackendLookup {
+                marker: self.marker,
+                faults: self.faults.clone(),
+                operation,
+                scope: LookupScope::default(),
+            }) as Box<dyn OperationLookup>)
+        })
+    }
+}
+
+struct BackendLookup {
+    marker: usize,
+    faults: Arc<Faults>,
+    operation: Operation,
+    scope: LookupScope,
+}
+
+impl OperationLookup for BackendLookup {
+    fn operation(&self) -> Operation {
+        self.operation
+    }
+
+    fn root(&mut self) -> StorageFuture<'_, ObservedEntry> {
+        Box::pin(async move {
+            let entry =
+                Entry::new(StoragePath::root(), EntryType::Directory, None).map_err(|source| {
+                    StorageError::without_effects(
+                        self.operation,
+                        Failure::Contract(ContractViolation::InvalidEntry),
+                        Some(Box::new(source)),
+                    )
+                })?;
+            Ok(self.scope.bind(entry, ()))
+        })
+    }
+
+    fn observe<'a>(
+        &'a mut self,
+        parent: &'a ObservedEntry,
+        name: &'a ah_vfs_storage::EntryName,
+    ) -> StorageFuture<'a, ObservedEntry> {
+        Box::pin(async move {
+            let op = self.operation;
+            if op == Operation::Write {
+                return Err(StorageError::without_effects(
+                    op,
+                    Failure::Rejected(Rejection::NotFound),
+                    None,
+                ));
+            }
+            let path = parent.entry().path().join(name).map_err(|source| {
                 StorageError::without_effects(
-                    Operation::Stat,
-                    Failure::Contract(ContractViolation::InvalidEntry),
-                    Some(Box::new(cause)),
+                    op,
+                    Failure::Rejected(Rejection::PathTooLong),
+                    Some(Box::new(source)),
                 )
             })?;
+            let entry = Entry::new(path, EntryType::file(Some(self.marker as u64)), None).map_err(
+                |source| {
+                    StorageError::without_effects(
+                        op,
+                        Failure::Contract(ContractViolation::InvalidEntry),
+                        Some(Box::new(source)),
+                    )
+                },
+            )?;
+            Ok(self.scope.bind(entry, ()))
+        })
+    }
+
+    fn read_link<'a>(
+        &'a self,
+        _: &'a ObservedEntry,
+    ) -> StorageFuture<'a, ah_vfs_storage::LinkTarget> {
+        Box::pin(async {
+            Err(StorageError::without_effects(
+                self.operation,
+                Failure::Rejected(Rejection::NotSymlink),
+                None,
+            ))
+        })
+    }
+
+    fn verify(&self) -> StorageFuture<'_, ()> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn execute_stat<'a>(
+        &'a self,
+        _: Option<EntrySlot<'a>>,
+        _: &'a ObservedEntry,
+        request: ah_vfs_storage::StatRequest,
+    ) -> StorageFuture<'a, Entry> {
+        Box::pin(async move {
+            let path = request.path().clone();
             if self.faults.invalid_stat.load(Ordering::SeqCst) {
                 return Err(StorageError::without_effects(
                     Operation::Stat,
@@ -176,11 +262,11 @@ impl Storage for BackendStorage {
             })
         })
     }
-    fn read_file(
-        &self,
+    fn execute_read<'a>(
+        &'a self,
+        _: EntrySlot<'a>,
         _: ah_vfs_storage::ReadRequest,
-        _: ah_vfs::application::port::LookupContext,
-    ) -> StorageFuture<'_, Box<dyn StorageFileReader>> {
+    ) -> StorageFuture<'a, Box<dyn StorageFileReader>> {
         Box::pin(async move {
             Ok(Box::new(Reader {
                 data: Some(vec![self.marker as u8]),
@@ -188,21 +274,21 @@ impl Storage for BackendStorage {
             }) as Box<dyn StorageFileReader>)
         })
     }
-    fn write_file(
-        &self,
+    fn execute_write<'a>(
+        &'a self,
+        _: EntrySlot<'a>,
         _: ah_vfs_storage::WriteRequest,
-        _: ah_vfs::application::port::LookupContext,
-    ) -> StorageFuture<'_, Box<dyn StorageFileWriter>> {
+    ) -> StorageFuture<'a, Box<dyn StorageFileWriter>> {
         Box::pin(
             async move { Ok(Box::new(Writer(self.faults.clone())) as Box<dyn StorageFileWriter>) },
         )
     }
     #[allow(clippy::panic)]
-    fn remove_entry(
-        &self,
-        _: RemoveRequest,
-        _: ah_vfs::application::port::LookupContext,
-    ) -> StorageFuture<'_, ()> {
+    fn execute_remove<'a>(
+        &'a self,
+        _: EntrySlot<'a>,
+        _: ah_vfs_storage::RemoveRequest,
+    ) -> StorageFuture<'a, ()> {
         Box::pin(async move {
             self.faults.removes.fetch_add(1, Ordering::SeqCst);
             if self.faults.panic_remove.swap(false, Ordering::SeqCst) {
@@ -275,9 +361,9 @@ async fn open(driver: &PluginDriver) -> Result<Arc<dyn Storage>> {
 async fn stat(storage: &dyn Storage) -> Result<u64> {
     let entry = storage
         .stat_entry(
-            ah_vfs_storage::StatRequest::new(
+            ah_vfs::resolve::operand::StatOperand::new(
                 StoragePath::parse("file")?.to_rooted_expr(),
-                ah_vfs_storage::SymlinkAction::Preserve,
+                ah_vfs::resolve::policy::SymlinkAction::Preserve,
             ),
             Default::default(),
         )
@@ -292,7 +378,7 @@ async fn stat(storage: &dyn Storage) -> Result<u64> {
 async fn read(storage: &dyn Storage) -> Result<Box<dyn StorageFileReader>> {
     Ok(storage
         .read_file(
-            ah_vfs_storage::ReadRequest::new(
+            ah_vfs::resolve::operand::ReadOperand::new(
                 StoragePath::parse("file")?.to_rooted_expr(),
                 ah_vfs_storage::ReadRange::FULL,
             ),
@@ -338,7 +424,7 @@ async fn panic_recovery_uses_a_fresh_backend_and_never_replays_the_mutation() ->
     faults.panic_remove.store(true, Ordering::SeqCst);
     let error = old
         .remove_entry(
-            RemoveRequest::new(
+            RemoveOperand::new(
                 (StoragePath::parse("file")?).to_rooted_expr(),
                 RemoveKind::NonDirectory,
             )?,
@@ -758,6 +844,58 @@ async fn production_server_bounds_connections_and_reuses_released_capacity() -> 
     Ok(())
 }
 
+fn open_lookup(purpose: &str) -> Op {
+    Op::BeginLookup(p::LookupHandle {
+        handle: 1,
+        purpose: purpose.into(),
+    })
+}
+
+fn observe_file(lookup: &p::OpenedLookup, purpose: &str) -> Result<Op> {
+    Ok(Op::ObserveChild(p::ObserveChild {
+        lookup: lookup.handle,
+        parent: lookup.root.as_ref().ok_or("root")?.id,
+        name: "file".into(),
+        purpose: purpose.into(),
+    }))
+}
+
+fn slot(lookup: &p::OpenedLookup) -> Result<p::EntrySlot> {
+    Ok(p::EntrySlot {
+        parent: lookup.root.as_ref().ok_or("root")?.id,
+        name: "file".into(),
+        path: "file".into(),
+    })
+}
+
+fn execute(lookup: &p::OpenedLookup, operation: p::BoundOp) -> Op {
+    Op::Execute(p::BoundCall {
+        lookup: lookup.handle,
+        operation: Some(operation),
+    })
+}
+
+fn read_bound(lookup: &p::OpenedLookup, entry: u64) -> Result<Op> {
+    Ok(execute(
+        lookup,
+        p::BoundOp::Read(p::BoundRead {
+            target: Some(p::BoundSlot {
+                slot: Some(slot(lookup)?),
+                entry: Some(entry),
+            }),
+            offset: 0,
+            length: None,
+        }),
+    ))
+}
+
+fn release_lookup(lookup: &p::OpenedLookup) -> Op {
+    Op::Release(p::ResourceRef {
+        handle: lookup.handle,
+        kind: p::ResourceKind::Lookup.into(),
+    })
+}
+
 struct RawSession {
     outgoing: Option<tokio::sync::mpsc::Sender<p::Request>>,
     incoming: tonic::Streaming<p::Reply>,
@@ -803,45 +941,65 @@ impl RawSession {
             self.incoming.message().await?.ok_or("session closed")?,
         )??)
     }
-    async fn reader(&mut self) -> Result<u64> {
-        match self
-            .call(
-                Op::Read(p::encode_read(
-                    1,
-                    &ah_vfs_storage::ReadRequest::new(
-                        ah_vfs_storage::PathExpr::parse("/file")?,
-                        ah_vfs_storage::ReadRange::new(0, None)?,
-                    ),
-                    &ah_vfs_storage::StoragePath::root(),
-                    ah_vfs_storage::IntermediateSymlinks::FollowWithinInstance,
-                )),
-                vec![],
-            )
+    async fn begin_lookup(&mut self, purpose: &str) -> Result<(p::OpenedLookup, Option<u64>)> {
+        let p::Value::OpenedLookup(lookup) = self
+            .call(open_lookup(purpose), vec![])
             .await?
             .into_value()?
-        {
+        else {
+            return Err("lookup scope".into());
+        };
+        let observed = self.call(observe_file(&lookup, purpose)?, vec![]).await;
+        let entry = if purpose == "write" {
+            let error = observed.err().ok_or("expected missing slot")?;
+            assert_eq!(
+                p::decode_storage_error(
+                    error
+                        .downcast_ref::<p::Failure>()
+                        .ok_or("missing storage error")?
+                        .storage
+                        .clone()
+                        .ok_or("missing storage failure")?
+                )?
+                .failure(),
+                Failure::Rejected(Rejection::NotFound)
+            );
+            None
+        } else {
+            let p::Value::ObservedEntry(entry) = observed?.into_value()? else {
+                return Err("file observation".into());
+            };
+            Some(entry.id)
+        };
+        Ok((lookup, entry))
+    }
+    async fn reader(&mut self) -> Result<u64> {
+        let (lookup, entry) = self.begin_lookup("read").await?;
+        let reply = self
+            .call(read_bound(&lookup, entry.ok_or("file")?)?, vec![])
+            .await?;
+        self.call(release_lookup(&lookup), vec![]).await?;
+        match reply.into_value()? {
             p::Value::Reader(p::Handle { handle }) => Ok(handle),
             _ => Err("reader".into()),
         }
     }
     async fn writer(&mut self) -> Result<u64> {
-        match self
-            .call(
-                Op::Write(p::encode_write(
-                    1,
-                    &ah_vfs_storage::WriteRequest::new(
-                        ah_vfs_storage::PathExpr::parse("/file")?,
-                        ah_vfs_storage::WriteMode::CreateNew,
-                        ah_vfs_storage::Publication::Staged,
-                    ),
-                    &ah_vfs_storage::StoragePath::root(),
-                    ah_vfs_storage::IntermediateSymlinks::FollowWithinInstance,
-                )),
-                vec![],
-            )
-            .await?
-            .into_value()?
-        {
+        let (lookup, entry) = self.begin_lookup("write").await?;
+        let op = execute(
+            &lookup,
+            p::BoundOp::Write(p::BoundWrite {
+                target: Some(p::BoundSlot {
+                    slot: Some(slot(&lookup)?),
+                    entry,
+                }),
+                mode: p::WriteMode::CreateNew.into(),
+                publication: p::Publication::Staged.into(),
+            }),
+        );
+        let reply = self.call(op, vec![]).await?;
+        self.call(release_lookup(&lookup), vec![]).await?;
+        match reply.into_value()? {
             p::Value::Writer(p::Handle { handle }) => Ok(handle),
             _ => Err("writer".into()),
         }
@@ -954,7 +1112,7 @@ async fn cancelling_an_inflight_commit_retires_the_writer_without_replay() -> Re
     let storage = open(&driver).await?;
     let mut writer = storage
         .write_file(
-            ah_vfs_storage::WriteRequest::new(
+            ah_vfs::resolve::operand::WriteOperand::new(
                 StoragePath::parse("file")?.to_rooted_expr(),
                 ah_vfs_storage::WriteMode::CreateNew,
                 ah_vfs_storage::Publication::Staged,
@@ -995,19 +1153,16 @@ async fn idle_storage_needs_no_renewal_and_keeps_its_concurrency_slot() -> Resul
     tokio::time::advance(std::time::Duration::from_secs(3601)).await;
     tokio::time::resume();
     assert_eq!(faults.storage_drops.load(Ordering::SeqCst), 0);
+    let (lookup, entry) = session.begin_lookup("stat").await?;
     let reply = session
         .call(
-            Op::Storage(p::StorageCall {
-                handle: 1,
-                operation: Some(p::StorageOp::Stat(p::Stat {
-                    lookup: Some(p::Lookup {
-                        operand: "/file".into(),
-                        working_directory: String::new(),
-                        intermediate_links: p::IntermediateLink::FollowIntermediate.into(),
-                    }),
-                    final_link: p::FinalLink::PreserveFinal.into(),
-                })),
-            }),
+            execute(
+                &lookup,
+                p::BoundOp::Stat(p::BoundTarget {
+                    slot: Some(slot(&lookup)?),
+                    entry: entry.ok_or("file")?,
+                }),
+            ),
             vec![],
         )
         .await?;
@@ -1042,7 +1197,8 @@ async fn session_frames_share_the_server_rate_budget() -> Result {
         faults.clone(),
         ServerLimits {
             operations_per_second: 1,
-            operation_burst: 5,
+            // Describe, Initialize, Open, the four bound writer frames, and one chunk.
+            operation_burst: 8,
             ..Default::default()
         },
     )
@@ -1239,7 +1395,7 @@ async fn dropping_child_resources_outside_tokio_does_not_need_an_expiry_scan() -
     let reader = read(storage.as_ref()).await?;
     let writer = storage
         .write_file(
-            ah_vfs_storage::WriteRequest::new(
+            ah_vfs::resolve::operand::WriteOperand::new(
                 StoragePath::parse("file")?.to_rooted_expr(),
                 ah_vfs_storage::WriteMode::CreateNew,
                 ah_vfs_storage::Publication::Staged,
@@ -1281,23 +1437,32 @@ async fn resource_capacity_is_shared_across_sessions_and_released_on_disconnect(
     };
     let first = dispatcher.open_session(&generation, opening()).await?;
     let second = dispatcher.open_session(&generation, opening()).await?;
-    let request = ah_vfs_storage::ReadRequest::new(
-        ah_vfs_storage::PathExpr::parse("/file")?,
-        ah_vfs_storage::ReadRange::FULL,
-    );
-    let read = || {
-        Op::Read(p::encode_read(
-            1,
-            &request,
-            &StoragePath::root(),
-            ah_vfs_storage::IntermediateSymlinks::FollowWithinInstance,
-        ))
-    };
-    for _ in 0..p::MAX_RESOURCES - 2 {
-        first.call(read(), vec![]).await?;
+    async fn read_scope(
+        session: &vfs_plugin_grpc_server::dispatch::Session,
+    ) -> Result<(p::OpenedLookup, u64)> {
+        let p::Value::OpenedLookup(lookup) = session
+            .call(open_lookup("read"), vec![])
+            .await?
+            .into_value()?
+        else {
+            return Err("lookup scope".into());
+        };
+        let p::Value::ObservedEntry(entry) = session
+            .call(observe_file(&lookup, "read")?, vec![])
+            .await?
+            .into_value()?
+        else {
+            return Err("file observation".into());
+        };
+        Ok((lookup, entry.id))
+    }
+    let (lookup, entry) = read_scope(&first).await?;
+    let (other, other_entry) = read_scope(&second).await?;
+    for _ in 0..p::MAX_RESOURCES - 4 {
+        first.call(read_bound(&lookup, entry)?, vec![]).await?;
     }
     let error = second
-        .call(read(), vec![])
+        .call(read_bound(&other, other_entry)?, vec![])
         .await
         .err()
         .ok_or("global resource capacity")?;
@@ -1307,7 +1472,10 @@ async fn resource_capacity_is_shared_across_sessions_and_released_on_disconnect(
     );
     drop(first);
     assert!(matches!(
-        second.call(read(), vec![]).await?.into_value()?,
+        second
+            .call(read_bound(&other, other_entry)?, vec![])
+            .await?
+            .into_value()?,
         p::Value::Reader(_)
     ));
     Ok(())
@@ -1353,7 +1521,7 @@ async fn shutdown_cannot_be_undone_by_an_inflight_backend_recovery() -> Result {
     assert!(
         storage
             .remove_entry(
-                RemoveRequest::new(
+                RemoveOperand::new(
                     (StoragePath::parse("file")?).to_rooted_expr(),
                     RemoveKind::NonDirectory
                 )?,

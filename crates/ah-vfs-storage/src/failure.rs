@@ -20,12 +20,6 @@ pub enum Rejection {
     NotRegularFile,
     #[error("entry is not a symbolic link")]
     NotSymlink,
-    #[error("the instance root is protected")]
-    RootProtected,
-    #[error("symbolic links are not allowed by the lookup policy")]
-    SymlinkNotAllowed,
-    #[error("symbolic link traversal limit was exceeded")]
-    TooManySymlinks,
     /// One logical entry component or attribute key exceeds the backend's
     /// native length limit, measured in the backend's own units.
     #[error("name exceeds the backend component or key length limit")]
@@ -34,7 +28,7 @@ pub enum Rejection {
     /// exactly, for example because it reserves the name or rewrites it.
     #[error("exact name is unsupported by the backend")]
     UnsupportedName,
-    /// The logical address or operand exceeds its UTF-8 byte bound.
+    /// The logical address exceeds its UTF-8 byte bound.
     #[error("path exceeds the logical address limit")]
     PathTooLong,
     #[error("directory is not empty")]
@@ -110,6 +104,8 @@ pub enum ContractViolation {
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 #[non_exhaustive]
 pub enum Failure {
+    #[error("request is invalid")]
+    InvalidRequest,
     /// The caller supplied a request that disagrees with its binding.
     #[error("request does not match its backend binding")]
     InvalidBinding,

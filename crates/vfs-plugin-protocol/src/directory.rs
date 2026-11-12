@@ -1,8 +1,5 @@
 //! Directory selection and pages encoded on the formal plugin protocol.
-use super::{
-    DirectoryCheckpoint, DirectorySelection, Empty, List, Page, Reply, SelectDirectory, Value,
-    page, select_directory,
-};
+use super::{DirectoryCheckpoint, DirectorySelection, Empty, List, Page, Reply, Value, page};
 use ah_vfs_storage as d;
 use prost::Message;
 
@@ -40,52 +37,21 @@ fn decode_cursor(
     d::DirectoryCursor::from_checkpoint(selection, after).map_err(|_| INVALID)
 }
 
-pub fn encode_select_directory(
-    request: &d::ListRequest,
-    base: &d::StoragePath,
-    links: d::IntermediateSymlinks,
-) -> SelectDirectory {
-    let target = match request.target() {
-        d::ListTarget::Path(path) => {
-            select_directory::Target::Lookup(super::encode_lookup(path, base, links))
-        }
-        d::ListTarget::Continue(cursor) => select_directory::Target::Resume(DirectoryCheckpoint {
-            selection: Some(encode_selection(cursor.selection())),
-            after: cursor.after().as_str().into(),
-        }),
-    };
-    SelectDirectory {
-        target: Some(target),
-        size: request.size().get() as u32,
+pub fn encode_checkpoint(cursor: &d::DirectoryCursor) -> DirectoryCheckpoint {
+    DirectoryCheckpoint {
+        selection: Some(encode_selection(cursor.selection())),
+        after: cursor.after().as_str().into(),
     }
 }
 
-pub fn decode_select_directory(
-    value: SelectDirectory,
-) -> Result<(d::ListRequest, d::StoragePath, d::IntermediateSymlinks), d::ContractViolation> {
-    let size = decode_size(value.size)?;
-    match value.target.ok_or(INVALID)? {
-        select_directory::Target::Lookup(lookup) => {
-            let (operand, base, links) = super::decode_lookup(Some(lookup)).map_err(|_| INVALID)?;
-            Ok((
-                d::ListRequest::new(d::ListTarget::Path(operand), size),
-                base,
-                links,
-            ))
-        }
-        select_directory::Target::Resume(checkpoint) => {
-            let selection = decode_selection(checkpoint.selection.ok_or(INVALID)?)?;
-            let cursor = decode_cursor(selection, &checkpoint.after)?;
-            Ok((
-                d::ListRequest::new(d::ListTarget::Continue(cursor), size),
-                d::StoragePath::root(),
-                d::IntermediateSymlinks::Reject,
-            ))
-        }
-    }
+pub fn decode_checkpoint(
+    checkpoint: DirectoryCheckpoint,
+) -> Result<d::DirectoryCursor, d::ContractViolation> {
+    let selection = decode_selection(checkpoint.selection.ok_or(INVALID)?)?;
+    decode_cursor(selection, &checkpoint.after)
 }
 
-pub fn encode_list(bound: &d::BoundListRequest<'_>) -> List {
+pub fn encode_list(bound: &d::BoundListRequest) -> List {
     List {
         selection: Some(encode_selection(bound.selection())),
         after: bound.after().map(|name| name.as_str().into()),
@@ -100,11 +66,11 @@ pub fn decode_list(
 ) -> Result<(d::ListRequest, d::DirectorySelection), d::ContractViolation> {
     let size = decode_size(value.size)?;
     let selection = decode_selection(value.selection.ok_or(INVALID)?)?;
-    let target = match value.after {
-        Some(after) => d::ListTarget::Continue(decode_cursor(selection.clone(), &after)?),
-        None => d::ListTarget::Path(selection.address().to_rooted_expr()),
+    let request = match value.after {
+        Some(after) => d::ListRequest::continuing(decode_cursor(selection.clone(), &after)?, size),
+        None => d::ListRequest::new(selection.address().clone(), size),
     };
-    Ok((d::ListRequest::new(target, size), selection))
+    Ok((request, selection))
 }
 
 pub fn encode_page(value: d::DirectoryPage) -> Result<Reply, d::ContractViolation> {
@@ -133,7 +99,7 @@ pub fn encode_page(value: d::DirectoryPage) -> Result<Reply, d::ContractViolatio
 }
 
 pub fn decode_page(
-    bound: &d::BoundListRequest<'_>,
+    bound: &d::BoundListRequest,
     value: Page,
     mut data: &[u8],
 ) -> Result<d::DirectoryPage, d::ContractViolation> {

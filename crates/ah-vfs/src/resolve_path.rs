@@ -1,5 +1,5 @@
 //! Path operands, before any directory or symbolic link is looked up.
-use super::{EntryName, MAX_PATH_BYTES, NameError, Rejection, StoragePath};
+use ah_vfs_storage::{EntryName, MAX_PATH_BYTES, NameError, Rejection, StoragePath};
 use std::{fmt, str::FromStr};
 use thiserror::Error;
 
@@ -40,7 +40,7 @@ pub enum PathExprError {
 /// address. A relative link target uses the link's containing directory.
 /// Runs of slashes are equivalent to one slash.
 /// Ordinary components retain their exact [`EntryName`] spelling.
-/// Use [`StoragePath::to_rooted_expr`] to reuse an already selected address.
+/// Use [`RootedPath::to_rooted_expr`] to reuse an already selected address.
 ///
 /// Dot components are retained for sequential lookup. In `a/../b`, `a` must
 /// first be looked up as a directory, including any permitted link traversal.
@@ -142,12 +142,16 @@ impl PathExpr {
     }
 }
 
-impl StoragePath {
+pub trait RootedPath {
+    fn to_rooted_expr(&self) -> PathExpr;
+}
+
+impl RootedPath for StoragePath {
     /// Reuse this address as a path operand anchored at the instance root.
     /// The root becomes `/`. All other addresses retain their exact components
     /// without a trailing slash. Lookup applies the new operation's normal
     /// rules to this address, using the current state of the instance.
-    pub fn to_rooted_expr(&self) -> PathExpr {
+    fn to_rooted_expr(&self) -> PathExpr {
         PathExpr {
             start: LookupStart::InstanceRoot,
             components: self.entry_names().map(PathComponent::Name).collect(),

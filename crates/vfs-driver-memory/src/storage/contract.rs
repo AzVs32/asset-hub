@@ -5,12 +5,12 @@ use super::{
 };
 use crate::Capacity;
 use ah_vfs::application::port::{
-    LookupContext, LookupScope, ObservedEntry, OperationLookup, StorageFuture,
+    EntrySlot, LookupScope, ObservedEntry, OperationLookup, StorageFileReader, StorageFileWriter,
+    StorageFuture,
 };
-use ah_vfs::resolve::{LookupPort, Resolution, Resolver};
 use ah_vfs_storage::*;
 use std::{
-    collections::{BTreeMap, btree_map::Entry as MapEntry},
+    collections::{BTreeMap, BTreeSet, btree_map::Entry as MapEntry},
     sync::{Arc, MutexGuard},
     time::SystemTime,
 };
@@ -50,6 +50,7 @@ impl MemoryStorage {
             .with_read(ReadSupport::Range)
             .with_remove(true)
             .with_rename(RenameSupport::Both)
+            .with_mutation_binding(MutationBinding::FinalSlotAtomic)
             .with_directories(DirectorySupport::hierarchical(true, true))
             .with_write(WriteSupport::staged(WriteModes::Both, true))
     }
@@ -58,61 +59,22 @@ impl MemoryStorage {
         lock(&self.shared, operation)
     }
 
-    pub(super) fn stat_selected(
+    pub(super) fn resume_list_directory(
         &self,
-        request: &StatRequest,
-        context: LookupContext,
-    ) -> Result<Entry, StorageError> {
-        let op = Operation::Stat;
-        let mut nodes = self.lock(op)?;
-        let path = select_with_context(&mut nodes, request.lookup(), &context, op)?;
-        metadata(path.clone(), existing(&nodes, &path, op)?, op)
-    }
-
-    pub(super) fn open_reader(
-        &self,
-        request: &ReadRequest,
-        context: LookupContext,
-    ) -> Result<MemoryFileReader, StorageError> {
-        let op = Operation::Read;
-        Self::supported_capabilities()
-            .require_read(request)
-            .map_err(|cause| rejected(op, cause))?;
-        let mut nodes = self.lock(op)?;
-        let path = select_with_context(&mut nodes, request.lookup(), &context, op)?;
-        let EntryData::File(blob) = &existing(&nodes, &path, op)?.data else {
-            return Err(rejected(op, Rejection::NotRegularFile));
-        };
-        Ok(MemoryFileReader::new(blob.clone(), request.range()))
-    }
-
-    pub(super) fn select_list_directory(
-        &self,
-        request: &ListRequest,
-        context: LookupContext,
+        cursor: &DirectoryCursor,
     ) -> Result<DirectorySelection, StorageError> {
         let op = Operation::List;
-        let mut nodes = self.lock(op)?;
-        let path = match request.target() {
-            ListTarget::Path(_) => {
-                let lookup = request
-                    .lookup()
-                    .ok_or_else(|| rejected(op, Rejection::Unsupported))?;
-                select_with_context(&mut nodes, lookup, &context, op)?
-            }
-            ListTarget::Continue(cursor) => cursor.selection().address().clone(),
-        };
-        let identity = directory(&nodes, &path).ok_or_else(|| stale(op))?;
-        let selection = DirectorySelection::from_lookup(path, **identity);
-        request
-            .bind_selection(selection.clone())
-            .map_err(|_| stale(op))?;
-        Ok(selection)
+        let nodes = self.lock(op)?;
+        let selection = cursor.selection();
+        if directory(&nodes, selection.address()).map(|id| **id) != Some(selection.identity()) {
+            return Err(stale(op));
+        }
+        Ok(selection.clone())
     }
 
     pub(super) fn enumerate_directory(
         &self,
-        bound: &BoundListRequest<'_>,
+        bound: &BoundListRequest,
     ) -> Result<DirectoryPage, StorageError> {
         let op = Operation::List;
         let nodes = self.lock(op)?;
@@ -141,165 +103,64 @@ impl MemoryStorage {
         DirectoryPage::new(bound, entries, more)
             .map_err(|cause| invalid(op, ContractViolation::InvalidPage, cause))
     }
-
-    pub(super) fn create_directory(
-        &self,
-        request: &CreateDirectoryRequest,
-        context: LookupContext,
-    ) -> Result<Entry, StorageError> {
-        let op = Operation::CreateDirectory;
-        if !Self::supported_capabilities().directories().can_create() {
-            return Err(rejected(op, Rejection::Unsupported));
-        }
-        let mut nodes = self.lock(op)?;
-        let mut namespace = LookupNamespace::new(&mut nodes, op);
-        let lookup = request.lookup();
-        let directories =
-            namespace.directories(lookup.path().start(), &context.working_directory)?;
-        Resolver::new(op, context.intermediate_symlinks)
-            .walk(&mut namespace, lookup, directories)
-            .and_then(|result| result.require_entry(op))
-    }
-
-    pub(super) fn remove(
-        &self,
-        request: &RemoveRequest,
-        context: LookupContext,
-    ) -> Result<(), StorageError> {
-        let op = Operation::Remove;
-        let mut nodes = self.lock(op)?;
-        let path = select_with_context(&mut nodes, request.lookup(), &context, op)?;
-        if request.kind() == RemoveKind::EmptyDirectory
-            && nodes.keys().any(|key| descendant(key, path.as_str()))
-        {
-            return Err(rejected(op, Rejection::DirectoryNotEmpty));
-        }
-        nodes.remove(path.as_str());
-        Ok(())
-    }
-
-    pub(super) fn rename(
-        &self,
-        request: &ah_vfs_storage::RenameRequest,
-        context: LookupContext,
-    ) -> Result<Entry, StorageError> {
-        use ah_vfs_storage::{RenameDecision, RenameDestination};
-        let op = Operation::Rename;
-        let mut nodes = self.lock(op)?;
-        let (source_lookup, destination_lookup) = request.lookups();
-        let base = &context.working_directory;
-        if [source_lookup, destination_lookup]
-            .iter()
-            .any(|lookup| lookup.path().start() == LookupStart::BaseDirectory)
-            && directory(&nodes, base).is_none()
-        {
-            return Err(stale(op));
-        }
-        let mut namespace = LookupNamespace::new(&mut nodes, op);
-        let mut resolver = Resolver::new(op, context.intermediate_symlinks);
-        let source_path = namespace.select(&mut resolver, source_lookup, base)?;
-        let directories = namespace.directories(destination_lookup.path().start(), base)?;
-        let destination_path = match resolver.walk(&mut namespace, destination_lookup, directories)? {
-            Resolution::Existing(entry) => entry.path().clone(),
-            Resolution::Missing(address) => address,
-        };
-        let source = existing(&nodes, &source_path, op)?;
-        let slot = |address: &StoragePath| -> Result<_, StorageError> {
-            let parent = address
-                .parent()
-                .ok_or_else(|| rejected(op, Rejection::RootProtected))?;
-            directory(&nodes, &parent).ok_or_else(|| stale(op))
-        };
-        let destination = if source_path.name() == destination_path.name()
-            && Arc::ptr_eq(slot(&source_path)?, slot(&destination_path)?)
-        {
-            RenameDestination::SameSlot
-        } else if let Some(entry) = nodes.get(destination_path.as_str()) {
-            let kind = entry.entry_type();
-            if kind == EntryType::Directory
-                && nodes
-                    .keys()
-                    .any(|key| descendant(key, destination_path.as_str()))
-            {
-                RenameDestination::NonEmptyDirectory
-            } else {
-                RenameDestination::Occupied(kind)
-            }
-        } else {
-            RenameDestination::Missing
-        };
-        let decision = request
-            .decide_destination(&destination_path, source.entry_type(), destination)
-            .map_err(|reason| rejected(op, reason))?;
-        let result = metadata(destination_path.clone(), source, op)?;
-        if decision == RenameDecision::Unchanged {
-            return Ok(result);
-        }
-        if descendant(destination_path.as_str(), source_path.as_str()) {
-            return Err(rejected(op, Rejection::Conflict));
-        }
-        // Validate every resulting address under the lock before changing the namespace.
-        let mut moved = Vec::new();
-        for (path, entry) in nodes.iter() {
-            if path == source_path.as_str() || descendant(path, source_path.as_str()) {
-                let suffix = &path[source_path.as_str().len()..];
-                let destination = StoragePath::parse(&format!("{destination_path}{suffix}"))
-                    .map_err(|cause| super::path_error(op, cause))?;
-                moved.push((path.clone(), destination.as_str().to_owned(), entry.clone()));
-            }
-        }
-        for (old, _, _) in &moved {
-            nodes.remove(old);
-        }
-        nodes.remove(destination_path.as_str());
-        for (_, new, entry) in moved {
-            nodes.insert(new, entry);
-        }
-        Ok(result)
-    }
-
-    pub(super) fn open_writer(
-        &self,
-        request: &WriteRequest,
-        context: LookupContext,
-    ) -> Result<MemoryFileWriter, StorageError> {
-        let op = Operation::Write;
-        Self::supported_capabilities()
-            .require_write(request)
-            .map_err(|cause| rejected(op, cause))?;
-        let mut nodes = self.lock(op)?;
-        let path = select_with_context(&mut nodes, request.lookup(), &context, op)?;
-        let parent_path = path
-            .parent()
-            .ok_or_else(|| rejected(op, Rejection::RootProtected))?;
-        let parent = directory(&nodes, &parent_path)
-            .ok_or_else(|| rejected(op, Rejection::NotDirectory))?
-            .clone();
-        let destination = match nodes.get(path.as_str()) {
-            Some(MemoryEntry {
-                data: EntryData::File(blob),
-                ..
-            }) => Some(Arc::downgrade(blob)),
-            None => {
-                request
-                    .check_new_destination(&path)
-                    .map_err(|cause| rejected(op, cause))?;
-                None
-            }
-            Some(_) => return Err(rejected(op, Rejection::NotRegularFile)),
-        };
-        Ok(MemoryFileWriter::new(
-            self.shared.clone(),
-            path,
-            parent_path,
-            parent,
-            destination,
-        ))
-    }
 }
 
-fn rejected(op: Operation, cause: Rejection) -> StorageError {
-    StorageError::without_effects(op, Failure::Rejected(cause), None)
+fn rename(
+    nodes: &mut Nodes,
+    request: RenameRequest,
+    same_slot: bool,
+) -> Result<Entry, StorageError> {
+    let op = Operation::Rename;
+    let source_path = request.source();
+    let destination_path = request.destination();
+    let source = existing(nodes, source_path, op)?;
+    let destination = if let Some(entry) = nodes.get(destination_path.as_str()) {
+        let kind = entry.entry_type();
+        if !same_slot
+            && kind == EntryType::Directory
+            && nodes
+                .keys()
+                .any(|key| descendant(key, destination_path.as_str()))
+        {
+            RenameDestination::NonEmptyDirectory
+        } else {
+            RenameDestination::Occupied(kind)
+        }
+    } else {
+        RenameDestination::Missing
+    };
+    request
+        .decide_destination(source.entry_type(), destination)
+        .map_err(|reason| rejected(op, reason))?;
+    let result = metadata(destination_path.clone(), source, op)?;
+    if same_slot {
+        return Ok(result);
+    }
+    if descendant(destination_path.as_str(), source_path.as_str()) {
+        return Err(rejected(op, Rejection::Conflict));
+    }
+    // Validate every resulting address under the lock before changing the namespace.
+    let mut moved = Vec::new();
+    for (path, entry) in nodes.iter() {
+        if path == source_path.as_str() || descendant(path, source_path.as_str()) {
+            let suffix = &path[source_path.as_str().len()..];
+            let destination = StoragePath::parse(&format!("{destination_path}{suffix}"))
+                .map_err(|cause| super::path_error(op, cause))?;
+            moved.push((path.clone(), destination.as_str().to_owned(), entry.clone()));
+        }
+    }
+    for (old, _, _) in &moved {
+        nodes.remove(old);
+    }
+    nodes.remove(destination_path.as_str());
+    for (_, new, entry) in moved {
+        nodes.insert(new, entry);
+    }
+    Ok(result)
+}
+
+fn rejected(op: Operation, cause: impl Into<ah_vfs::resolve::ResolveFailure>) -> StorageError {
+    cause.into().without_effects(op)
 }
 fn stale(op: Operation) -> StorageError {
     StorageError::without_effects(op, Failure::Backend(BackendFailure::Stale), None)
@@ -343,121 +204,91 @@ fn metadata(path: StoragePath, entry: &MemoryEntry, op: Operation) -> Result<Ent
         .map_err(|cause| invalid(op, ContractViolation::InvalidEntry, cause))
 }
 
-fn select_with_context(
-    nodes: &mut Nodes,
-    lookup: PathLookup<'_>,
-    context: &LookupContext,
-    op: Operation,
-) -> Result<StoragePath, StorageError> {
-    // Hold the namespace lock from the first observation through the effect.
-    let mut resolver = Resolver::new(op, context.intermediate_symlinks);
-    LookupNamespace::new(nodes, op).select(&mut resolver, lookup, &context.working_directory)
-}
-
-struct LookupNamespace<'a> {
-    nodes: &'a mut Nodes,
-    operation: Operation,
-}
-
-impl<'a> LookupNamespace<'a> {
-    fn new(nodes: &'a mut Nodes, operation: Operation) -> Self {
-        Self { nodes, operation }
-    }
-
-    fn directories(&mut self, start: LookupStart, base: &StoragePath) -> Result<Vec<Entry>, StorageError> {
-        let mut address = Some(match start {
-            LookupStart::InstanceRoot => StoragePath::root(),
-            LookupStart::BaseDirectory => base.clone(),
-        });
-        let mut chain = Vec::new();
-        while let Some(path) = address {
-            let Some(node) = self.nodes.get(path.as_str()) else {
-                return Err(stale(self.operation));
-            };
-            if node.entry_type() != EntryType::Directory {
-                return Err(stale(self.operation));
-            }
-            address = path.parent();
-            chain.push(self.observe_at(path)?);
-        }
-        chain.reverse();
-        Ok(chain)
-    }
-
-    fn observe_at(&mut self, address: StoragePath) -> Result<Entry, StorageError> {
-        let node = existing(self.nodes, &address, self.operation)?;
-        metadata(address, node, self.operation)
-    }
-
-    fn select(
-        &mut self,
-        resolver: &mut Resolver,
-        lookup: PathLookup<'_>,
-        base: &StoragePath,
-    ) -> Result<StoragePath, StorageError> {
-        let op = self.operation;
-        let directories = self.directories(lookup.path().start(), base)?;
-        match resolver.walk(self, lookup, directories)? {
-            Resolution::Existing(entry) => {
-                lookup
-                    .check_existing_target(entry.path(), entry.entry_type())
-                    .map_err(|cause| rejected(op, cause))?;
-                Ok(entry.path().clone())
-            }
-            Resolution::Missing(address) => Ok(address),
-        }
-    }
-}
-
-impl LookupPort for LookupNamespace<'_> {
-    type Binding = Entry;
-
-    fn entry(binding: &Entry) -> &Entry {
-        binding
-    }
-
-    async fn observe_child(
-        &mut self,
-        _parent: &Entry,
-        address: StoragePath,
-        _name: &EntryName,
-    ) -> Result<Entry, StorageError> {
-        self.observe_at(address)
-    }
-
-    async fn read_bound_link(&self, entry: &Entry) -> Result<LinkTarget, StorageError> {
-        match &existing(self.nodes, entry.path(), self.operation)?.data {
-            EntryData::Link(target) => Ok(target.as_ref().clone()),
-            _ => Err(rejected(self.operation, Rejection::NotSymlink)),
-        }
-    }
-
-    async fn create_child(
-        &mut self,
-        _parent: &Entry,
-        address: StoragePath,
-        _name: &EntryName,
-    ) -> Result<Entry, StorageError> {
-        let MapEntry::Vacant(slot) = self.nodes.entry(address.as_str().to_owned()) else {
-            return Err(rejected(self.operation, Rejection::AlreadyExists));
-        };
-        let directory = MemoryEntry::dir();
-        let entry = metadata(address, &directory, self.operation)?;
-        slot.insert(directory);
-        Ok(entry)
-    }
-}
-
 pub(super) struct MemoryLookup {
     shared: Arc<Shared>,
+    operation: Operation,
+    missing: BTreeSet<StoragePath>,
     scope: LookupScope,
     observed: BTreeMap<StoragePath, EntryData>,
 }
 
 impl MemoryLookup {
-    pub(super) fn new(shared: Arc<Shared>) -> Self {
+    fn data<'a>(&self, entry: &'a ObservedEntry) -> Result<&'a EntryData, StorageError> {
+        self.scope.get(entry).ok_or_else(|| stale(self.operation))
+    }
+
+    fn validate_slot(
+        &self,
+        op: Operation,
+        slot: EntrySlot<'_>,
+        path: &StoragePath,
+    ) -> Result<(), StorageError> {
+        self.data(slot.parent)?;
+        if let Some(entry) = slot.entry {
+            self.data(entry)?;
+        }
+        slot.validate(op, path)?;
+        if self.operation != op || (slot.entry.is_none() && !self.missing.contains(path)) {
+            return Err(super::error(op, Failure::InvalidBinding));
+        }
+        Ok(())
+    }
+
+    fn validate_entry(
+        &self,
+        op: Operation,
+        slot: Option<EntrySlot<'_>>,
+        entry: &ObservedEntry,
+        path: &StoragePath,
+    ) -> Result<(), StorageError> {
+        let data = self.data(entry)?;
+        if self.operation != op || entry.entry().path() != path || slot.is_none() != path.is_root()
+        {
+            return Err(super::error(op, Failure::InvalidBinding));
+        }
+        if let Some(slot) = slot {
+            self.validate_slot(op, slot, path)?;
+            if !slot
+                .entry
+                .map(|entry| self.data(entry))
+                .transpose()?
+                .is_some_and(|expected| same_entry(data, expected))
+            {
+                return Err(super::error(op, Failure::InvalidBinding));
+            }
+        }
+        Ok(())
+    }
+
+    fn verify_observations(&self, nodes: &Nodes) -> Result<(), StorageError> {
+        for (path, observed) in &self.observed {
+            if !nodes
+                .get(path.as_str())
+                .is_some_and(|node| same_entry(observed, &node.data))
+            {
+                return Err(rejected(self.operation, Rejection::Conflict));
+            }
+        }
+        Ok(())
+    }
+
+    fn verify_absence(
+        &self,
+        nodes: &Nodes,
+        slot: EntrySlot<'_>,
+        path: &StoragePath,
+    ) -> Result<(), StorageError> {
+        if slot.entry.is_none() && nodes.contains_key(path.as_str()) {
+            return Err(rejected(self.operation, Rejection::Conflict));
+        }
+        Ok(())
+    }
+
+    pub(super) fn new(shared: Arc<Shared>, operation: Operation) -> Self {
         Self {
             shared,
+            operation,
+            missing: BTreeSet::new(),
             scope: LookupScope::default(),
             observed: BTreeMap::new(),
         }
@@ -495,7 +326,7 @@ fn bind_observation(
 
 impl OperationLookup for MemoryLookup {
     fn operation(&self) -> Operation {
-        Operation::ReadLink
+        self.operation
     }
 
     fn root(&mut self) -> StorageFuture<'_, ObservedEntry> {
@@ -534,7 +365,17 @@ impl OperationLookup for MemoryLookup {
             {
                 return Err(rejected(op, Rejection::Conflict));
             }
-            let child = existing(&nodes, &address, op)?;
+            let child = match nodes.get(address.as_str()) {
+                Some(child) if !self.missing.contains(&address) => child,
+                Some(_) => return Err(rejected(op, Rejection::Conflict)),
+                None if self.observed.contains_key(&address) => {
+                    return Err(rejected(op, Rejection::Conflict));
+                }
+                None => {
+                    self.missing.insert(address);
+                    return Err(rejected(op, Rejection::NotFound));
+                }
+            };
             bind_observation(&self.scope, &mut self.observed, address, child, op)
         })
     }
@@ -549,19 +390,208 @@ impl OperationLookup for MemoryLookup {
         })
     }
 
+    fn execute_read_link<'a>(
+        &'a self,
+        parent: &'a ObservedEntry,
+        name: &'a EntryName,
+        link: &'a ObservedEntry,
+        request: ReadLinkRequest,
+    ) -> StorageFuture<'a, LinkTarget> {
+        Box::pin(async move {
+            let op = Operation::ReadLink;
+            self.validate_slot(
+                op,
+                EntrySlot {
+                    parent,
+                    name,
+                    entry: Some(link),
+                },
+                request.path(),
+            )?;
+            let nodes = self.shared.lock(op)?;
+            self.verify_observations(&nodes)?;
+            request
+                .check_target(link.entry().entry_type())
+                .map_err(|reason| rejected(op, reason))?;
+            match self.data(link)? {
+                EntryData::Link(target) => Ok(target.as_ref().clone()),
+                _ => Err(super::error(op, Failure::InvalidBinding)),
+            }
+        })
+    }
+
+    fn execute_stat<'a>(
+        &'a self,
+        slot: Option<EntrySlot<'a>>,
+        entry: &'a ObservedEntry,
+        request: StatRequest,
+    ) -> StorageFuture<'a, Entry> {
+        Box::pin(async move {
+            let op = Operation::Stat;
+            self.validate_entry(op, slot, entry, request.path())?;
+            self.verify().await?;
+            Ok(entry.entry().clone())
+        })
+    }
+
+    fn execute_read<'a>(
+        &'a self,
+        slot: EntrySlot<'a>,
+        request: ReadRequest,
+    ) -> StorageFuture<'a, Box<dyn StorageFileReader>> {
+        Box::pin(async move {
+            let op = Operation::Read;
+            self.validate_slot(op, slot, request.path())?;
+            let nodes = self.shared.lock(op)?;
+            self.verify_observations(&nodes)?;
+            let observed = slot
+                .entry
+                .ok_or_else(|| super::error(op, Failure::InvalidBinding))?;
+            request
+                .check_target(observed.entry().entry_type())
+                .map_err(|reason| rejected(op, reason))?;
+            let EntryData::File(blob) = self.data(observed)? else {
+                return Err(rejected(op, Rejection::NotRegularFile));
+            };
+            Ok(
+                Box::new(MemoryFileReader::new(blob.clone(), request.range()))
+                    as Box<dyn StorageFileReader>,
+            )
+        })
+    }
+
+    fn execute_write<'a>(
+        &'a self,
+        slot: EntrySlot<'a>,
+        request: WriteRequest,
+    ) -> StorageFuture<'a, Box<dyn StorageFileWriter>> {
+        Box::pin(async move {
+            let op = Operation::Write;
+            self.validate_slot(op, slot, request.path())?;
+            let nodes = self.shared.lock(op)?;
+            self.verify_observations(&nodes)?;
+            self.verify_absence(&nodes, slot, request.path())?;
+            request
+                .check_target(slot.entry.map(|entry| entry.entry().entry_type()))
+                .map_err(|reason| rejected(op, reason))?;
+            let EntryData::Dir(parent) = self.data(slot.parent)? else {
+                return Err(super::error(op, Failure::InvalidBinding));
+            };
+            let destination = match slot.entry.map(|entry| self.data(entry)).transpose()? {
+                Some(EntryData::File(blob)) => Some(Arc::downgrade(blob)),
+                None => None,
+                _ => return Err(super::error(op, Failure::InvalidBinding)),
+            };
+            Ok(Box::new(MemoryFileWriter::new(
+                self.shared.clone(),
+                request.path().clone(),
+                slot.parent.entry().path().clone(),
+                parent.clone(),
+                destination,
+            )) as Box<dyn StorageFileWriter>)
+        })
+    }
+
+    fn execute_create_directory<'a>(
+        &'a mut self,
+        slot: EntrySlot<'a>,
+        request: CreateDirectoryRequest,
+    ) -> StorageFuture<'a, ObservedEntry> {
+        Box::pin(async move {
+            let op = Operation::CreateDirectory;
+            let path = request.path();
+            self.validate_slot(op, slot, path)?;
+            let mut nodes = self.shared.lock(op)?;
+            self.verify_observations(&nodes)?;
+            let admission =
+                request.check_target(nodes.get(path.as_str()).map(MemoryEntry::entry_type));
+            self.missing.remove(path);
+            admission.map_err(|reason| rejected(op, reason))?;
+            let node = MemoryEntry::dir();
+            let observed =
+                bind_observation(&self.scope, &mut self.observed, path.clone(), &node, op)?;
+            nodes.insert(path.as_str().into(), node);
+            Ok(observed)
+        })
+    }
+
+    fn execute_remove<'a>(
+        &'a self,
+        slot: EntrySlot<'a>,
+        request: RemoveRequest,
+    ) -> StorageFuture<'a, ()> {
+        Box::pin(async move {
+            let op = Operation::Remove;
+            self.validate_slot(op, slot, request.path())?;
+            let mut nodes = self.shared.lock(op)?;
+            self.verify_observations(&nodes)?;
+            let entry = slot
+                .entry
+                .ok_or_else(|| super::error(op, Failure::InvalidBinding))?;
+            request
+                .check_target(entry.entry().entry_type())
+                .map_err(|reason| rejected(op, reason))?;
+            if request.kind() == RemoveKind::EmptyDirectory
+                && nodes
+                    .keys()
+                    .any(|key| descendant(key, request.path().as_str()))
+            {
+                return Err(rejected(op, Rejection::DirectoryNotEmpty));
+            }
+            nodes.remove(request.path().as_str());
+            Ok(())
+        })
+    }
+
+    fn execute_rename<'a>(
+        &'a self,
+        source: EntrySlot<'a>,
+        destination: EntrySlot<'a>,
+        request: RenameRequest,
+    ) -> StorageFuture<'a, Entry> {
+        Box::pin(async move {
+            let op = Operation::Rename;
+            self.validate_slot(op, source, request.source())?;
+            self.validate_slot(op, destination, request.destination())?;
+            if source.entry.is_none() {
+                return Err(super::error(op, Failure::InvalidBinding));
+            }
+            let mut nodes = self.shared.lock(op)?;
+            self.verify_observations(&nodes)?;
+            self.verify_absence(&nodes, destination, request.destination())?;
+            let same_slot = source.name == destination.name
+                && same_entry(self.data(source.parent)?, self.data(destination.parent)?);
+            rename(&mut nodes, request, same_slot)
+        })
+    }
+
+    fn select_directory<'a>(
+        &'a self,
+        slot: Option<EntrySlot<'a>>,
+        entry: &'a ObservedEntry,
+        request: ListRequest,
+    ) -> StorageFuture<'a, DirectorySelection> {
+        Box::pin(async move {
+            let op = Operation::List;
+            self.validate_entry(op, slot, entry, request.directory())?;
+            if request.after().is_some() {
+                return Err(super::error(op, Failure::InvalidBinding));
+            }
+            self.verify().await?;
+            let EntryData::Dir(id) = self.data(entry)? else {
+                return Err(rejected(op, Rejection::NotDirectory));
+            };
+            Ok(DirectorySelection::from_lookup(
+                request.directory().clone(),
+                **id,
+            ))
+        })
+    }
+
     fn verify(&self) -> StorageFuture<'_, ()> {
         Box::pin(async move {
-            let op = self.operation();
-            let nodes = self.shared.lock(op)?;
-            for (path, observed) in &self.observed {
-                if !nodes
-                    .get(path.as_str())
-                    .is_some_and(|node| same_entry(observed, &node.data))
-                {
-                    return Err(rejected(op, Rejection::Conflict));
-                }
-            }
-            Ok(())
+            let nodes = self.shared.lock(self.operation)?;
+            self.verify_observations(&nodes)
         })
     }
 }

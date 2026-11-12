@@ -82,14 +82,14 @@ pub struct WriteFileRequest {
 /// the caller's trailing slash as an instance-local directory requirement.
 pub struct CreateDirRequest {
     pub(crate) path: VirtualPath,
-    pub(crate) mode: ah_vfs_storage::CreateDirectoryMode,
+    pub(crate) mode: crate::resolve::operand::CreateDirectoryMode,
     pub(crate) trailing_slash: bool,
 }
 
 impl CreateDirRequest {
     pub fn new(
         path: &str,
-        mode: ah_vfs_storage::CreateDirectoryMode,
+        mode: crate::resolve::operand::CreateDirectoryMode,
     ) -> Result<Self, VirtualPathError> {
         Ok(Self {
             path: VirtualPath::parse(path)?,

@@ -308,10 +308,6 @@ impl Client {
             })?;
         Ok(!listed.contents.is_empty() || !listed.common_prefixes.is_empty())
     }
-    pub fn stat(&self, name: &str) -> Result<Entry> {
-        self.stat_object(name).map(|(entry, _)| entry)
-    }
-
     pub fn stat_object(&self, name: &str) -> Result<(Entry, Option<String>)> {
         let context = &self.context;
         path(context, name)?;

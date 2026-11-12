@@ -6,15 +6,20 @@ use crate::application::dto::{
 };
 use crate::application::error::EntryError;
 use crate::application::mount_runtime::MountRuntime;
-use crate::application::port::{LookupContext, Storage};
+use crate::application::port::Storage;
 use crate::application::session::{FileReadHandle, FileWriteHandle};
 use crate::domain::namespace::{Mount, MountTable, VirtualPath};
-use ah_vfs_storage::{AttributeAction, AttributeResult, EntryType, StoragePath};
-use ah_vfs_storage::{BackendFailure, DirectoryCursor, ListRequest, ListTarget};
-use ah_vfs_storage::{
-    Capabilities, LinkTarget, ReadRequest, RemoveRequest, RenameRequest,
-    StatRequest, SymlinkAction, WriteRequest,
+use crate::resolve::LookupContext;
+use crate::resolve::StorageOperations;
+use crate::resolve::operand::{
+    ListOperand, ListOperandTarget, ReadOperand, RemoveOperand, RenameOperand, StatOperand,
+    WriteOperand,
 };
+use crate::resolve::path::RootedPath;
+use crate::resolve::policy::SymlinkAction;
+use ah_vfs_storage::{AttributeAction, AttributeResult, EntryType, StoragePath};
+use ah_vfs_storage::{BackendFailure, DirectoryCursor};
+use ah_vfs_storage::{Capabilities, LinkTarget};
 use ah_vfs_storage::{Failure, Operation, Rejection, StorageError};
 
 use std::{collections::BTreeMap, sync::Arc};
@@ -117,7 +122,7 @@ impl EntryService {
         Self::require(Operation::Stat, capabilities.stat())?;
         let entry = storage
             .stat_entry(
-                StatRequest::new(relative.to_rooted_expr(), SymlinkAction::Preserve),
+                StatOperand::new(relative.to_rooted_expr(), SymlinkAction::Preserve),
                 LookupContext::default(),
             )
             .await?;
@@ -186,14 +191,16 @@ impl EntryService {
                 let (relative, storage, capabilities) = self.open(&table, path).await?;
                 Self::require(Operation::List, capabilities.list())?;
                 let context = LookupContext::default();
-                let request =
-                    ListRequest::new(ListTarget::Path(relative.to_rooted_expr()), query.size);
+                let request = ListOperand::new(
+                    ListOperandTarget::Path(relative.to_rooted_expr()),
+                    query.size,
+                );
                 let directory =
                     if matches!(Self::classify(&table, path), NamespaceEntry::SyntheticDir) {
                         Self::require(Operation::List, capabilities.stat())?;
                         match storage
                             .stat_entry(
-                                StatRequest::new(
+                                StatOperand::new(
                                     relative.to_rooted_expr(),
                                     SymlinkAction::Preserve,
                                 ),
@@ -265,10 +272,10 @@ impl EntryService {
             let mut scan = backend.clone();
             'pages: loop {
                 let target = scan.map_or_else(
-                    || ListTarget::Path(selection.address().to_rooted_expr()),
-                    ListTarget::Continue,
+                    || ListOperandTarget::Path(selection.address().to_rooted_expr()),
+                    ListOperandTarget::Continue,
                 );
-                let request = ListRequest::new(target, query.size);
+                let request = ListOperand::new(target, query.size);
                 let bound = request
                     .bind_selection(selection.clone())
                     .map_err(|_| stale())?;
@@ -373,11 +380,11 @@ impl EntryService {
             .drivers
             .get(reference.driver_key())
             .ok_or_else(|| EntryError::DriverNotRegistered(reference.driver_key().clone()))?;
-        let request = ReadRequest::new(resolution.storage_path()?.to_rooted_expr(), request.range);
+        let request = ReadOperand::new(resolution.storage_path()?.to_rooted_expr(), request.range);
         driver
             .info()
             .capabilities()
-            .require_read(&request)
+            .require_read_range(request.range())
             .map_err(|reason| {
                 StorageError::without_effects(Operation::Read, Failure::Rejected(reason), None)
             })?;
@@ -400,7 +407,7 @@ impl EntryService {
             .drivers
             .get(reference.driver_key())
             .ok_or_else(|| EntryError::DriverNotRegistered(reference.driver_key().clone()))?;
-        let operation = WriteRequest::new(
+        let operation = WriteOperand::new(
             resolution.storage_path()?.to_rooted_expr(),
             request.mode,
             request.publication,
@@ -408,7 +415,7 @@ impl EntryService {
         driver
             .info()
             .capabilities()
-            .require_write(&operation)
+            .require_write_mode(operation.mode(), operation.publication())
             .map_err(|reason| {
                 StorageError::without_effects(Operation::Write, Failure::Rejected(reason), None)
             })?;
@@ -443,7 +450,7 @@ impl EntryService {
         if request.trailing_slash {
             operand = operand.with_trailing_slash();
         }
-        let operation = ah_vfs_storage::CreateDirectoryRequest::new(operand, request.mode);
+        let operation = crate::resolve::operand::CreateDirectoryOperand::new(operand, request.mode);
         let storage = self.runtime.storage(reference, driver.as_ref()).await?;
         let entry = storage
             .create_dir(operation, LookupContext::default())
@@ -458,7 +465,7 @@ impl EntryService {
         let (relative, storage, capabilities) = self.open(&table, &request.path).await?;
         Self::require(Operation::Remove, capabilities.remove())?;
         let operand = mutation_operand(relative, request.trailing_slash);
-        let remove = RemoveRequest::new(operand, request.kind)
+        let remove = RemoveOperand::new(operand, request.kind)
             .map_err(|_| protected_root(Operation::Remove))?;
         Ok(storage
             .remove_entry(remove, LookupContext::default())
@@ -482,7 +489,7 @@ impl EntryService {
             capabilities.rename().supports(request.mode),
         )?;
         let source = mutation_operand(source, request.source_slash);
-        let rename = RenameRequest::new(source, destination, request.mode)
+        let rename = RenameOperand::new(source, destination, request.mode)
             .map_err(|_| protected_root(Operation::Rename))?;
         let entry = storage.move_entry(rename, LookupContext::default()).await?;
         Ok(EntryView::from_storage(request.destination, entry))
@@ -525,7 +532,7 @@ impl EntryService {
     }
 }
 
-fn mutation_operand(path: StoragePath, trailing_slash: bool) -> ah_vfs_storage::PathExpr {
+fn mutation_operand(path: StoragePath, trailing_slash: bool) -> crate::resolve::path::PathExpr {
     let operand = path.to_rooted_expr();
     if trailing_slash {
         operand.with_trailing_slash()
@@ -535,5 +542,5 @@ fn mutation_operand(path: StoragePath, trailing_slash: bool) -> ah_vfs_storage::
 }
 
 fn protected_root(operation: Operation) -> StorageError {
-    StorageError::without_effects(operation, Failure::Rejected(Rejection::RootProtected), None)
+    crate::resolve::ResolveFailure::RootProtected.without_effects(operation)
 }

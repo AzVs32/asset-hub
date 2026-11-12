@@ -1,12 +1,14 @@
 use ah_vfs::application::dto::*;
 use ah_vfs::application::port::*;
 use ah_vfs::domain::InstanceId;
-use ah_vfs_storage::{
-    CreateDirectoryMode, CreateDirectoryRequest, EntryType, MutationOutcome, PathExpr, Publication,
-    StoragePath, WriteMode, WriteRequest,
+use ah_vfs::resolve::StorageOperations;
+use ah_vfs::resolve::operand::{
+    CreateDirectoryMode, CreateDirectoryOperand, RemoveOperand, WriteOperand,
 };
+use ah_vfs::resolve::path::{PathExpr, RootedPath};
+use ah_vfs_storage::RemoveKind;
+use ah_vfs_storage::{EntryType, MutationOutcome, Publication, StoragePath, WriteMode};
 use ah_vfs_storage::{Failure, Rejection};
-use ah_vfs_storage::{RemoveKind, RemoveRequest};
 use std::{
     collections::BTreeMap,
     hash::{DefaultHasher, Hash, Hasher},
@@ -344,7 +346,7 @@ async fn protobuf_component_opens_writes_commits_reads_and_lists() -> Result {
     let file = StoragePath::parse("file")?;
     let mut writer = storage
         .write_file(
-            ah_vfs_storage::WriteRequest::new(
+            ah_vfs::resolve::operand::WriteOperand::new(
                 file.clone().to_rooted_expr(),
                 ah_vfs_storage::WriteMode::CreateNew,
                 ah_vfs_storage::Publication::Staged,
@@ -358,9 +360,9 @@ async fn protobuf_component_opens_writes_commits_reads_and_lists() -> Result {
     assert_eq!(entry.path(), &file);
     let observed = storage
         .stat_entry(
-            ah_vfs_storage::StatRequest::new(
+            ah_vfs::resolve::operand::StatOperand::new(
                 file.to_rooted_expr(),
-                ah_vfs_storage::SymlinkAction::Preserve,
+                ah_vfs::resolve::policy::SymlinkAction::Preserve,
             ),
             Default::default(),
         )
@@ -369,7 +371,7 @@ async fn protobuf_component_opens_writes_commits_reads_and_lists() -> Result {
     assert_eq!(observed.entry_type(), EntryType::file(Some(4)));
     let mut reader = storage
         .read_file(
-            ah_vfs_storage::ReadRequest::new(
+            ah_vfs::resolve::operand::ReadOperand::new(
                 file.clone().to_rooted_expr(),
                 ah_vfs_storage::ReadRange::new(1, Some(2))?,
             ),
@@ -381,22 +383,24 @@ async fn protobuf_component_opens_writes_commits_reads_and_lists() -> Result {
     assert_eq!(reader.next_chunk().await?, None);
     let directory = storage
         .create_dir(
-            ah_vfs_storage::CreateDirectoryRequest::new(
+            ah_vfs::resolve::operand::CreateDirectoryOperand::new(
                 StoragePath::parse("empty")?.to_rooted_expr(),
-                ah_vfs_storage::CreateDirectoryMode::Single,
+                ah_vfs::resolve::operand::CreateDirectoryMode::Single,
             ),
             Default::default(),
         )
         .await?;
     assert_eq!(directory.entry_type(), EntryType::Directory);
-    let request = ah_vfs_storage::ListRequest::new(
-        ah_vfs_storage::ListTarget::Path(StoragePath::root().to_rooted_expr()),
+    let request = ah_vfs::resolve::operand::ListOperand::new(
+        ah_vfs::resolve::operand::ListOperandTarget::Path(StoragePath::root().to_rooted_expr()),
         ah_vfs_storage::PageSize::new(1)?,
     );
     let page = storage.list_entries(&request, Default::default()).await?;
     assert_eq!(page.entries()[0].path().as_str(), "empty");
-    let continuation = ah_vfs_storage::ListRequest::new(
-        ah_vfs_storage::ListTarget::Continue(page.continuation().ok_or("next page")?),
+    let continuation = ah_vfs::resolve::operand::ListOperand::new(
+        ah_vfs::resolve::operand::ListOperandTarget::Continue(
+            page.continuation().ok_or("next page")?,
+        ),
         Default::default(),
     );
     fixture.replace("entry", b"added during listing".to_vec())?;
@@ -416,7 +420,7 @@ async fn protobuf_component_opens_writes_commits_reads_and_lists() -> Result {
         fixture.replace(path, vec![1; chunk + 4])?;
         let mut stream = storage
             .read_file(
-                ah_vfs_storage::ReadRequest::new(
+                ah_vfs::resolve::operand::ReadOperand::new(
                     StoragePath::parse(path)?.to_rooted_expr(),
                     ah_vfs_storage::ReadRange::new(1, None)?,
                 ),
@@ -438,7 +442,7 @@ async fn protobuf_component_opens_writes_commits_reads_and_lists() -> Result {
     assert_eq!(
         storage
             .remove_entry(
-                RemoveRequest::new((file).to_rooted_expr(), RemoveKind::NonDirectory)?,
+                RemoveOperand::new((file).to_rooted_expr(), RemoveKind::NonDirectory)?,
                 Default::default()
             )
             .await
@@ -447,8 +451,8 @@ async fn protobuf_component_opens_writes_commits_reads_and_lists() -> Result {
             .failure(),
         Failure::Rejected(Rejection::Unsupported)
     );
-    let write = |path: &str, mode, publication| -> Result<WriteRequest> {
-        Ok(WriteRequest::new(
+    let write = |path: &str, mode, publication| -> Result<WriteOperand> {
+        Ok(WriteOperand::new(
             StoragePath::parse(path)?.to_rooted_expr(),
             mode,
             publication,
@@ -501,7 +505,7 @@ async fn protobuf_component_opens_writes_commits_reads_and_lists() -> Result {
 
     let create = |operand: &str, mode| -> Result<_> {
         Ok(storage.create_dir(
-            CreateDirectoryRequest::new(PathExpr::parse(operand)?, mode),
+            CreateDirectoryOperand::new(PathExpr::parse(operand)?, mode),
             Default::default(),
         ))
     };
@@ -553,14 +557,15 @@ async fn protobuf_component_opens_writes_commits_reads_and_lists() -> Result {
         assert_eq!(error.failure(), Failure::Rejected(rejection));
         assert_eq!(error.outcome(), MutationOutcome::Unchanged);
     }
-    let entries = fixture.entries.lock().map_err(|_| "entries lock")?;
-    for directory in ["sequential", "destination", "visible"] {
-        assert_eq!(entries.get(directory), Some(&None));
+    {
+        let entries = fixture.entries.lock().map_err(|_| "entries lock")?;
+        for directory in ["sequential", "destination", "visible"] {
+            assert_eq!(entries.get(directory), Some(&None));
+        }
+        for path in ["visible/denied", "raced", "no-validator/child"] {
+            assert!(!entries.contains_key(path));
+        }
     }
-    for path in ["visible/denied", "raced", "no-validator/child"] {
-        assert!(!entries.contains_key(path));
-    }
-    drop(entries);
 
     let mut lost = storage
         .write_file(

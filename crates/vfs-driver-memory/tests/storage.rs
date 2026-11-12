@@ -1,5 +1,9 @@
+use ah_vfs::resolve::StorageOperations;
+use ah_vfs::resolve::operand::{CreateDirectoryMode, CreateDirectoryOperand};
+use ah_vfs::resolve::operand::{RemoveOperand, RenameOperand};
+use ah_vfs::resolve::path::RootedPath;
 use ah_vfs_storage::{BackendFailure, Failure, Rejection};
-use ah_vfs_storage::{RemoveKind, RemoveRequest, RenameMode, RenameRequest};
+use ah_vfs_storage::{RemoveKind, RenameMode};
 mod common;
 
 use ah_vfs::application::port::{Driver, Storage, validate_storage_extensions};
@@ -24,9 +28,9 @@ async fn declarations_cover_all_ports_and_optional_attributes_are_absent() -> Te
     assert_eq!(storage.chunk_size().get(), 64 * 1024);
     let root = storage
         .stat_entry(
-            ah_vfs_storage::StatRequest::new(
+            ah_vfs::resolve::operand::StatOperand::new(
                 path("")?.to_rooted_expr(),
-                ah_vfs_storage::SymlinkAction::Preserve,
+                ah_vfs::resolve::policy::SymlinkAction::Preserve,
             ),
             Default::default(),
         )
@@ -40,7 +44,7 @@ async fn publication_is_staged_and_commit_is_terminal() -> TestResult {
     let storage = storage(64)?;
     let mut writer = storage
         .write_file(
-            ah_vfs_storage::WriteRequest::new(
+            ah_vfs::resolve::operand::WriteOperand::new(
                 path("file")?.to_rooted_expr(),
                 ah_vfs_storage::WriteMode::CreateNew,
                 ah_vfs_storage::Publication::Atomic,
@@ -91,7 +95,7 @@ async fn abort_drop_and_unpolled_operations_never_publish_or_leak_quota() -> Tes
     let storage = storage(8)?;
     let mut writer = storage
         .write_file(
-            ah_vfs_storage::WriteRequest::new(
+            ah_vfs::resolve::operand::WriteOperand::new(
                 path("abort")?.to_rooted_expr(),
                 ah_vfs_storage::WriteMode::CreateNew,
                 ah_vfs_storage::Publication::Staged,
@@ -114,7 +118,7 @@ async fn abort_drop_and_unpolled_operations_never_publish_or_leak_quota() -> Tes
     {
         let mut writer = storage
             .write_file(
-                ah_vfs_storage::WriteRequest::new(
+                ah_vfs::resolve::operand::WriteOperand::new(
                     path("drop")?.to_rooted_expr(),
                     ah_vfs_storage::WriteMode::CreateNew,
                     ah_vfs_storage::Publication::Staged,
@@ -147,7 +151,7 @@ async fn ranges_chunking_and_repeated_eof_follow_the_stream_contract() -> TestRe
     ] {
         let mut reader = storage
             .read_file(
-                ah_vfs_storage::ReadRequest::new(
+                ah_vfs::resolve::operand::ReadOperand::new(
                     path("file")?.to_rooted_expr(),
                     ah_vfs_storage::ReadRange::new(offset, length)?,
                 ),
@@ -171,7 +175,7 @@ async fn quota_counts_staging_and_failure_discards_the_stage() -> TestResult {
     let storage = storage(8)?;
     let mut one = storage
         .write_file(
-            ah_vfs_storage::WriteRequest::new(
+            ah_vfs::resolve::operand::WriteOperand::new(
                 path("one")?.to_rooted_expr(),
                 ah_vfs_storage::WriteMode::CreateNew,
                 ah_vfs_storage::Publication::Staged,
@@ -181,7 +185,7 @@ async fn quota_counts_staging_and_failure_discards_the_stage() -> TestResult {
         .await?;
     let mut two = storage
         .write_file(
-            ah_vfs_storage::WriteRequest::new(
+            ah_vfs::resolve::operand::WriteOperand::new(
                 path("two")?.to_rooted_expr(),
                 ah_vfs_storage::WriteMode::CreateNew,
                 ah_vfs_storage::Publication::Staged,
@@ -207,7 +211,7 @@ async fn quota_counts_staging_and_failure_discards_the_stage() -> TestResult {
     );
     let mut two = storage
         .write_file(
-            ah_vfs_storage::WriteRequest::new(
+            ah_vfs::resolve::operand::WriteOperand::new(
                 path("two")?.to_rooted_expr(),
                 WriteMode::CreateNew,
                 ah_vfs_storage::Publication::Staged,
@@ -241,7 +245,7 @@ async fn readers_pin_old_versions_and_their_capacity_until_released() -> TestRes
     put(&storage, "file", b"oldold").await?;
     let mut old = storage
         .read_file(
-            ah_vfs_storage::ReadRequest::new(
+            ah_vfs::resolve::operand::ReadOperand::new(
                 path("file")?.to_rooted_expr(),
                 ah_vfs_storage::ReadRange::FULL,
             ),
@@ -250,7 +254,7 @@ async fn readers_pin_old_versions_and_their_capacity_until_released() -> TestRes
         .await?;
     let mut writer = storage
         .write_file(
-            ah_vfs_storage::WriteRequest::new(
+            ah_vfs::resolve::operand::WriteOperand::new(
                 path("file")?.to_rooted_expr(),
                 WriteMode::Replace,
                 ah_vfs_storage::Publication::Atomic,
@@ -267,7 +271,7 @@ async fn readers_pin_old_versions_and_their_capacity_until_released() -> TestRes
     assert_eq!(storage.used_bytes(), 6);
     let reader = storage
         .read_file(
-            ah_vfs_storage::ReadRequest::new(
+            ah_vfs::resolve::operand::ReadOperand::new(
                 path("file")?.to_rooted_expr(),
                 ah_vfs_storage::ReadRange::FULL,
             ),
@@ -276,7 +280,7 @@ async fn readers_pin_old_versions_and_their_capacity_until_released() -> TestRes
         .await?;
     storage
         .remove_entry(
-            RemoveRequest::new((path("file")?).to_rooted_expr(), RemoveKind::NonDirectory)?,
+            RemoveOperand::new((path("file")?).to_rooted_expr(), RemoveKind::NonDirectory)?,
             Default::default(),
         )
         .await?;
@@ -293,7 +297,7 @@ async fn full_capacity_replacement_requires_staging_room_and_keeps_original_on_a
     put(&storage, "file", b"full").await?;
     let mut writer = storage
         .write_file(
-            ah_vfs_storage::WriteRequest::new(
+            ah_vfs::resolve::operand::WriteOperand::new(
                 path("file")?.to_rooted_expr(),
                 WriteMode::Replace,
                 ah_vfs_storage::Publication::Atomic,
@@ -328,9 +332,11 @@ async fn directories_and_unicode_name_pagination_remain_hierarchical() -> TestRe
     }
     put(&storage, "dir/nested/hidden", b"x").await?;
     let mut names = Vec::new();
-    let mut target = ah_vfs_storage::ListTarget::Path(path("dir")?.to_rooted_expr());
+    let mut target =
+        ah_vfs::resolve::operand::ListOperandTarget::Path(path("dir")?.to_rooted_expr());
     loop {
-        let query = ah_vfs_storage::ListRequest::new(target, ah_vfs_storage::PageSize::new(2)?);
+        let query =
+            ah_vfs::resolve::operand::ListOperand::new(target, ah_vfs_storage::PageSize::new(2)?);
         let page = storage.list_entries(&query, Default::default()).await?;
         names.extend(page.entries().iter().map(|entry| {
             entry
@@ -342,13 +348,13 @@ async fn directories_and_unicode_name_pagination_remain_hierarchical() -> TestRe
         let Some(next) = page.continuation() else {
             break;
         };
-        target = ah_vfs_storage::ListTarget::Continue(next);
+        target = ah_vfs::resolve::operand::ListOperandTarget::Continue(next);
     }
     assert_eq!(names, ["a", "nested", "z", "é", "文档"]);
     assert_eq!(
         storage
             .remove_entry(
-                RemoveRequest::new((path("dir")?).to_rooted_expr(), RemoveKind::EmptyDirectory)?,
+                RemoveOperand::new((path("dir")?).to_rooted_expr(), RemoveKind::EmptyDirectory)?,
                 Default::default()
             )
             .await
@@ -371,7 +377,7 @@ async fn invalid_parents_types_and_root_mutations_have_domain_errors() -> TestRe
     assert_eq!(
         storage
             .write_file(
-                ah_vfs_storage::WriteRequest::new(
+                ah_vfs::resolve::operand::WriteOperand::new(
                     path("missing/file")?.to_rooted_expr(),
                     ah_vfs_storage::WriteMode::CreateNew,
                     ah_vfs_storage::Publication::Staged
@@ -387,7 +393,7 @@ async fn invalid_parents_types_and_root_mutations_have_domain_errors() -> TestRe
     assert_eq!(
         storage
             .write_file(
-                ah_vfs_storage::WriteRequest::new(
+                ah_vfs::resolve::operand::WriteOperand::new(
                     path("file/child")?.to_rooted_expr(),
                     ah_vfs_storage::WriteMode::CreateNew,
                     ah_vfs_storage::Publication::Staged
@@ -403,9 +409,9 @@ async fn invalid_parents_types_and_root_mutations_have_domain_errors() -> TestRe
     assert_eq!(
         storage
             .stat_entry(
-                ah_vfs_storage::StatRequest::new(
+                ah_vfs::resolve::operand::StatOperand::new(
                     path("file/child")?.to_rooted_expr(),
-                    ah_vfs_storage::SymlinkAction::Preserve
+                    ah_vfs::resolve::policy::SymlinkAction::Preserve
                 ),
                 Default::default()
             )
@@ -418,7 +424,7 @@ async fn invalid_parents_types_and_root_mutations_have_domain_errors() -> TestRe
     assert_eq!(
         storage
             .read_file(
-                ah_vfs_storage::ReadRequest::new(
+                ah_vfs::resolve::operand::ReadOperand::new(
                     path("")?.to_rooted_expr(),
                     ah_vfs_storage::ReadRange::FULL
                 ),
@@ -433,8 +439,10 @@ async fn invalid_parents_types_and_root_mutations_have_domain_errors() -> TestRe
     assert_eq!(
         storage
             .list_entries(
-                &ah_vfs_storage::ListRequest::new(
-                    ah_vfs_storage::ListTarget::Path(path("file")?.to_rooted_expr()),
+                &ah_vfs::resolve::operand::ListOperand::new(
+                    ah_vfs::resolve::operand::ListOperandTarget::Path(
+                        path("file")?.to_rooted_expr()
+                    ),
                     Default::default()
                 ),
                 Default::default()
@@ -445,29 +453,30 @@ async fn invalid_parents_types_and_root_mutations_have_domain_errors() -> TestRe
             .failure(),
         Failure::Rejected(Rejection::NotDirectory)
     );
-    assert!(RemoveRequest::new(path("")?.to_rooted_expr(), RemoveKind::EmptyDirectory).is_err());
+    assert!(RemoveOperand::new(path("")?.to_rooted_expr(), RemoveKind::EmptyDirectory).is_err());
     assert_eq!(
-        storage
-            .write_file(
-                ah_vfs_storage::WriteRequest::new(
-                    path("")?.to_rooted_expr(),
-                    ah_vfs_storage::WriteMode::CreateNew,
-                    ah_vfs_storage::Publication::Staged
-                ),
-                Default::default()
-            )
-            .await
-            .err()
-            .ok_or("root")?
-            .failure(),
-        Failure::Rejected(Rejection::RootProtected)
+        ah_vfs::resolve::ResolveFailure::from_error(
+            &storage
+                .write_file(
+                    ah_vfs::resolve::operand::WriteOperand::new(
+                        path("")?.to_rooted_expr(),
+                        ah_vfs_storage::WriteMode::CreateNew,
+                        ah_vfs_storage::Publication::Staged
+                    ),
+                    Default::default()
+                )
+                .await
+                .err()
+                .ok_or("root")?
+        ),
+        ah_vfs::resolve::ResolveFailure::RootProtected
     );
     assert_eq!(
         storage
             .create_dir(
-                ah_vfs_storage::CreateDirectoryRequest::new(
+                ah_vfs::resolve::operand::CreateDirectoryOperand::new(
                     path("file/nested/dir")?.to_rooted_expr(),
-                    ah_vfs_storage::CreateDirectoryMode::Recursive
+                    ah_vfs::resolve::operand::CreateDirectoryMode::Recursive
                 ),
                 Default::default()
             )
@@ -489,7 +498,7 @@ async fn subtree_rename_and_atomic_replacement_preserve_contents() -> TestResult
     put(&storage, "source/nested/file", b"data").await?;
     storage
         .move_entry(
-            RenameRequest::new(
+            RenameOperand::new(
                 (path("source")?).to_rooted_expr(),
                 (path("target")?).to_rooted_expr(),
                 RenameMode::Replace,
@@ -504,7 +513,7 @@ async fn subtree_rename_and_atomic_replacement_preserve_contents() -> TestResult
     assert_eq!(
         storage
             .move_entry(
-                RenameRequest::new(
+                RenameOperand::new(
                     (path("new")?).to_rooted_expr(),
                     (path("old")?).to_rooted_expr(),
                     RenameMode::NoReplace
@@ -519,7 +528,7 @@ async fn subtree_rename_and_atomic_replacement_preserve_contents() -> TestResult
     );
     storage
         .move_entry(
-            RenameRequest::new(
+            RenameOperand::new(
                 (path("new")?).to_rooted_expr(),
                 (path("old")?).to_rooted_expr(),
                 RenameMode::Replace,
@@ -535,18 +544,18 @@ async fn subtree_rename_and_atomic_replacement_preserve_contents() -> TestResult
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn directory_replacement_serializes_with_a_concurrent_insert() -> TestResult {
-    use ah_vfs_storage::{CreateDirectoryMode, CreateDirectoryRequest, MutationOutcome};
+    use ah_vfs_storage::MutationOutcome;
 
     let storage = Arc::new(storage(64)?);
     mkdir(storage.as_ref(), "source").await?;
     mkdir(storage.as_ref(), "target").await?;
     put(storage.as_ref(), "source/file", b"preserved").await?;
-    let rename = RenameRequest::new(
+    let rename = RenameOperand::new(
         path("source")?.to_rooted_expr(),
         path("target")?.to_rooted_expr(),
         RenameMode::Replace,
     )?;
-    let insert = CreateDirectoryRequest::new(
+    let insert = CreateDirectoryOperand::new(
         path("target/new")?.to_rooted_expr(),
         CreateDirectoryMode::Single,
     );
@@ -554,6 +563,7 @@ async fn directory_replacement_serializes_with_a_concurrent_insert() -> TestResu
     let task = tokio::spawn({
         let storage = storage.clone();
         let start = start.clone();
+        let insert = insert.clone();
         async move {
             start.wait().await;
             storage.create_dir(insert, Default::default()).await
@@ -561,7 +571,11 @@ async fn directory_replacement_serializes_with_a_concurrent_insert() -> TestResu
     });
     start.wait().await;
     let moved = storage.move_entry(rename, Default::default()).await;
-    task.await??;
+    if let Err(error) = task.await? {
+        assert_eq!(error.failure(), Failure::Rejected(Rejection::Conflict));
+        assert_eq!(error.outcome(), MutationOutcome::Unchanged);
+        storage.create_dir(insert, Default::default()).await?;
+    }
     assert!(exists(storage.as_ref(), "target/new").await?);
     match moved {
         Ok(_) => {
@@ -601,7 +615,7 @@ async fn failed_renames_leave_every_entry_and_quota_unchanged() -> TestResult {
         assert_eq!(
             storage
                 .move_entry(
-                    RenameRequest::new(
+                    RenameOperand::new(
                         (path(source)?).to_rooted_expr(),
                         (path(destination)?).to_rooted_expr(),
                         RenameMode::Replace
@@ -623,7 +637,7 @@ async fn failed_renames_leave_every_entry_and_quota_unchanged() -> TestResult {
     assert_eq!(
         storage
             .move_entry(
-                RenameRequest::new(
+                RenameOperand::new(
                     (path("dir")?).to_rooted_expr(),
                     (path(&long)?).to_rooted_expr(),
                     RenameMode::NoReplace
@@ -646,7 +660,7 @@ async fn changed_parent_rejects_publication_and_failed_commit_is_terminal() -> T
     mkdir(&storage, "dir").await?;
     let mut writer = storage
         .write_file(
-            ah_vfs_storage::WriteRequest::new(
+            ah_vfs::resolve::operand::WriteOperand::new(
                 path("dir/file")?.to_rooted_expr(),
                 ah_vfs_storage::WriteMode::CreateNew,
                 ah_vfs_storage::Publication::Staged,
@@ -657,7 +671,7 @@ async fn changed_parent_rejects_publication_and_failed_commit_is_terminal() -> T
     writer.write_chunk(b"data").await?;
     storage
         .remove_entry(
-            RemoveRequest::new((path("dir")?).to_rooted_expr(), RemoveKind::EmptyDirectory)?,
+            RemoveOperand::new((path("dir")?).to_rooted_expr(), RemoveKind::EmptyDirectory)?,
             Default::default(),
         )
         .await?;
@@ -685,7 +699,7 @@ async fn concurrent_create_new_publication_has_one_winner_and_refunds_loser() ->
     let storage = storage(16)?;
     let mut one = storage
         .write_file(
-            ah_vfs_storage::WriteRequest::new(
+            ah_vfs::resolve::operand::WriteOperand::new(
                 path("file")?.to_rooted_expr(),
                 ah_vfs_storage::WriteMode::CreateNew,
                 ah_vfs_storage::Publication::Staged,
@@ -695,7 +709,7 @@ async fn concurrent_create_new_publication_has_one_winner_and_refunds_loser() ->
         .await?;
     let mut two = storage
         .write_file(
-            ah_vfs_storage::WriteRequest::new(
+            ah_vfs::resolve::operand::WriteOperand::new(
                 path("file")?.to_rooted_expr(),
                 ah_vfs_storage::WriteMode::CreateNew,
                 ah_vfs_storage::Publication::Staged,
@@ -728,7 +742,7 @@ async fn concurrent_writers_cannot_overcommit_instance_quota() -> TestResult {
         tasks.push(tokio::spawn(async move {
             let mut writer = storage
                 .write_file(
-                    ah_vfs_storage::WriteRequest::new(
+                    ah_vfs::resolve::operand::WriteOperand::new(
                         file.to_rooted_expr(),
                         ah_vfs_storage::WriteMode::CreateNew,
                         ah_vfs_storage::Publication::Staged,
@@ -763,7 +777,7 @@ async fn streams_keep_resources_alive_after_the_storage_handle_is_dropped() -> T
     put(&storage, "existing", b"retained").await?;
     let mut reader = storage
         .read_file(
-            ah_vfs_storage::ReadRequest::new(
+            ah_vfs::resolve::operand::ReadOperand::new(
                 path("existing")?.to_rooted_expr(),
                 ah_vfs_storage::ReadRange::FULL,
             ),
@@ -772,7 +786,7 @@ async fn streams_keep_resources_alive_after_the_storage_handle_is_dropped() -> T
         .await?;
     let mut writer = storage
         .write_file(
-            ah_vfs_storage::WriteRequest::new(
+            ah_vfs::resolve::operand::WriteOperand::new(
                 path("new")?.to_rooted_expr(),
                 ah_vfs_storage::WriteMode::CreateNew,
                 ah_vfs_storage::Publication::Staged,

@@ -2,7 +2,7 @@
 //!
 //! # Construction and boundaries
 //! Requests use named constructors with explicit policies and borrowed accessors.
-//! Constructors that validate operands return `Result`. Executors can borrow
+//! Constructors that validate addresses return `Result`. Executors can borrow
 //! a request for synchronous work or for the lifetime of an async call.
 //! [`AttributeRequest::into_parts`] transfers the path and action when a task
 //! or protocol message needs to own them, including any attribute value buffer.
@@ -15,12 +15,16 @@
 //! identities, persistence and wire formats belong to those outer layers.
 //! Optional attributes remain separate from basic metadata.
 //!
-//! A [`ReadLinkRequest`] addresses the link itself with a canonical
-//! [`StoragePath`]. The backend returns its exact bytes without following it.
-//! If verification detects that the observed slot has changed, the request
-//! fails with [`Rejection::Conflict`].
-//! An [`AttributeRequest`] also uses a canonical address and applies its
-//! action to the selected entry itself.
+//! Requests use canonical [`StoragePath`] addresses. The backend preserves
+//! every symbolic link as an entry without following it, including in the
+//! final slot. A namespace mismatch detected before effects returns
+//! [`Rejection::Conflict`] with [`MutationOutcome::Unchanged`]. A retired
+//! namespace generation returns [`BackendFailure::Stale`].
+//! [`ReadRequest`] and replacement writes reject a link as
+//! [`Rejection::NotRegularFile`]. [`StatRequest`], [`ReadLinkRequest`],
+//! [`AttributeRequest`], non-directory removal and rename address the link
+//! itself. Root is excluded from write, remove, rename and directory creation.
+//! Directory creation requests create one directory under an existing parent.
 //!
 //! # Logical names and native storage
 //! An [`EntryName`] or [`XattrName`] is identified by its original UTF-8 bytes.
@@ -37,7 +41,7 @@
 //! A backend with exact native lookup can use it directly. A case-insensitive
 //! or normalizing backend may participate if it can obtain the authoritative
 //! spelling and bind that check to the entry or key used by the operation.
-//! Check every ordinary path component and attribute key. A native match for
+//! Check each name in the address and every attribute key. A native match for
 //! `report` with actual spelling `Report` is absent for exact lookup.
 //! Operations that require the exact entry or key return [`Rejection::NotFound`]
 //! or [`Rejection::AttributeNotFound`], respectively. If the operation would
@@ -161,16 +165,16 @@
 //!
 //! ```
 //! use ah_vfs_storage::{
-//!     Capabilities, PathExpr, Publication,
+//!     Capabilities, StoragePath, Publication,
 //!     WriteModes, WriteMode, WriteRequest, WriteSupport,
 //! };
 //! let capabilities = Capabilities::default()
 //!     .with_write(WriteSupport::staged(WriteModes::CreateNew, true));
 //! let request = WriteRequest::new(
-//!     PathExpr::parse("/documents/report.txt")?,
+//!     StoragePath::parse("documents/report.txt")?,
 //!     WriteMode::CreateNew,
 //!     Publication::Atomic,
-//! );
+//! )?;
 //! capabilities.require_write(&request)?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
@@ -206,9 +210,9 @@
 //!
 //! ```
 //! use ah_vfs_storage::{DirectoryIdentity, DirectoryPage, DirectorySelection,
-//!     Entry, EntryType, ListRequest, ListTarget, PageSize, PathExpr, StoragePath};
-//! let query = ListRequest::new(ListTarget::Path(PathExpr::parse("/alias/")?), PageSize::DEFAULT);
-//! // The executor independently resolved /alias/ to /actual.
+//!     Entry, EntryType, ListRequest, PageSize, StoragePath};
+//! let query = ListRequest::new(StoragePath::parse("actual")?, PageSize::DEFAULT);
+//! // The executor independently obtained the directory identity.
 //! let identity = DirectoryIdentity::from_bytes([1; 16]);
 //! let selected = DirectorySelection::from_lookup(StoragePath::parse("actual")?, identity);
 //! let bound = query.bind_selection(selected)?;
@@ -220,8 +224,8 @@
 //! )?;
 //! let cursor = decoded.continuation().ok_or("continuation")?;
 //! assert_eq!(cursor.after().as_str(), "a");
-//! let continuation = ListRequest::new(ListTarget::Continue(cursor), query.size());
-//! assert!(continuation.lookup().is_none());
+//! let continuation = ListRequest::continuing(cursor, query.size());
+//! assert!(continuation.after().is_some());
 //! let resumed = continuation.bind_selection(bound.selection().clone())?;
 //! assert_eq!(resumed.after().map(|name| name.as_str()), Some("a"));
 //! # Ok::<(), Box<dyn std::error::Error>>(())
@@ -230,7 +234,7 @@
 //! Omitting the producer's completion decision is a compile error.
 //! ```compile_fail
 //! use ah_vfs_storage::{BoundListRequest, DirectoryPage};
-//! fn finish(bound: &BoundListRequest<'_>) {
+//! fn finish(bound: &BoundListRequest) {
 //!     DirectoryPage::new(bound, vec![]);
 //! }
 //! ```
@@ -238,7 +242,7 @@
 //! Omitting the decoder's end marker is a compile error, even for an empty page.
 //! ```compile_fail
 //! use ah_vfs_storage::{BoundListRequest, DirectoryPage};
-//! fn finish(bound: &BoundListRequest<'_>) {
+//! fn finish(bound: &BoundListRequest) {
 //!     DirectoryPage::from_parts(bound, bound.selection().address(), bound.selection().identity(), vec![]);
 //! }
 //! ```
@@ -283,8 +287,7 @@
 //!   known guarantees. On encode, fail if the negotiated schema cannot
 //!   represent a value. Rust discriminants and display strings are not tags.
 //! - **Addresses.** Decode canonical addresses with [`StoragePath::parse`].
-//!   The empty address denotes the backend root. Keep addresses distinct
-//!   from request operands in the schema. Encode [`LinkTarget`] as opaque bytes.
+//!   The empty address denotes the backend root. Encode [`LinkTarget`] as opaque bytes.
 //! - **Errors.** A storage failure carries [`Operation`], the [`Failure`]
 //!   family and reason, and [`MutationOutcome`] as independent mandatory
 //!   fields. Check the operation against the correlated request. Reject
@@ -315,9 +318,7 @@
 //!   enforce its allocation budget.
 //!
 //! # Public extension boundaries
-//! Path grammar (`LookupStart`, `PathComponent`), traversal decisions
-//! (`IntermediateSymlinks`, `SymlinkAction`, `MissingName`), listing targets,
-//! operation modes, their fixed support sets and mutation outcomes are closed.
+//! Operation modes, their fixed support sets and mutation outcomes are closed.
 //! An added case changes what an executor must handle and breaks exhaustive matches.
 //!
 //! `Operation`, failure and validation categories, `EntryType`, `WriteSupport`,
@@ -409,8 +410,8 @@
 //!
 //! A write request requires an explicit publication guarantee.
 //! ```compile_fail
-//! use ah_vfs_storage::{PathExpr, WriteMode, WriteRequest};
-//! fn write(path: PathExpr) {
+//! use ah_vfs_storage::{StoragePath, WriteMode, WriteRequest};
+//! fn write(path: StoragePath) {
 //!     WriteRequest::new(path, WriteMode::CreateNew);
 //! }
 //! ```
@@ -421,10 +422,13 @@
 //! let directory = EntryType::Directory { size: Some(10) };
 //! ```
 //!
-//! A selected address must be converted explicitly to a rooted operand.
-//! ```compile_fail
-//! use ah_vfs_storage::{Publication, StoragePath, WriteMode, WriteRequest};
-//! WriteRequest::new(StoragePath::root(), WriteMode::CreateNew, Publication::Atomic);
+//! Write requests reject the root address.
+//! ```
+//! use ah_vfs_storage::{Publication, RequestPathError, StoragePath, WriteMode, WriteRequest};
+//! assert_eq!(
+//!     WriteRequest::new(StoragePath::root(), WriteMode::CreateNew, Publication::Atomic),
+//!     Err(RequestPathError::RootNotAllowed),
+//! );
 //! ```
 //!
 //! Private fields prevent bypassing validation.
@@ -459,8 +463,7 @@ mod directory;
 mod entry;
 mod error;
 mod failure;
-mod lookup;
-mod path_expr;
+mod link_target;
 mod request;
 
 pub use address::{EntryName, MAX_PATH_BYTES, NameError, PathError, StoragePath};
@@ -474,16 +477,14 @@ pub use capabilities::{
 };
 pub use directory::{
     BoundListRequest, DirectoryCursor, DirectoryIdentity, DirectoryPage, DirectoryPageError,
-    DirectorySelection, ListRequest, ListTarget, PageSize, PageSizeError,
+    DirectorySelection, ListRequest, PageSize, PageSizeError,
 };
 pub use entry::{Entry, EntryError, EntryType};
 pub use error::StorageError;
 pub use failure::{BackendFailure, ContractViolation, Failure, MutationOutcome, Rejection};
-pub use lookup::{IntermediateSymlinks, LinkTarget, MissingName, PathLookup, SymlinkAction};
-pub use path_expr::{LookupStart, MAX_PATH_EXPR_BYTES, PathComponent, PathExpr, PathExprError};
+pub use link_target::LinkTarget;
 pub use request::{
-    CreateDirectoryMode, CreateDirectoryRequest, Operation, Publication, RangeError,
-    ReadLinkRequest, ReadRange, ReadRequest, RemoveKind, RemoveRequest, RenameDecision,
-    RenameDestination, RenameMode, RenameRequest, RequestPathError, StatRequest, WriteMode,
-    WriteRequest,
+    CreateDirectoryRequest, Operation, Publication, RangeError, ReadLinkRequest, ReadRange,
+    ReadRequest, RemoveKind, RemoveRequest, RenameDestination, RenameMode, RenameRequest,
+    RequestPathError, StatRequest, WriteMode, WriteRequest,
 };

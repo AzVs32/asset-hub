@@ -1,9 +1,13 @@
 #![cfg(target_os = "linux")]
 //! End-to-end checks use the actual native plugin executable and a TCP channel.
 use ah_vfs::application::driver_error::LifecycleFailure;
+use ah_vfs::resolve::LookupContext;
+use ah_vfs::resolve::StorageOperations;
+use ah_vfs::resolve::operand::{ListOperand, ListOperandTarget};
+use ah_vfs::resolve::path::{PathExpr, RootedPath};
+use ah_vfs::resolve::policy::IntermediateSymlinks;
 use ah_vfs_storage::{
-    BackendFailure, Failure, MutationOutcome, Operation, PathExpr,
-    ReadLinkRequest, Rejection,
+    BackendFailure, Failure, MutationOutcome, Operation, ReadLinkRequest, Rejection,
 };
 mod common;
 use ah_vfs::application::driver_catalog::DriverCatalog;
@@ -79,7 +83,7 @@ async fn slot_conflict_preserves_the_generation_and_disconnect_invalidates_it() 
     let storage = storage(driver.as_ref(), root.path(), records).await?;
     let mut writer = storage
         .write_file(
-            ah_vfs_storage::WriteRequest::new(
+            ah_vfs::resolve::operand::WriteOperand::new(
                 StoragePath::parse("occupied")?.to_rooted_expr(),
                 ah_vfs_storage::WriteMode::CreateNew,
                 ah_vfs_storage::Publication::Staged,
@@ -96,11 +100,14 @@ async fn slot_conflict_preserves_the_generation_and_disconnect_invalidates_it() 
         .ok_or("occupied slot was overwritten")?;
     assert_eq!(error.failure(), Failure::Rejected(Rejection::Conflict));
     assert_eq!(error.outcome(), MutationOutcome::Unchanged);
-    assert_eq!(std::fs::read(root.path().join("occupied"))?, b"other writer");
+    assert_eq!(
+        std::fs::read(root.path().join("occupied"))?,
+        b"other writer"
+    );
 
-    let stat = ah_vfs_storage::StatRequest::new(
+    let stat = ah_vfs::resolve::operand::StatOperand::new(
         StoragePath::root().to_rooted_expr(),
-        ah_vfs_storage::SymlinkAction::Preserve,
+        ah_vfs::resolve::policy::SymlinkAction::Preserve,
     );
     storage.stat_entry(stat.clone(), Default::default()).await?;
     process.child.kill()?;
@@ -166,7 +173,11 @@ async fn bound_link_rechecks_the_original_slot_over_grpc() -> Result {
 
     std::fs::rename(root.path().join("link"), root.path().join("original"))?;
     std::os::unix::fs::symlink("after", root.path().join("link"))?;
-    let error = old.read(request.clone()).await.err().ok_or("accepted the replaced link")?;
+    let error = old
+        .read(request.clone())
+        .await
+        .err()
+        .ok_or("accepted the replaced link")?;
     assert_eq!(error.failure(), Failure::Rejected(Rejection::Conflict));
     assert_eq!(error.outcome(), MutationOutcome::Unchanged);
     let current = ah_vfs::resolve::bind_link(storage.as_ref(), operand, Default::default()).await?;
@@ -178,8 +189,13 @@ async fn bound_link_rechecks_the_original_slot_over_grpc() -> Result {
         while !storage.is_stale() {
             tokio::time::sleep(std::time::Duration::from_millis(1)).await;
         }
-    }).await?;
-    let error = current.read(request).await.err().ok_or("accepted a retired binding")?;
+    })
+    .await?;
+    let error = current
+        .read(request)
+        .await
+        .err()
+        .ok_or("accepted a retired binding")?;
     assert_eq!(error.failure(), Failure::Backend(BackendFailure::Stale));
     assert_eq!(error.outcome(), MutationOutcome::Unchanged);
     Ok(())
@@ -223,16 +239,16 @@ async fn native_process_passes_shared_storage_contracts_over_grpc() -> Result {
     .await?;
     let root = tempfile::tempdir()?;
     let storage = storage(driver.as_ref(), root.path(), records.clone()).await?;
-    use ah_vfs_storage::{ListRequest, ListTarget, PageSize};
+    use ah_vfs_storage::PageSize;
     std::fs::create_dir_all(root.path().join("docs/a"))?;
     std::fs::create_dir(root.path().join("docs/b"))?;
-    let list = ListRequest::new(
-        ListTarget::Path(StoragePath::parse("docs")?.to_rooted_expr()),
+    let list = ListOperand::new(
+        ListOperandTarget::Path(StoragePath::parse("docs")?.to_rooted_expr()),
         PageSize::new(1)?,
     );
     let page = storage.list_entries(&list, Default::default()).await?;
-    let resume = ListRequest::new(
-        ListTarget::Continue(page.continuation().ok_or("expected continuation")?),
+    let resume = ListOperand::new(
+        ListOperandTarget::Continue(page.continuation().ok_or("expected continuation")?),
         PageSize::DEFAULT,
     );
     std::fs::remove_dir_all(root.path().join("docs"))?;
@@ -250,8 +266,8 @@ async fn native_process_passes_shared_storage_contracts_over_grpc() -> Result {
             .is_empty()
     );
     use ah_vfs_storage::{
-        AttributeAction as A, AttributeResult as R, IntermediateSymlinks, PathExpr, Permissions,
-        Rejection, XattrName, XattrWriteMode,
+        AttributeAction as A, AttributeResult as R, Permissions, Rejection, XattrName,
+        XattrWriteMode,
     };
     use std::num::NonZeroUsize;
     std::fs::write(root.path().join("docs/attributes"), b"test")?;
@@ -288,13 +304,13 @@ async fn native_process_passes_shared_storage_contracts_over_grpc() -> Result {
         let R::Names(names) = execute(A::list_xattrs(bound))?.await? else {
             return Err("missing name list".into());
         };
-        assert_eq!(names.names(), &[name.clone()]);
+        assert_eq!(names.names(), std::slice::from_ref(&name));
         assert_eq!(execute(A::RemoveXattr(name))?.await?, R::Unit);
     }
 
     let mut writer = storage
         .write_file(
-            ah_vfs_storage::WriteRequest::new(
+            ah_vfs::resolve::operand::WriteOperand::new(
                 (StoragePath::parse("retained")?).to_rooted_expr(),
                 ah_vfs_storage::WriteMode::CreateNew,
                 ah_vfs_storage::Publication::Staged,
@@ -310,7 +326,7 @@ async fn native_process_passes_shared_storage_contracts_over_grpc() -> Result {
     writer.commit().await?;
     let mut reader = storage
         .read_file(
-            ah_vfs_storage::ReadRequest::new(
+            ah_vfs::resolve::operand::ReadOperand::new(
                 StoragePath::parse("retained")?.to_rooted_expr(),
                 ah_vfs_storage::ReadRange::FULL,
             ),
@@ -352,7 +368,7 @@ async fn process_restart_rejects_old_resources_without_replaying_commit() -> Res
     let storage = storage(driver.as_ref(), root.path(), records.clone()).await?;
     let mut pending = storage
         .write_file(
-            ah_vfs_storage::WriteRequest::new(
+            ah_vfs::resolve::operand::WriteOperand::new(
                 (StoragePath::parse("uncertain")?).to_rooted_expr(),
                 ah_vfs_storage::WriteMode::CreateNew,
                 ah_vfs_storage::Publication::Staged,
@@ -386,9 +402,9 @@ async fn process_restart_rejects_old_resources_without_replaying_commit() -> Res
         .await?;
     let old = storage
         .stat_entry(
-            ah_vfs_storage::StatRequest::new(
+            ah_vfs::resolve::operand::StatOperand::new(
                 (StoragePath::root()).to_rooted_expr(),
-                ah_vfs_storage::SymlinkAction::Preserve,
+                ah_vfs::resolve::policy::SymlinkAction::Preserve,
             ),
             Default::default(),
         )

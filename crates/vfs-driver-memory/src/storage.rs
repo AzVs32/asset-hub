@@ -1,15 +1,13 @@
 use crate::Capacity;
-use ah_vfs::application::port::LookupContext;
-use ah_vfs::application::port::{
-    OperationLookup, Storage, StorageFileReader, StorageFileWriter, StorageFuture,
-};
+use ah_vfs::application::port::{OperationLookup, Storage, StorageFuture};
 use ah_vfs_storage::{
     BackendFailure, ContractViolation, Failure, Operation, Rejection, StorageError,
 };
 use ah_vfs_storage::{
-    BoundListRequest, DirectoryPage, DirectorySelection, ListRequest, WriteRequest,
+    BoundListRequest, Capabilities, DirectoryCursor, DirectoryPage, DirectorySelection,
+    MutationBinding,
 };
-use ah_vfs_storage::{Entry, EntryType, ReadRequest, StatRequest, StoragePath};
+use ah_vfs_storage::{Entry, EntryType, StoragePath};
 use std::{
     collections::BTreeMap,
     num::NonZeroUsize,
@@ -222,76 +220,34 @@ impl Storage for MemoryStorage {
         NonZeroUsize::new(CHUNK_SIZE).unwrap_or(NonZeroUsize::MIN)
     }
 
-    fn stat_entry(&self, request: StatRequest, context: LookupContext) -> StorageFuture<'_, Entry> {
-        Box::pin(async move { self.stat_selected(&request, context) })
+    fn storage_capabilities(&self) -> Option<Capabilities> {
+        Some(Self::supported_capabilities())
+    }
+
+    fn mutation_binding(&self) -> MutationBinding {
+        MutationBinding::FinalSlotAtomic
     }
 
     fn begin_lookup(&self, operation: Operation) -> StorageFuture<'_, Box<dyn OperationLookup>> {
         Box::pin(async move {
-            if operation != Operation::ReadLink {
+            if !Self::supported_capabilities().supports(operation) {
                 return Err(error(operation, Failure::Rejected(Rejection::Unsupported)));
             }
-            Ok(Box::new(contract::MemoryLookup::new(self.shared.clone()))
-                as Box<dyn OperationLookup>)
+            Ok(
+                Box::new(contract::MemoryLookup::new(self.shared.clone(), operation))
+                    as Box<dyn OperationLookup>,
+            )
         })
     }
 
-    fn select_directory<'a>(
+    fn resume_directory<'a>(
         &'a self,
-        request: &'a ListRequest,
-        context: LookupContext,
+        cursor: &'a DirectoryCursor,
     ) -> StorageFuture<'a, DirectorySelection> {
-        Box::pin(async move { self.select_list_directory(request, context) })
+        Box::pin(async move { self.resume_list_directory(cursor) })
     }
 
-    fn list_page<'a>(
-        &'a self,
-        bound: &'a BoundListRequest<'_>,
-    ) -> StorageFuture<'a, DirectoryPage> {
+    fn list_page<'a>(&'a self, bound: &'a BoundListRequest) -> StorageFuture<'a, DirectoryPage> {
         Box::pin(async move { self.enumerate_directory(bound) })
-    }
-
-    fn read_file(
-        &self,
-        request: ReadRequest,
-        context: LookupContext,
-    ) -> StorageFuture<'_, Box<dyn StorageFileReader>> {
-        Box::pin(async move {
-            Ok(Box::new(self.open_reader(&request, context)?) as Box<dyn StorageFileReader>)
-        })
-    }
-
-    fn write_file(
-        &self,
-        request: WriteRequest,
-        context: LookupContext,
-    ) -> StorageFuture<'_, Box<dyn StorageFileWriter>> {
-        Box::pin(async move {
-            Ok(Box::new(self.open_writer(&request, context)?) as Box<dyn StorageFileWriter>)
-        })
-    }
-
-    fn create_dir(
-        &self,
-        request: ah_vfs_storage::CreateDirectoryRequest,
-        context: LookupContext,
-    ) -> StorageFuture<'_, Entry> {
-        Box::pin(async move { self.create_directory(&request, context) })
-    }
-
-    fn remove_entry(
-        &self,
-        request: ah_vfs_storage::RemoveRequest,
-        context: LookupContext,
-    ) -> StorageFuture<'_, ()> {
-        Box::pin(async move { self.remove(&request, context) })
-    }
-
-    fn move_entry(
-        &self,
-        request: ah_vfs_storage::RenameRequest,
-        context: LookupContext,
-    ) -> StorageFuture<'_, Entry> {
-        Box::pin(async move { self.rename(&request, context) })
     }
 }

@@ -1,9 +1,12 @@
 #![cfg(target_os = "windows")]
 //! End-to-end checks use the actual native plugin executable and a TCP channel.
 use ah_vfs::application::driver_error::LifecycleFailure;
+use ah_vfs::resolve::StorageOperations;
+use ah_vfs::resolve::operand::{RenameOperand, WriteOperand};
+use ah_vfs::resolve::path::RootedPath;
 use ah_vfs_storage::{
     BackendFailure, Failure, MutationOutcome, Operation, Publication, Rejection, RenameMode,
-    RenameRequest, WriteMode, WriteRequest,
+    WriteMode,
 };
 mod common;
 use ah_vfs::application::driver_catalog::DriverCatalog;
@@ -108,13 +111,16 @@ async fn native_process_passes_shared_storage_contracts_over_grpc() -> Result {
     let existing = root.path().join("existing");
     std::fs::write(&existing, b"original")?;
     for publication in [Publication::Staged, Publication::Atomic] {
-        let replace = WriteRequest::new(
+        let replace = WriteOperand::new(
             StoragePath::parse("existing")?.to_rooted_expr(),
             WriteMode::Replace,
             publication,
         );
         assert_eq!(
-            driver.info().capabilities().require_write(&replace),
+            driver
+                .info()
+                .capabilities()
+                .require_write_mode(replace.mode(), replace.publication()),
             Err(Rejection::Unsupported)
         );
         let error = storage
@@ -129,7 +135,7 @@ async fn native_process_passes_shared_storage_contracts_over_grpc() -> Result {
     assert_eq!(std::fs::read_dir(root.path())?.count(), 1);
     let source = root.path().join("source");
     std::fs::write(&source, b"source")?;
-    let rename = RenameRequest::new(
+    let rename = RenameOperand::new(
         StoragePath::parse("source")?.to_rooted_expr(),
         StoragePath::parse("existing")?.to_rooted_expr(),
         RenameMode::Replace,
@@ -146,7 +152,7 @@ async fn native_process_passes_shared_storage_contracts_over_grpc() -> Result {
 
     let mut writer = storage
         .write_file(
-            ah_vfs_storage::WriteRequest::new(
+            ah_vfs::resolve::operand::WriteOperand::new(
                 (StoragePath::parse("retained")?).to_rooted_expr(),
                 ah_vfs_storage::WriteMode::CreateNew,
                 ah_vfs_storage::Publication::Staged,
@@ -162,7 +168,7 @@ async fn native_process_passes_shared_storage_contracts_over_grpc() -> Result {
     writer.commit().await?;
     let mut reader = storage
         .read_file(
-            ah_vfs_storage::ReadRequest::new(
+            ah_vfs::resolve::operand::ReadOperand::new(
                 StoragePath::parse("retained")?.to_rooted_expr(),
                 ah_vfs_storage::ReadRange::FULL,
             ),
@@ -204,7 +210,7 @@ async fn process_restart_rejects_old_resources_without_replaying_commit() -> Res
     let storage = storage(driver.as_ref(), root.path(), records.clone()).await?;
     let mut pending = storage
         .write_file(
-            ah_vfs_storage::WriteRequest::new(
+            ah_vfs::resolve::operand::WriteOperand::new(
                 (StoragePath::parse("uncertain")?).to_rooted_expr(),
                 ah_vfs_storage::WriteMode::CreateNew,
                 ah_vfs_storage::Publication::Staged,
@@ -238,9 +244,9 @@ async fn process_restart_rejects_old_resources_without_replaying_commit() -> Res
         .await?;
     let old = storage
         .stat_entry(
-            ah_vfs_storage::StatRequest::new(
+            ah_vfs::resolve::operand::StatOperand::new(
                 (StoragePath::root()).to_rooted_expr(),
-                ah_vfs_storage::SymlinkAction::Preserve,
+                ah_vfs::resolve::policy::SymlinkAction::Preserve,
             ),
             Default::default(),
         )

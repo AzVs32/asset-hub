@@ -24,6 +24,22 @@ struct Lookup {
     entries: HashMap<u64, ObservedEntry>,
 }
 
+struct ResolvedSlot {
+    parent: ObservedEntry,
+    name: EntryName,
+    entry: Option<ObservedEntry>,
+}
+
+impl ResolvedSlot {
+    fn as_slot(&self) -> EntrySlot<'_> {
+        EntrySlot {
+            parent: &self.parent,
+            name: &self.name,
+            entry: self.entry.as_ref(),
+        }
+    }
+}
+
 impl Lookup {
     fn check_purpose(&self, operation: Operation) -> Result<(), StorageError> {
         if self.backend.operation() == operation {
@@ -42,6 +58,34 @@ impl Lookup {
             .get(&id)
             .cloned()
             .ok_or_else(|| stale_lookup(self.backend.operation()))
+    }
+
+    fn slot(&self, slot: p::bound::Slot) -> Result<ResolvedSlot, StorageError> {
+        let resolved = ResolvedSlot {
+            parent: self.entry(slot.parent)?,
+            name: slot.name,
+            entry: slot.entry.map(|id| self.entry(id)).transpose()?,
+        };
+        resolved
+            .as_slot()
+            .validate(self.backend.operation(), &slot.path)?;
+        Ok(resolved)
+    }
+
+    fn target(
+        &self,
+        target: p::bound::Target,
+    ) -> Result<(Option<ResolvedSlot>, ObservedEntry), StorageError> {
+        let entry = self.entry(target.entry)?;
+        let slot = target.slot.map(|slot| self.slot(slot)).transpose()?;
+        if slot.is_none() && !entry.entry().path().is_root() {
+            return Err(StorageError::without_effects(
+                self.backend.operation(),
+                Failure::InvalidBinding,
+                None,
+            ));
+        }
+        Ok((slot, entry))
     }
 
     fn insert(&mut self, id: u64, entry: ObservedEntry) -> Result<p::ObservedEntry, StorageError> {
@@ -128,7 +172,7 @@ impl Resources {
 fn missing(operation: Operation) -> DriverError {
     StorageError::without_effects(operation, Failure::Backend(BackendFailure::Closed), None).into()
 }
-fn invalid_lookup(cause: p::LookupValueError) -> DriverError {
+fn invalid_execution(cause: p::bound::ExecutionError) -> DriverError {
     LifecycleError::with_source(LifecycleFailure::InvalidRequest, cause).into()
 }
 
@@ -337,8 +381,7 @@ impl Generation {
                     Failure::Backend(BackendFailure::Unavailable),
                     true,
                     None,
-                )
-                .into())
+                ))
             })
     }
     async fn call_inner(
@@ -525,8 +568,7 @@ impl Session {
                     Failure::Backend(BackendFailure::Unavailable),
                     true,
                     None,
-                )
-                .into())
+                ))
             })
     }
     async fn lookup(
@@ -556,94 +598,6 @@ impl Session {
                         data,
                     )
                     .await;
-            }
-            Op::Read(read) => {
-                let handle = read.handle;
-                let (request, working_directory, intermediate_symlinks) =
-                    p::decode_read(read).map_err(invalid_lookup)?;
-                self.generation
-                    .driver
-                    .info()
-                    .capabilities()
-                    .require_read(&request)
-                    .map_err(|reason| {
-                        StorageError::without_effects(
-                            Operation::Read,
-                            Failure::Rejected(reason),
-                            None,
-                        )
-                    })?;
-                let storage = self.storage(Operation::Read, handle).await?;
-                let capacity = self.generation.reserve().map_err(|source| {
-                    StorageError::without_effects(
-                        Operation::Read,
-                        Failure::Backend(BackendFailure::CapacityExceeded),
-                        Some(Box::new(source)),
-                    )
-                })?;
-                let reader = storage
-                    .read_file(
-                        request,
-                        LookupContext {
-                            working_directory,
-                            intermediate_symlinks,
-                        },
-                    )
-                    .await?;
-                let mut resources = self.resources.lock().await;
-                let handle = resources.allocate(Operation::Read)?;
-                resources.readers.insert(
-                    handle,
-                    Slot {
-                        value: Arc::new(Mutex::new(reader)),
-                        _capacity: capacity,
-                    },
-                );
-                Value::Reader(p::Handle { handle })
-            }
-            Op::Write(write) => {
-                let handle = write.handle;
-                let (request, working_directory, intermediate_symlinks) =
-                    p::decode_write(write).map_err(invalid_lookup)?;
-                self.generation
-                    .driver
-                    .info()
-                    .capabilities()
-                    .require_write(&request)
-                    .map_err(|reason| {
-                        StorageError::without_effects(
-                            Operation::Write,
-                            Failure::Rejected(reason),
-                            None,
-                        )
-                    })?;
-                let storage = self.storage(Operation::Write, handle).await?;
-                let capacity = self.generation.reserve().map_err(|source| {
-                    StorageError::without_effects(
-                        Operation::Write,
-                        Failure::Backend(BackendFailure::CapacityExceeded),
-                        Some(Box::new(source)),
-                    )
-                })?;
-                let writer = storage
-                    .write_file(
-                        request,
-                        LookupContext {
-                            working_directory,
-                            intermediate_symlinks,
-                        },
-                    )
-                    .await?;
-                let mut resources = self.resources.lock().await;
-                let handle = resources.allocate(Operation::Write)?;
-                resources.writers.insert(
-                    handle,
-                    Slot {
-                        value: Arc::new(Mutex::new(writer)),
-                        _capacity: capacity,
-                    },
-                );
-                Value::Writer(p::Handle { handle })
             }
             Op::ReaderNext(p::Handle { handle }) => {
                 let reader = get(
@@ -740,6 +694,7 @@ impl Session {
                 }
                 Value::Unit(p::Empty {})
             }
+            Op::Execute(wire) => return self.execute(wire).await,
             Op::BeginLookup(p::LookupHandle { handle, purpose }) => {
                 let operation = lookup_purpose(&purpose)?;
                 if !self
@@ -854,6 +809,103 @@ impl Session {
         };
         Ok(p::Reply::new(value))
     }
+    async fn execute(&self, wire: p::BoundCall) -> Result<p::Reply, DriverError> {
+        use p::bound::Execution;
+        let (id, command) = p::decode_bound_call(wire).map_err(invalid_execution)?;
+        let op = command.operation();
+        let lookup = self.lookup(id, op).await?;
+        let mut lookup = lookup.lock().await;
+        lookup.check_purpose(op)?;
+        let capabilities = self.generation.driver.info().capabilities();
+        let admission = |cause| StorageError::without_effects(op, Failure::Rejected(cause), None);
+        let value = match command {
+            Execution::Stat(target, request) => {
+                let (slot, entry) = lookup.target(target)?;
+                let entry = lookup
+                    .backend
+                    .execute_stat(slot.as_ref().map(ResolvedSlot::as_slot), &entry, request)
+                    .await?;
+                Value::Entry(c::entry(op, entry)?)
+            }
+            Execution::Read(slot, request) => {
+                capabilities.require_read(&request).map_err(admission)?;
+                let slot = lookup.slot(slot)?;
+                let capacity = self.generation.reserve().map_err(|_| lookup_capacity(op))?;
+                let handle = self.resources.lock().await.allocate(op)?;
+                let reader = lookup.backend.execute_read(slot.as_slot(), request).await?;
+                self.resources.lock().await.readers.insert(
+                    handle,
+                    Slot {
+                        value: Arc::new(Mutex::new(reader)),
+                        _capacity: capacity,
+                    },
+                );
+                Value::Reader(p::Handle { handle })
+            }
+            Execution::Write(slot, request) => {
+                capabilities.require_write(&request).map_err(admission)?;
+                let slot = lookup.slot(slot)?;
+                let capacity = self.generation.reserve().map_err(|_| lookup_capacity(op))?;
+                let handle = self.resources.lock().await.allocate(op)?;
+                let writer = lookup
+                    .backend
+                    .execute_write(slot.as_slot(), request)
+                    .await?;
+                self.resources.lock().await.writers.insert(
+                    handle,
+                    Slot {
+                        value: Arc::new(Mutex::new(writer)),
+                        _capacity: capacity,
+                    },
+                );
+                Value::Writer(p::Handle { handle })
+            }
+            Execution::CreateDirectory(slot, request) => {
+                let slot = lookup.slot(slot)?;
+                if lookup.entries.len() >= p::MAX_LOOKUP_ENTRIES {
+                    return Err(lookup_capacity(op).into());
+                }
+                let id = self.resources.lock().await.next_id(op)?;
+                let entry = lookup
+                    .backend
+                    .execute_create_directory(slot.as_slot(), request)
+                    .await?;
+                Value::ObservedEntry(lookup.insert(id, entry).map_err(|error| {
+                    StorageError::after_dispatch(op, error.failure(), Some(Box::new(error)))
+                })?)
+            }
+            Execution::Remove(slot, request) => {
+                let slot = lookup.slot(slot)?;
+                lookup
+                    .backend
+                    .execute_remove(slot.as_slot(), request)
+                    .await?;
+                Value::Unit(p::Empty {})
+            }
+            Execution::Rename(source, destination, request) => {
+                capabilities.require_rename(&request).map_err(admission)?;
+                let source = lookup.slot(source)?;
+                let destination = lookup.slot(destination)?;
+                let entry = lookup
+                    .backend
+                    .execute_rename(source.as_slot(), destination.as_slot(), request)
+                    .await?;
+                Value::Entry(
+                    c::entry(op, entry).map_err(|error| c::response_error(op, true, error))?,
+                )
+            }
+            Execution::SelectDirectory(target, request) => {
+                let (slot, entry) = lookup.target(target)?;
+                let selection = lookup
+                    .backend
+                    .select_directory(slot.as_ref().map(ResolvedSlot::as_slot), &entry, request)
+                    .await?;
+                Value::SelectedDirectory(p::encode_selection(&selection))
+            }
+        };
+        Ok(p::Reply::new(value))
+    }
+
     async fn storage_op(
         &self,
         s: Arc<dyn Storage>,
@@ -866,37 +918,13 @@ impl Session {
             return Err(unsupported_storage(operation).into());
         }
         let value = match op {
-            p::StorageOp::Stat(stat) => {
-                let (request, working_directory, intermediate_symlinks) =
-                    p::decode_stat(stat).map_err(invalid_lookup)?;
-                let context = LookupContext {
-                    working_directory,
-                    intermediate_symlinks,
-                };
-                Value::Entry(c::entry(operation, s.stat_entry(request, context).await?)?)
-            }
-            p::StorageOp::SelectDirectory(wire) => {
-                let (request, working_directory, intermediate_symlinks) =
-                    p::decode_select_directory(wire)
-                        .map_err(|_| LifecycleError::new(LifecycleFailure::InvalidRequest))?;
-                let selection = s
-                    .select_directory(
-                        &request,
-                        LookupContext {
-                            working_directory,
-                            intermediate_symlinks,
-                        },
-                    )
-                    .await?;
-                request
-                    .bind_selection(selection.clone())
-                    .map_err(|failure| {
-                        StorageError::without_effects(
-                            Operation::List,
-                            Failure::Backend(failure),
-                            None,
-                        )
-                    })?;
+            p::StorageOp::ResumeDirectory(checkpoint) => {
+                let cursor = p::decode_checkpoint(checkpoint)
+                    .map_err(|_| LifecycleError::new(LifecycleFailure::InvalidRequest))?;
+                let selection = s.resume_directory(&cursor).await?;
+                if &selection != cursor.selection() {
+                    return Err(c::storage_protocol_violation(Operation::List).into());
+                }
                 Value::SelectedDirectory(p::encode_selection(&selection))
             }
             p::StorageOp::List(wire) => {
@@ -914,56 +942,6 @@ impl Session {
                 return p::encode_page(page).map_err(|cause| {
                     c::storage_protocol_violation_with_source(Operation::List, cause).into()
                 });
-            }
-            p::StorageOp::CreateDirectory(wire) => {
-                let (request, working_directory, intermediate_symlinks) =
-                    p::decode_create_directory(wire).map_err(invalid_lookup)?;
-                let entry = s
-                    .create_dir(
-                        request,
-                        LookupContext {
-                            working_directory,
-                            intermediate_symlinks,
-                        },
-                    )
-                    .await?;
-                Value::Entry(
-                    c::entry(operation, entry)
-                        .map_err(|error| c::response_error(operation, true, error))?,
-                )
-            }
-            p::StorageOp::Remove(wire) => {
-                let (request, working_directory, intermediate_symlinks) =
-                    p::decode_remove(wire).map_err(invalid_lookup)?;
-                s.remove_entry(
-                    request,
-                    LookupContext {
-                        working_directory,
-                        intermediate_symlinks,
-                    },
-                )
-                .await?;
-                Value::Unit(p::Empty {})
-            }
-            p::StorageOp::Rename(wire) => {
-                let (request, working_directory, intermediate_symlinks) =
-                    p::decode_rename(wire).map_err(invalid_lookup)?;
-                if capabilities.require_rename(&request).is_err() {
-                    return Err(unsupported_storage(operation).into());
-                }
-                let entry = s
-                    .move_entry(
-                        request,
-                        LookupContext {
-                            working_directory,
-                            intermediate_symlinks,
-                        },
-                    )
-                    .await?;
-                Value::Entry(
-                    c::entry(operation, entry)
-                        .map_err(|error| c::response_error(operation, true, error))?,
-                )
             }
             attribute @ (p::StorageOp::GetPermissions(_)
             | p::StorageOp::SetPermissions(_)
@@ -1006,6 +984,10 @@ impl Session {
     }
 }
 
+fn unsupported_storage(operation: Operation) -> StorageError {
+    StorageError::without_effects(operation, Failure::Rejected(Rejection::Unsupported), None)
+}
+
 #[cfg(test)]
 mod request_validation_tests {
     use super::*;
@@ -1024,8 +1006,4 @@ mod request_validation_tests {
         );
         Ok(())
     }
-}
-
-fn unsupported_storage(operation: Operation) -> StorageError {
-    StorageError::without_effects(operation, Failure::Rejected(Rejection::Unsupported), None)
 }

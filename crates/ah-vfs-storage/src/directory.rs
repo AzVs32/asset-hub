@@ -1,8 +1,5 @@
 //! Live, bounded directory enumeration with validated requests and responses.
-use super::{
-    BackendFailure, Entry, EntryName, PathExpr, PathLookup, StoragePath, SymlinkAction,
-    lookup::ExistingTarget,
-};
+use super::{BackendFailure, Entry, EntryName, StoragePath};
 use getset::{CopyGetters, Getters};
 use thiserror::Error;
 
@@ -39,8 +36,8 @@ impl Default for PageSize {
 }
 
 /// A backend-supplied directory incarnation identity. Within an execution
-/// boundary, equality must identify the same directory in the same instance
-/// generation. A replaced directory or a different instance generation must
+/// boundary, equality must identify the same directory in the same backend
+/// generation. A replaced directory or a different backend generation must
 /// have a different identity, even at the same address.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DirectoryIdentity([u8; 16]);
@@ -110,76 +107,66 @@ impl DirectoryCursor {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ListTarget {
-    /// Resolve a fresh operand under the operation's lookup context.
-    Path(PathExpr),
-    /// Resume at the selected address and directory identity in the cursor.
-    Continue(DirectoryCursor),
-}
-
-/// List immediate children in exact UTF-8 name order. A continuation keeps the
-/// selected address and identity. Enumeration is live, so directory contents
-/// can change between pages.
+/// Enumerate a canonical directory with an optional live continuation.
 #[derive(Clone, Debug, Eq, PartialEq, Getters, CopyGetters)]
 pub struct ListRequest {
     #[getset(get = "pub")]
-    target: ListTarget,
+    directory: StoragePath,
+    after: Option<DirectoryCursor>,
     #[getset(get_copy = "pub")]
     size: PageSize,
 }
 
 impl ListRequest {
-    pub fn new(target: ListTarget, size: PageSize) -> Self {
-        Self { target, size }
-    }
-
-    /// Lookup for an initial request. A continuation uses its bound selection
-    /// instead of the original operand or working directory.
-    pub fn lookup(&self) -> Option<PathLookup<'_>> {
-        match &self.target {
-            ListTarget::Path(path) => Some(PathLookup::new(
-                path,
-                SymlinkAction::FollowWithinInstance,
-                ExistingTarget::Directory,
-            )),
-            ListTarget::Continue(_) => None,
+    pub fn new(directory: StoragePath, size: PageSize) -> Self {
+        Self {
+            directory,
+            after: None,
+            size,
         }
     }
 
-    /// Associate this request with the directory independently selected by the
-    /// executor. For an initial request, establish the selection through this
-    /// request's lookup. To resume, obtain the cursor's directory by a retained
-    /// binding or independently reopen its rooted address and verify its
-    /// identity. A changed address or identity is stale.
+    pub fn continuing(cursor: DirectoryCursor, size: PageSize) -> Self {
+        Self {
+            directory: cursor.selection.address.clone(),
+            after: Some(cursor),
+            size,
+        }
+    }
+
+    pub fn after(&self) -> Option<&DirectoryCursor> {
+        self.after.as_ref()
+    }
+
+    /// Bind the independently established selection for this enumeration.
     pub fn bind_selection(
         &self,
         selection: DirectorySelection,
-    ) -> Result<BoundListRequest<'_>, BackendFailure> {
-        if let ListTarget::Continue(cursor) = &self.target
-            && cursor.selection != selection
+    ) -> Result<BoundListRequest, BackendFailure> {
+        if self.directory() != selection.address()
+            || self
+                .after()
+                .is_some_and(|cursor| cursor.selection != selection)
         {
             return Err(BackendFailure::Stale);
         }
         Ok(BoundListRequest {
-            request: self,
+            request: self.clone(),
             selection,
         })
     }
 }
 
-/// The request and its independently established directory binding.
-/// Enumerate that binding and correlate the page response with this operation.
-/// When decoding, keep this context outside the page payload.
+/// A canonical listing request with the independently established selection.
 #[derive(Debug)]
-pub struct BoundListRequest<'a> {
-    request: &'a ListRequest,
+pub struct BoundListRequest {
+    request: ListRequest,
     selection: DirectorySelection,
 }
 
-impl BoundListRequest<'_> {
+impl BoundListRequest {
     pub fn request(&self) -> &ListRequest {
-        self.request
+        &self.request
     }
 
     pub fn selection(&self) -> &DirectorySelection {
@@ -191,10 +178,7 @@ impl BoundListRequest<'_> {
     }
 
     pub fn after(&self) -> Option<&EntryName> {
-        match &self.request.target {
-            ListTarget::Path(_) => None,
-            ListTarget::Continue(cursor) => Some(cursor.after()),
-        }
+        self.request.after().map(DirectoryCursor::after)
     }
 }
 
@@ -232,7 +216,7 @@ impl DirectoryPage {
     /// more entries remain. This checks logical page structure. The producer
     /// establishes the native spelling of each entry.
     pub fn new(
-        bound: &BoundListRequest<'_>,
+        bound: &BoundListRequest,
         entries: Vec<Entry>,
         has_more: bool,
     ) -> Result<Self, DirectoryPageError> {
@@ -279,7 +263,7 @@ impl DirectoryPage {
     /// originate outside the page payload. Decoders explicitly supply the
     /// response's next name or its end marker.
     pub fn from_parts(
-        bound: &BoundListRequest<'_>,
+        bound: &BoundListRequest,
         reported_address: &StoragePath,
         reported_identity: DirectoryIdentity,
         entries: Vec<Entry>,
@@ -314,7 +298,7 @@ impl DirectoryPage {
     }
 
     /// Take a checkpoint at an already validated entry, for example when a
-    /// namespace overlay consumes only a prefix of this page.
+    /// namespace composition consumes only a prefix of this page.
     pub fn checkpoint(&self, index: usize) -> Option<DirectoryCursor> {
         Some(DirectoryCursor {
             selection: self.selection.clone(),

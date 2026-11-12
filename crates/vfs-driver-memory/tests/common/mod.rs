@@ -1,4 +1,6 @@
 #![allow(dead_code)]
+use ah_vfs::resolve::StorageOperations;
+use ah_vfs::resolve::path::RootedPath;
 use ah_vfs_storage::{Failure, Rejection};
 
 use ah_vfs::application::port::{Storage, StorageFileReader};
@@ -30,7 +32,7 @@ pub async fn pool() -> TestResult<sqlx::SqlitePool> {
 pub async fn put(storage: &dyn Storage, name: &str, bytes: &[u8]) -> TestResult {
     let mut writer = storage
         .write_file(
-            ah_vfs_storage::WriteRequest::new(
+            ah_vfs::resolve::operand::WriteOperand::new(
                 path(name)?.to_rooted_expr(),
                 ah_vfs_storage::WriteMode::CreateNew,
                 ah_vfs_storage::Publication::Staged,
@@ -57,7 +59,7 @@ pub async fn get(storage: &dyn Storage, name: &str) -> TestResult<Vec<u8>> {
     collect(
         storage
             .read_file(
-                ah_vfs_storage::ReadRequest::new(
+                ah_vfs::resolve::operand::ReadOperand::new(
                     path(name)?.to_rooted_expr(),
                     ah_vfs_storage::ReadRange::FULL,
                 ),
@@ -72,9 +74,9 @@ pub async fn get(storage: &dyn Storage, name: &str) -> TestResult<Vec<u8>> {
 pub async fn mkdir(storage: &dyn Storage, name: &str) -> TestResult {
     storage
         .create_dir(
-            ah_vfs_storage::CreateDirectoryRequest::new(
+            ah_vfs::resolve::operand::CreateDirectoryOperand::new(
                 path(name)?.to_rooted_expr(),
-                ah_vfs_storage::CreateDirectoryMode::Recursive,
+                ah_vfs::resolve::operand::CreateDirectoryMode::Recursive,
             ),
             Default::default(),
         )
@@ -85,9 +87,9 @@ pub async fn mkdir(storage: &dyn Storage, name: &str) -> TestResult {
 pub async fn exists(storage: &dyn Storage, name: &str) -> TestResult<bool> {
     match storage
         .stat_entry(
-            ah_vfs_storage::StatRequest::new(
+            ah_vfs::resolve::operand::StatOperand::new(
                 path(name)?.to_rooted_expr(),
-                ah_vfs_storage::SymlinkAction::Preserve,
+                ah_vfs::resolve::policy::SymlinkAction::Preserve,
             ),
             Default::default(),
         )

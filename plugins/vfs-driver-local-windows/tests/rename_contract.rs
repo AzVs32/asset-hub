@@ -1,4 +1,7 @@
 #![cfg(target_os = "windows")]
+use ah_vfs::resolve::StorageOperations;
+use ah_vfs::resolve::operand::{ReadOperand, RemoveOperand};
+use ah_vfs::resolve::path::PathExpr;
 mod common;
 
 use ah_vfs::{application::port::Driver, testing::assert_same_path_rename_contract};
@@ -19,9 +22,7 @@ async fn local_same_path_rename_obeys_storage_contract() -> Result<(), Box<dyn s
 #[tokio::test]
 async fn remove_unlinks_the_name_while_the_read_handle_is_open()
 -> Result<(), Box<dyn std::error::Error>> {
-    use ah_vfs_storage::{
-        Failure, PathExpr, ReadRange, ReadRequest, Rejection, RemoveKind, RemoveRequest,
-    };
+    use ah_vfs_storage::{Failure, ReadRange, Rejection, RemoveKind};
 
     let dir = tempfile::tempdir()?;
     std::fs::write(dir.path().join("file"), b"open data")?;
@@ -34,17 +35,17 @@ async fn remove_unlinks_the_name_while_the_read_handle_is_open()
     let path = PathExpr::parse("/file")?;
     let mut reader = storage
         .read_file(
-            ReadRequest::new(path.clone(), ReadRange::FULL),
+            ReadOperand::new(path.clone(), ReadRange::FULL),
             Default::default(),
         )
         .await?;
     assert!(
-        matches!(storage.remove_entry(RemoveRequest::new(path.clone(), RemoveKind::EmptyDirectory)?, Default::default()).await,
+        matches!(storage.remove_entry(RemoveOperand::new(path.clone(), RemoveKind::EmptyDirectory)?, Default::default()).await,
         Err(error) if error.failure() == Failure::Rejected(Rejection::NotDirectory))
     );
     storage
         .remove_entry(
-            RemoveRequest::new(path, RemoveKind::NonDirectory)?,
+            RemoveOperand::new(path, RemoveKind::NonDirectory)?,
             Default::default(),
         )
         .await?;

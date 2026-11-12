@@ -1,7 +1,10 @@
 //! Build the guest with `cargo build --locked --release --target wasm32-wasip2`
 //! before running these tests. The multipart test uses the default host fuel budget.
+use ah_vfs::resolve::StorageOperations;
+use ah_vfs::resolve::operand::RenameOperand;
+use ah_vfs::resolve::path::RootedPath;
+use ah_vfs_storage::RenameMode;
 use ah_vfs_storage::{Failure, MutationOutcome, Rejection};
-use ah_vfs_storage::{RenameMode, RenameRequest};
 mod common;
 use ah_vfs::application::driver_catalog::DriverCatalog;
 use ah_vfs::application::dto::*;
@@ -134,6 +137,8 @@ async fn protobuf_reads_and_conditional_commits_bind_a_single_s3_version() -> Re
             ("get /fixture/?", "200 OK", 19, "", b"<ListBucketResult/>".to_vec()),
             ("head /fixture/whole ", "200 OK", 4, "etag: \"whole\"\r\n", vec![]),
             ("get /fixture/?", "200 OK", 19, "", b"<ListBucketResult/>".to_vec()),
+            ("head /fixture/whole ", "200 OK", 4, "etag: \"whole\"\r\n", vec![]),
+            ("get /fixture/?", "200 OK", 19, "", b"<ListBucketResult/>".to_vec()),
             ("get /fixture/whole ", "206 Partial Content", 4,
                 "etag: \"whole\"\r\ncontent-range: bytes 0-3/4\r\n", vec![0, 255, 1, 0]),
             ("head /fixture/empty ", "404 Not Found", 0, "", vec![]),
@@ -208,7 +213,7 @@ async fn protobuf_reads_and_conditional_commits_bind_a_single_s3_version() -> Re
                 stream.read_exact(&mut rest).await?;
             }
             let request = headers;
-            assert!(request.starts_with(expected), "{request}");
+            assert!(request.starts_with(expected), "expected {expected}, got {request}");
             assert!(request.contains("authorization: aws4-hmac-sha256 "));
             assert!(request.contains("x-amz-date:"));
             if expected == "get /fixture/whole " {
@@ -281,9 +286,9 @@ async fn protobuf_reads_and_conditional_commits_bind_a_single_s3_version() -> Re
         directories,
         ah_vfs_storage::DirectorySupport::prefix(false, false)
     );
-    let create = ah_vfs_storage::CreateDirectoryRequest::new(
-        ah_vfs_storage::PathExpr::parse("/absent/child")?,
-        ah_vfs_storage::CreateDirectoryMode::Recursive,
+    let create = ah_vfs::resolve::operand::CreateDirectoryOperand::new(
+        ah_vfs::resolve::path::PathExpr::parse("/absent/child")?,
+        ah_vfs::resolve::operand::CreateDirectoryMode::Recursive,
     );
     assert!(
         matches!(storage.create_dir(create, Default::default()).await,
@@ -292,8 +297,8 @@ async fn protobuf_reads_and_conditional_commits_bind_a_single_s3_version() -> Re
                 && error.outcome() == MutationOutcome::Unchanged
         )
     );
-    let request = ah_vfs_storage::ListRequest::new(
-        ah_vfs_storage::ListTarget::Path(StoragePath::root().to_rooted_expr()),
+    let request = ah_vfs::resolve::operand::ListOperand::new(
+        ah_vfs::resolve::operand::ListOperandTarget::Path(StoragePath::root().to_rooted_expr()),
         Default::default(),
     );
     assert!(
@@ -303,9 +308,9 @@ async fn protobuf_reads_and_conditional_commits_bind_a_single_s3_version() -> Re
     let whole = StoragePath::parse("whole")?;
     let entry = storage
         .stat_entry(
-            ah_vfs_storage::StatRequest::new(
+            ah_vfs::resolve::operand::StatOperand::new(
                 whole.to_rooted_expr(),
-                ah_vfs_storage::SymlinkAction::Preserve,
+                ah_vfs::resolve::policy::SymlinkAction::Preserve,
             ),
             Default::default(),
         )
@@ -314,7 +319,7 @@ async fn protobuf_reads_and_conditional_commits_bind_a_single_s3_version() -> Re
     assert_eq!(entry.entry_type(), ah_vfs_storage::EntryType::file(Some(4)));
     let mut full = storage
         .read_file(
-            ah_vfs_storage::ReadRequest::new(
+            ah_vfs::resolve::operand::ReadOperand::new(
                 whole.to_rooted_expr(),
                 ah_vfs_storage::ReadRange::FULL,
             ),
@@ -326,7 +331,7 @@ async fn protobuf_reads_and_conditional_commits_bind_a_single_s3_version() -> Re
     let empty = StoragePath::parse("empty")?;
     let mut create = storage
         .write_file(
-            ah_vfs_storage::WriteRequest::new(
+            ah_vfs::resolve::operand::WriteOperand::new(
                 empty.to_rooted_expr(),
                 WriteMode::CreateNew,
                 ah_vfs_storage::Publication::Atomic,
@@ -339,7 +344,7 @@ async fn protobuf_reads_and_conditional_commits_bind_a_single_s3_version() -> Re
     assert_eq!(entry.entry_type(), ah_vfs_storage::EntryType::file(Some(0)));
     let mut reader = storage
         .read_file(
-            ah_vfs_storage::ReadRequest::new(
+            ah_vfs::resolve::operand::ReadOperand::new(
                 StoragePath::parse("file")?.to_rooted_expr(),
                 ah_vfs_storage::ReadRange::new(1, None)?,
             ),
@@ -353,7 +358,7 @@ async fn protobuf_reads_and_conditional_commits_bind_a_single_s3_version() -> Re
         if error.failure() == Failure::Backend(ah_vfs_storage::BackendFailure::Closed)));
     let mut writer = storage
         .write_file(
-            ah_vfs_storage::WriteRequest::new(
+            ah_vfs::resolve::operand::WriteOperand::new(
                 StoragePath::parse("file")?.to_rooted_expr(),
                 WriteMode::Replace,
                 ah_vfs_storage::Publication::Atomic,
@@ -374,7 +379,7 @@ async fn protobuf_reads_and_conditional_commits_bind_a_single_s3_version() -> Re
     );
     assert!(matches!(writer.commit().await, Err(error)
         if error.failure() == Failure::Backend(ah_vfs_storage::BackendFailure::Closed)));
-    let remove = ah_vfs_storage::RemoveRequest::new(
+    let remove = ah_vfs::resolve::operand::RemoveOperand::new(
         StoragePath::parse("file")?.to_rooted_expr(),
         ah_vfs_storage::RemoveKind::NonDirectory,
     )?;
@@ -402,7 +407,7 @@ async fn protobuf_reads_and_conditional_commits_bind_a_single_s3_version() -> Re
 async fn put(s: &dyn Storage, name: &str, bytes: &[u8]) -> Result {
     let mut w = s
         .write_file(
-            ah_vfs_storage::WriteRequest::new(
+            ah_vfs::resolve::operand::WriteOperand::new(
                 (StoragePath::parse(name)?).to_rooted_expr(),
                 ah_vfs_storage::WriteMode::CreateNew,
                 ah_vfs_storage::Publication::Staged,
@@ -513,7 +518,7 @@ async fn s3_component_runs_through_host_records_mounts_and_streams() -> Result {
         );
         let mut pending = storage
             .write_file(
-                ah_vfs_storage::WriteRequest::new(
+                ah_vfs::resolve::operand::WriteOperand::new(
                     StoragePath::parse("staged")?.to_rooted_expr(),
                     ah_vfs_storage::WriteMode::CreateNew,
                     ah_vfs_storage::Publication::Staged,
@@ -525,9 +530,9 @@ async fn s3_component_runs_through_host_records_mounts_and_streams() -> Result {
         assert_eq!(
             storage
                 .stat_entry(
-                    ah_vfs_storage::StatRequest::new(
+                    ah_vfs::resolve::operand::StatOperand::new(
                         StoragePath::parse("staged")?.to_rooted_expr(),
-                        ah_vfs_storage::SymlinkAction::Preserve
+                        ah_vfs::resolve::policy::SymlinkAction::Preserve
                     ),
                     Default::default()
                 )
@@ -550,7 +555,7 @@ async fn s3_component_runs_through_host_records_mounts_and_streams() -> Result {
             .await?
             .is_success()
         );
-        let nested = ah_vfs_storage::WriteRequest::new(
+        let nested = ah_vfs::resolve::operand::WriteOperand::new(
             StoragePath::parse("目录/other")?.to_rooted_expr(),
             WriteMode::CreateNew,
             ah_vfs_storage::Publication::Atomic,
@@ -564,7 +569,7 @@ async fn s3_component_runs_through_host_records_mounts_and_streams() -> Result {
         put(storage.as_ref(), "multipart", &large).await?;
         let mut reader = storage
             .read_file(
-                ah_vfs_storage::ReadRequest::new(
+                ah_vfs::resolve::operand::ReadOperand::new(
                     StoragePath::parse("multipart")?.to_rooted_expr(),
                     ah_vfs_storage::ReadRange::new(5 * 1024 * 1024 - 3, Some(70_000))?,
                 ),
@@ -580,8 +585,8 @@ async fn s3_component_runs_through_host_records_mounts_and_streams() -> Result {
             &large[5 * 1024 * 1024 - 3..5 * 1024 * 1024 - 3 + 70_000]
         );
         assert!(reader.next_chunk().await?.is_none());
-        let listing = ah_vfs_storage::ListRequest::new(
-            ah_vfs_storage::ListTarget::Path(StoragePath::root().to_rooted_expr()),
+        let listing = ah_vfs::resolve::operand::ListOperand::new(
+            ah_vfs::resolve::operand::ListOperandTarget::Path(StoragePath::root().to_rooted_expr()),
             Default::default(),
         );
         assert!(
@@ -610,7 +615,7 @@ async fn s3_component_runs_through_host_records_mounts_and_streams() -> Result {
         assert!(reader.next_chunk().await?.is_none());
         let mut conflict = storage
             .write_file(
-                ah_vfs_storage::WriteRequest::new(
+                ah_vfs::resolve::operand::WriteOperand::new(
                     StoragePath::parse("race")?.to_rooted_expr(),
                     ah_vfs_storage::WriteMode::CreateNew,
                     ah_vfs_storage::Publication::Staged,
@@ -620,7 +625,7 @@ async fn s3_component_runs_through_host_records_mounts_and_streams() -> Result {
             .await?;
         let mut winner = storage
             .write_file(
-                ah_vfs_storage::WriteRequest::new(
+                ah_vfs::resolve::operand::WriteOperand::new(
                     StoragePath::parse("race")?.to_rooted_expr(),
                     ah_vfs_storage::WriteMode::CreateNew,
                     ah_vfs_storage::Publication::Staged,
@@ -637,7 +642,7 @@ async fn s3_component_runs_through_host_records_mounts_and_streams() -> Result {
         );
         let error = storage
             .move_entry(
-                RenameRequest::new(
+                RenameOperand::new(
                     (StoragePath::parse("empty")?).to_rooted_expr(),
                     (StoragePath::parse("other")?).to_rooted_expr(),
                     RenameMode::Replace,

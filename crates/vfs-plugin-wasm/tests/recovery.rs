@@ -2,6 +2,8 @@ use ah_vfs::application::driver_error::DriverError;
 use ah_vfs::application::driver_error::LifecycleFailure;
 use ah_vfs::application::port::*;
 use ah_vfs::domain::InstanceId;
+use ah_vfs::resolve::StorageOperations;
+use ah_vfs::resolve::path::RootedPath;
 use ah_vfs_storage::{BackendFailure, Failure, Operation, Rejection, StorageError};
 use ah_vfs_storage::{Entry, StoragePath};
 use std::{future::poll_fn, sync::Arc, task::Poll, time::Duration};
@@ -11,7 +13,7 @@ use vfs_plugin_wasm::WasmTransport;
 type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 const INITIALIZE: &str =
     "global.get $initialized if unreachable end i32.const 1 global.set $initialized i32.const 16";
-const STAT: &str = "local.get $pos i32.load8_u offset=1 i32.const 104 i32.eq if (loop br 0) unreachable end local.get $pos i32.load8_u offset=1 i32.const 116 i32.eq if unreachable end i32.const 48";
+const STAT: &str = "local.get $pos i32.load8_u i32.const 104 i32.eq if (loop br 0) unreachable end local.get $pos i32.load8_u i32.const 116 i32.eq if unreachable end i32.const 144";
 fn fixture(prepare: &str, initialize: &str, stat: &str, commit: &str) -> Result<Vec<u8>> {
     let capabilities = vec![
         p::Capability::Stat as i32,
@@ -68,6 +70,42 @@ fn fixture(prepare: &str, initialize: &str, stat: &str, commit: &str) -> Result<
                 data: vec![0, 255, 1],
             },
         ),
+        (
+            "LOOKUP",
+            p::Reply::new(Value::OpenedLookup(p::OpenedLookup {
+                handle: 2,
+                root: Some(p::ObservedEntry {
+                    id: 1,
+                    entry: Some(p::Entry {
+                        kind: p::EntryKind::Dir.into(),
+                        ..Default::default()
+                    }),
+                }),
+            })),
+        ),
+        (
+            "OBSERVED",
+            p::Reply::new(Value::ObservedEntry(p::ObservedEntry {
+                id: 2,
+                entry: Some(p::Entry {
+                    path: "file".into(),
+                    kind: p::EntryKind::File.into(),
+                    size: Some(1),
+                    modified: None,
+                }),
+            })),
+        ),
+        (
+            "MISSING",
+            p::Reply::new(Value::Failure(p::Failure {
+                storage: Some(p::encode_storage_error(&StorageError::without_effects(
+                    Operation::Write,
+                    Failure::Rejected(Rejection::NotFound),
+                    None,
+                ))?),
+                ..p::Failure::new(p::FailureCode::Storage)
+            })),
+        ),
         ("EOF", p::Reply::new(Value::Chunk(p::Chunk { eof: true }))),
     ];
     let mut wat = include_str!("fixtures/recovery.wat").to_owned();
@@ -80,6 +118,9 @@ fn fixture(prepare: &str, initialize: &str, stat: &str, commit: &str) -> Result<
         wat = wat
             .replace(&format!("@@{name}@@"), &escaped)
             .replace(&format!("@@{name}_LENGTH@@"), &bytes.len().to_string());
+        if name == "LOOKUP" {
+            assert_eq!(&bytes[..5], &[138, 1, (bytes.len() - 3) as u8, 8, 2]);
+        }
         if name == "READER" || name == "WRITER" {
             let address = if name == "READER" { 3456 } else { 3584 };
             wat = wat.replace(
@@ -165,9 +206,9 @@ async fn stat(storage: &dyn Storage, path: &str) -> std::result::Result<Entry, S
     })?;
     storage
         .stat_entry(
-            ah_vfs_storage::StatRequest::new(
+            ah_vfs::resolve::operand::StatOperand::new(
                 path.to_rooted_expr(),
-                ah_vfs_storage::SymlinkAction::Preserve,
+                ah_vfs::resolve::policy::SymlinkAction::Preserve,
             ),
             Default::default(),
         )
@@ -235,7 +276,7 @@ async fn storage_timeout_is_local_and_other_stores_make_progress_concurrently() 
     let healthy = open(&driver, "healthy").await?;
     let mut old_reader = stalled
         .read_file(
-            ah_vfs_storage::ReadRequest::new(
+            ah_vfs::resolve::operand::ReadOperand::new(
                 StoragePath::parse("file")?.to_rooted_expr(),
                 ah_vfs_storage::ReadRange::FULL,
             ),
@@ -333,7 +374,7 @@ async fn uncertain_commit_is_terminal_and_does_not_poison_other_storages() -> Re
     let healthy = open(&driver, "healthy").await?;
     let mut writer = storage
         .write_file(
-            ah_vfs_storage::WriteRequest::new(
+            ah_vfs::resolve::operand::WriteOperand::new(
                 StoragePath::parse("file")?.to_rooted_expr(),
                 ah_vfs_storage::WriteMode::CreateNew,
                 ah_vfs_storage::Publication::Staged,
@@ -551,7 +592,7 @@ async fn storage_and_reader_keep_the_compiled_factory_alive_after_driver_drop() 
     );
     let mut reader = storage
         .read_file(
-            ah_vfs_storage::ReadRequest::new(
+            ah_vfs::resolve::operand::ReadOperand::new(
                 StoragePath::parse("file")?.to_rooted_expr(),
                 ah_vfs_storage::ReadRange::FULL,
             ),

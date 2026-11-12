@@ -3,7 +3,7 @@ use super::BackendFailure;
 use std::{fmt, str::FromStr};
 use thiserror::Error;
 
-/// Maximum UTF-8 byte length of an instance-relative logical address.
+/// Maximum UTF-8 byte length of a logical address within a backend namespace.
 pub const MAX_PATH_BYTES: usize = 4096;
 
 fn validate_name(value: &str) -> Result<(), NameError> {
@@ -112,10 +112,8 @@ pub enum PathError {
     #[error("storage address contains an invalid component")]
     InvalidComponent(#[from] NameError),
 }
-/// An exact, instance-relative logical address. The empty string is the root.
-/// Use [`super::PathExpr`] for input relative to a working directory or with
-/// navigation components, and [`Self::to_rooted_expr`] to reuse an address in
-/// an operation request. An address alone does not attest to backend existence.
+/// An exact logical address within a backend namespace. The empty string
+/// denotes its root. An address alone does not attest to backend existence.
 /// Equality, hashing and ordering use case-sensitive UTF-8 text. No OS access,
 /// Unicode normalization, dot resolution or symbolic-link traversal is performed.
 #[derive(Clone, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -128,8 +126,7 @@ impl StoragePath {
     pub fn root() -> Self {
         Self::default()
     }
-    /// The instance-relative address text, with no leading slash. Use
-    /// [`Self::to_rooted_expr`] to turn this address into a request operand.
+    /// The address text within the backend namespace, with no leading slash.
     pub fn as_str(&self) -> &str {
         &self.0
     }

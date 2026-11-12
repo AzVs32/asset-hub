@@ -183,8 +183,7 @@ impl State {
                     kind,
                     true,
                     Some(Box::new(std::io::Error::other(error))),
-                )
-                .into());
+                ));
             }
         };
         let id = match op {
@@ -231,20 +230,18 @@ impl State {
                 Failure::Backend(BackendFailure::Unavailable),
                 false,
                 None,
-            )
-            .into());
+            ));
         }
         match &op {
             Op::Storage(p::StorageCall { handle, .. })
-            | Op::Read(p::Read { handle, .. })
-            | Op::Write(p::Write { handle, .. })
             | Op::BeginLookup(p::LookupHandle { handle, .. }) => {
                 self.resource(&op, p::ResourceKind::Storage, *handle)?
             }
             Op::ReaderNext(p::Handle { handle }) => {
                 self.resource(&op, p::ResourceKind::Reader, *handle)?
             }
-            Op::ReadObservedLink(p::ReadObservedLink { lookup: handle, .. })
+            Op::Execute(p::BoundCall { lookup: handle, .. })
+            | Op::ReadObservedLink(p::ReadObservedLink { lookup: handle, .. })
             | Op::ObserveChild(p::ObserveChild { lookup: handle, .. })
             | Op::VerifyLookup(p::LookupHandle { handle, .. }) => {
                 self.resource(&op, p::ResourceKind::Lookup, *handle)?
@@ -268,15 +265,13 @@ impl State {
             }
             _ => {}
         }
-        if op.allocates_resource() && self.resources.len() >= p::MAX_RESOURCES
-        {
+        if op.allocates_resource() && self.resources.len() >= p::MAX_RESOURCES {
             return Err(c::call_error(
                 &op,
                 Failure::Backend(BackendFailure::CapacityExceeded),
                 false,
                 None,
-            )
-            .into());
+            ));
         }
         let result = self.invoke(&op, data).await;
         if let Op::ReaderNext(p::Handle { handle }) = &op
@@ -300,8 +295,17 @@ impl State {
             | Value::OpenedLookup(p::OpenedLookup { handle, .. }) => {
                 let kind = match op {
                     Op::Open(_) => p::ResourceKind::Storage,
-                    Op::Read(_) => p::ResourceKind::Reader,
                     Op::BeginLookup(_) => p::ResourceKind::Lookup,
+                    Op::Execute(ref call)
+                        if matches!(call.operation, Some(p::BoundOp::Read(_))) =>
+                    {
+                        p::ResourceKind::Reader
+                    }
+                    Op::Execute(ref call)
+                        if matches!(call.operation, Some(p::BoundOp::Write(_))) =>
+                    {
+                        p::ResourceKind::Writer
+                    }
                     _ => p::ResourceKind::Writer,
                 };
                 if *handle <= self.next {

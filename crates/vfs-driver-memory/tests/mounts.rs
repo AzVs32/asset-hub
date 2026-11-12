@@ -1,4 +1,5 @@
 use ah_vfs::application::mount_runtime::MountRuntime;
+use ah_vfs::resolve::operand::CreateDirectoryMode;
 use ah_vfs_storage::{BackendFailure, Failure, Rejection};
 mod common;
 
@@ -288,7 +289,7 @@ async fn same_instance_can_be_mounted_twice_but_moves_cannot_cross_mount_boundar
 
 #[tokio::test]
 async fn remove_and_rename_use_explicit_kinds_and_keep_vfs_namespace_owned_entries() -> TestResult {
-    use ah_vfs_storage::{CreateDirectoryMode, RemoveKind, RenameMode};
+    use ah_vfs_storage::{RemoveKind, RenameMode};
 
     let f = fixture().await?;
     f.mounts
@@ -362,9 +363,9 @@ async fn create_dir_preserves_vfs_mount_boundaries_in_both_modes() -> TestResult
                 .create_dir(CreateDirRequest::new(
                     name,
                     if recursive {
-                        ah_vfs_storage::CreateDirectoryMode::Recursive
+                        ah_vfs::resolve::operand::CreateDirectoryMode::Recursive
                     } else {
-                        ah_vfs_storage::CreateDirectoryMode::Single
+                        ah_vfs::resolve::operand::CreateDirectoryMode::Single
                     },
                 )?)
                 .await
@@ -380,7 +381,7 @@ async fn create_dir_preserves_vfs_mount_boundaries_in_both_modes() -> TestResult
 
 #[tokio::test]
 async fn create_dir_at_the_application_entry_preserves_a_trailing_slash() -> TestResult {
-    use ah_vfs_storage::CreateDirectoryMode::{Recursive, Single};
+    use ah_vfs::resolve::operand::CreateDirectoryMode::{Recursive, Single};
 
     let f = fixture().await?;
     let mut writer = f

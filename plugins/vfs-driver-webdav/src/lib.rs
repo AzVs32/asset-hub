@@ -138,64 +138,151 @@ impl GuestStorage for WebdavStorage {
         NonZeroUsize::new(CHUNK_SIZE as usize).unwrap_or(NonZeroUsize::MIN)
     }
 
-    fn stat(
-        &self,
-        request: &ah_vfs_storage::StatRequest,
-        base: &ah_vfs_storage::StoragePath,
-        links: ah_vfs_storage::IntermediateSymlinks,
-    ) -> Result<ah_vfs_storage::Entry> {
-        let client = self.client.for_operation(Operation::Stat);
-        api::direct_stat(request, base, links, |path| {
-            client.stat(path.as_str()).map(|metadata| metadata.entry)
-        })
+    fn begin_lookup(&self, operation: Operation) -> Result<api::Lookup> {
+        Ok(api::Lookup::new(WebdavLookup {
+            client: self.client.for_operation(operation),
+            generation: self.directory_generation,
+            bindings: api::DirectBindings::new(operation),
+        }))
     }
 
-    fn create_dir(
+    fn resume_directory(
         &self,
-        request: &ah_vfs_storage::CreateDirectoryRequest,
-        base: &ah_vfs_storage::StoragePath,
-        _: ah_vfs_storage::IntermediateSymlinks,
-    ) -> Result<ah_vfs_storage::Entry> {
-        self.client
-            .for_operation(Operation::CreateDirectory)
-            .create_dir(request, base)
-    }
-
-    fn select_directory(
-        &self,
-        request: &ah_vfs_storage::ListRequest,
-        base: &ah_vfs_storage::StoragePath,
-        links: ah_vfs_storage::IntermediateSymlinks,
+        cursor: &ah_vfs_storage::DirectoryCursor,
     ) -> Result<ah_vfs_storage::DirectorySelection> {
-        self.client.for_operation(Operation::List).select_directory(
-            request,
-            base,
-            links,
-            &self.directory_generation,
-        )
+        self.client
+            .for_operation(Operation::List)
+            .resume_directory(cursor, &self.directory_generation)
     }
+
     fn list_page(
         &self,
-        bound: &ah_vfs_storage::BoundListRequest<'_>,
+        bound: &ah_vfs_storage::BoundListRequest,
     ) -> Result<ah_vfs_storage::DirectoryPage> {
         self.client
             .for_operation(Operation::List)
             .list_page(bound, &self.directory_generation)
     }
-    fn read(
+}
+
+struct WebdavLookup {
+    client: client::Client,
+    generation: [u8; 16],
+    bindings: api::DirectBindings<client::Metadata>,
+}
+
+impl WebdavLookup {
+    fn metadata(
         &self,
+        path: &ah_vfs_storage::StoragePath,
+    ) -> Result<(ah_vfs_storage::Entry, client::Metadata)> {
+        let metadata = self.client.stat(path.as_str())?;
+        Ok((metadata.entry.clone(), metadata))
+    }
+}
+
+impl api::GuestLookup for WebdavLookup {
+    fn root(&mut self) -> Result<(u64, ah_vfs_storage::Entry)> {
+        let path = ah_vfs_storage::StoragePath::root();
+        let metadata = self.metadata(&path);
+        self.bindings.observe(path, metadata)
+    }
+
+    fn observe(
+        &mut self,
+        parent: u64,
+        name: &ah_vfs_storage::EntryName,
+    ) -> Result<(u64, ah_vfs_storage::Entry)> {
+        let path = self.bindings.child_path(parent, name)?;
+        let metadata = self.metadata(&path);
+        self.bindings.observe(path, metadata)
+    }
+
+    fn read_link(&self, id: u64) -> Result<ah_vfs_storage::LinkTarget> {
+        self.bindings.get(id)?;
+        Err(self
+            .client
+            .context
+            .failure(Failure::Rejected(Rejection::NotSymlink)))
+    }
+
+    fn verify(&self) -> Result<()> {
+        self.bindings.verify(|path| self.metadata(path))
+    }
+
+    fn execute_stat(
+        &self,
+        id: u64,
+        request: ah_vfs_storage::StatRequest,
+    ) -> Result<ah_vfs_storage::Entry> {
+        let (entry, _) = self.bindings.get(id)?;
+        if entry.path() != request.path() {
+            return Err(self.client.context.failure(Failure::InvalidBinding));
+        }
+        self.verify()?;
+        Ok(entry.clone())
+    }
+
+    fn execute_create_directory(
+        &mut self,
+        slot: api::EntrySlot<'_>,
+        request: ah_vfs_storage::CreateDirectoryRequest,
+    ) -> Result<(u64, ah_vfs_storage::Entry)> {
+        let client = self.client.for_operation(Operation::CreateDirectory);
+        let path = request.path();
+        let (parent, target) = self.bindings.slot(slot, path)?;
+        request
+            .check_target(target.map(|(entry, _)| entry.entry_type()))
+            .map_err(|reason| client.context.failure(Failure::Rejected(reason)))?;
+        if !client.make_collection(path, parent)? {
+            self.bindings.allow_reobserve(path);
+            return Err(client
+                .context
+                .failure(Failure::Rejected(Rejection::AlreadyExists)));
+        }
+        let metadata = client.stat(path.as_str())?;
+        if metadata.entry.entry_type() != EntryType::Directory {
+            return Err(client
+                .context
+                .failure(Failure::Backend(BackendFailure::Other)));
+        }
+        self.bindings
+            .record_creation(path, (metadata.entry.clone(), metadata))
+            .map_err(|error| {
+                error
+                    .storage_error()
+                    .map(|error| client.context.failure(error.failure()))
+                    .unwrap_or(error)
+            })
+    }
+
+    fn select_directory(
+        &self,
+        id: u64,
+        request: ah_vfs_storage::ListRequest,
+    ) -> Result<ah_vfs_storage::DirectorySelection> {
+        let (entry, metadata) = self.bindings.get(id)?;
+        if entry.path() != request.directory() || request.after().is_some() {
+            return Err(self.client.context.failure(Failure::InvalidBinding));
+        }
+        self.verify()?;
+        self.client
+            .select_observed_directory(metadata, &self.generation)
+    }
+
+    fn execute_read(
+        &self,
+        slot: api::EntrySlot<'_>,
         request: ah_vfs_storage::ReadRequest,
-        base: ah_vfs_storage::StoragePath,
-        links: ah_vfs_storage::IntermediateSymlinks,
     ) -> Result<api::Reader> {
-        let client = self.client.for_operation(Operation::Read);
+        let client = self.client.clone();
         let context = client.context.clone();
-        let (entry, etag) =
-            api::direct_lookup(request.lookup(), &base, links, Operation::Read, |path| {
-                let metadata = client.stat(path.as_str())?;
-                let etag = metadata.strong_etag();
-                Ok((metadata.entry, etag))
-            })?;
+        let (_, selected) = self.bindings.slot(slot, request.path())?;
+        let (entry, metadata) = selected.ok_or_else(|| context.failure(Failure::InvalidBinding))?;
+        request
+            .check_target(entry.entry_type())
+            .map_err(|reason| context.failure(Failure::Rejected(reason)))?;
+        let etag = metadata.strong_etag();
         let EntryType::File { size, .. } = entry.entry_type() else {
             return Err(context.failure(Failure::Rejected(Rejection::NotRegularFile)));
         };
@@ -229,14 +316,19 @@ impl GuestStorage for WebdavStorage {
             eof: Cell::new(false),
         }))
     }
-    fn write(
+    fn execute_write(
         &self,
+        slot: api::EntrySlot<'_>,
         request: ah_vfs_storage::WriteRequest,
-        base: ah_vfs_storage::StoragePath,
-        links: ah_vfs_storage::IntermediateSymlinks,
     ) -> Result<api::Writer> {
-        let client = self.client.for_operation(Operation::Write);
-        let (path, condition) = client.write_condition(&request, &base, links)?;
+        let client = self.client.clone();
+        let context = &client.context;
+        let (parent, target) = self.bindings.slot(slot, request.path())?;
+        request
+            .check_target(target.map(|(entry, _)| entry.entry_type()))
+            .map_err(|reason| context.failure(Failure::Rejected(reason)))?;
+        let condition = client.write_condition(parent, target.map(|(_, metadata)| metadata))?;
+        let path = request.path().as_str().to_owned();
         Ok(api::Writer::new(WebdavWriter {
             session: RefCell::new(Some(WriteSession {
                 client,
@@ -400,22 +492,30 @@ mod tests {
         // Native WIT HTTP imports panic if called, so this also verifies that
         // unsupported removal does not inspect or mutate remote resources.
         for path in ["file", "empty-dir", "nonempty-dir", "missing"] {
-            use ah_vfs_storage::{IntermediateSymlinks, RemoveKind, RemoveRequest, StoragePath};
+            use ah_vfs_storage::{EntryName, RemoveKind, RemoveRequest, StoragePath};
+            use api::GuestLookup;
             let context = api::ErrorContext::storage(Operation::Remove);
             let address = StoragePath::parse(path).map_err(|_| {
                 context.failure(Failure::Contract(ContractViolation::InvalidResponse))
             })?;
-            let request = RemoveRequest::new(address.to_rooted_expr(), RemoveKind::NonDirectory)
-                .map_err(|_| {
-                    context.failure(Failure::Contract(ContractViolation::InvalidResponse))
-                })?;
-            let error = storage
-                .remove(&request, &StoragePath::root(), IntermediateSymlinks::Reject)
-                .err()
-                .ok_or_else(|| {
-                    api::ErrorContext::storage(Operation::Remove)
-                        .failure(Failure::Contract(ContractViolation::InvalidResponse))
-                })?;
+            let invalid = || context.failure(Failure::Contract(ContractViolation::InvalidResponse));
+            let name = EntryName::parse(path).map_err(|_| invalid())?;
+            let request =
+                RemoveRequest::new(address, RemoveKind::NonDirectory).map_err(|_| invalid())?;
+            let lookup = WebdavLookup {
+                client: storage.client.for_operation(Operation::Remove),
+                generation: storage.directory_generation,
+                bindings: api::DirectBindings::new(Operation::Remove),
+            };
+            let slot = api::EntrySlot {
+                parent: 1,
+                name: &name,
+                entry: None,
+            };
+            let error = lookup.execute_remove(slot, request).err().ok_or_else(|| {
+                api::ErrorContext::storage(Operation::Remove)
+                    .failure(Failure::Contract(ContractViolation::InvalidResponse))
+            })?;
             assert_eq!(
                 error.storage_error().map(|error| (
                     error.operation(),

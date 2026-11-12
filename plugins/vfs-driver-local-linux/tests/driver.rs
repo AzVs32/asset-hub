@@ -1,5 +1,7 @@
 #![cfg(target_os = "linux")]
 use ah_vfs::application::driver_error::LifecycleFailure;
+use ah_vfs::resolve::StorageOperations;
+use ah_vfs::resolve::path::RootedPath;
 mod common;
 
 use ah_vfs::application::driver_error::DriverError;
@@ -47,9 +49,9 @@ async fn local_instances_reopen_and_deleted_dirs_fail_to_open() -> TestResult {
         .await?;
     let root = storage
         .stat_entry(
-            ah_vfs_storage::StatRequest::new(
+            ah_vfs::resolve::operand::StatOperand::new(
                 (ah_vfs_storage::StoragePath::root()).to_rooted_expr(),
-                ah_vfs_storage::SymlinkAction::Preserve,
+                ah_vfs::resolve::policy::SymlinkAction::Preserve,
             ),
             Default::default(),
         )

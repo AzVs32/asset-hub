@@ -1,10 +1,14 @@
 //! Storage behavior shared by independent driver test suites.
 
 use crate::application::port::{Storage, StorageFileReader};
+use crate::resolve::StorageOperations;
+use crate::resolve::operand::{CreateDirectoryOperand, RenameOperand};
+use crate::resolve::operand::{ListOperand, ListOperandTarget};
+use crate::resolve::path::{PathExpr, RootedPath};
+use ah_vfs_storage::RenameMode;
 use ah_vfs_storage::RenameSupport;
 use ah_vfs_storage::{EntryType, StoragePath};
 use ah_vfs_storage::{Failure, Rejection};
-use ah_vfs_storage::{RenameMode, RenameRequest};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -15,7 +19,7 @@ fn path(value: &str) -> TestResult<StoragePath> {
 async fn put(storage: &dyn Storage, name: &str, bytes: &[u8]) -> TestResult {
     let mut writer = storage
         .write_file(
-            ah_vfs_storage::WriteRequest::new(
+            crate::resolve::operand::WriteOperand::new(
                 path(name)?.to_rooted_expr(),
                 ah_vfs_storage::WriteMode::CreateNew,
                 ah_vfs_storage::Publication::Staged,
@@ -42,7 +46,7 @@ async fn get(storage: &dyn Storage, name: &str) -> TestResult<Vec<u8>> {
     collect(
         storage
             .read_file(
-                ah_vfs_storage::ReadRequest::new(
+                crate::resolve::operand::ReadOperand::new(
                     path(name)?.to_rooted_expr(),
                     ah_vfs_storage::ReadRange::FULL,
                 ),
@@ -57,9 +61,9 @@ async fn get(storage: &dyn Storage, name: &str) -> TestResult<Vec<u8>> {
 async fn mkdir(storage: &dyn Storage, name: &str) -> TestResult {
     storage
         .create_dir(
-            ah_vfs_storage::CreateDirectoryRequest::new(
+            crate::resolve::operand::CreateDirectoryOperand::new(
                 path(name)?.to_rooted_expr(),
-                ah_vfs_storage::CreateDirectoryMode::Recursive,
+                crate::resolve::operand::CreateDirectoryMode::Recursive,
             ),
             Default::default(),
         )
@@ -70,9 +74,9 @@ async fn mkdir(storage: &dyn Storage, name: &str) -> TestResult {
 async fn exists(storage: &dyn Storage, name: &str) -> TestResult<bool> {
     match storage
         .stat_entry(
-            ah_vfs_storage::StatRequest::new(
+            crate::resolve::operand::StatOperand::new(
                 path(name)?.to_rooted_expr(),
-                ah_vfs_storage::SymlinkAction::Preserve,
+                crate::resolve::policy::SymlinkAction::Preserve,
             ),
             Default::default(),
         )
@@ -112,7 +116,7 @@ pub async fn assert_range_read_contract(storage: &dyn Storage) -> TestResult {
         ] {
             let mut reader = storage
                 .read_file(
-                    ah_vfs_storage::ReadRequest::new(
+                    crate::resolve::operand::ReadOperand::new(
                         path(name)?.to_rooted_expr(),
                         ah_vfs_storage::ReadRange::new(offset, length)?,
                     ),
@@ -142,7 +146,7 @@ pub async fn assert_range_read_contract(storage: &dyn Storage) -> TestResult {
         for length in [None, Some(0)] {
             let error = storage
                 .read_file(
-                    ah_vfs_storage::ReadRequest::new(
+                    crate::resolve::operand::ReadOperand::new(
                         path(name)?.to_rooted_expr(),
                         ah_vfs_storage::ReadRange::new(u64::MAX, length)?,
                     ),
@@ -160,14 +164,12 @@ pub async fn assert_range_read_contract(storage: &dyn Storage) -> TestResult {
 /// Assert recursive and exclusive directory creation on fresh writable storage.
 /// The fixture must be empty and isolated; the assertion writes files and dirs.
 pub async fn assert_create_dir_contract(storage: &dyn Storage) -> TestResult {
-    use ah_vfs_storage::{
-        CreateDirectoryMode::{Recursive, Single},
-        CreateDirectoryRequest, MutationOutcome, PathExpr,
-    };
+    use crate::resolve::operand::CreateDirectoryMode::{Recursive, Single};
+    use ah_vfs_storage::MutationOutcome;
 
     let create = |operand: &str, mode| -> TestResult<_> {
         Ok(storage.create_dir(
-            CreateDirectoryRequest::new(PathExpr::parse(operand)?, mode),
+            CreateDirectoryOperand::new(PathExpr::parse(operand)?, mode),
             Default::default(),
         ))
     };
@@ -221,9 +223,9 @@ pub async fn assert_create_dir_contract(storage: &dyn Storage) -> TestResult {
     for name in ["/", "dir/"] {
         let before = storage
             .stat_entry(
-                ah_vfs_storage::StatRequest::new(
+                crate::resolve::operand::StatOperand::new(
                     path(name.trim_matches('/'))?.to_rooted_expr(),
-                    ah_vfs_storage::SymlinkAction::Preserve,
+                    crate::resolve::policy::SymlinkAction::Preserve,
                 ),
                 Default::default(),
             )
@@ -234,9 +236,9 @@ pub async fn assert_create_dir_contract(storage: &dyn Storage) -> TestResult {
         assert_eq!(entry.modified(), before.modified());
         let after = storage
             .stat_entry(
-                ah_vfs_storage::StatRequest::new(
+                crate::resolve::operand::StatOperand::new(
                     path(name.trim_matches('/'))?.to_rooted_expr(),
-                    ah_vfs_storage::SymlinkAction::Preserve,
+                    crate::resolve::policy::SymlinkAction::Preserve,
                 ),
                 Default::default(),
             )
@@ -260,9 +262,9 @@ pub async fn assert_create_dir_contract(storage: &dyn Storage) -> TestResult {
         assert_eq!(
             storage
                 .stat_entry(
-                    ah_vfs_storage::StatRequest::new(
+                    crate::resolve::operand::StatOperand::new(
                         path(name)?.to_rooted_expr(),
-                        ah_vfs_storage::SymlinkAction::Preserve
+                        crate::resolve::policy::SymlinkAction::Preserve
                     ),
                     Default::default()
                 )
@@ -291,7 +293,7 @@ pub async fn assert_create_dir_contract(storage: &dyn Storage) -> TestResult {
 /// Assert directory cursor validation and ordered pagination on fresh writable storage.
 /// The fixture must be empty and isolated; the assertion writes files and dirs.
 pub async fn assert_pagination_contract(storage: &dyn Storage) -> TestResult {
-    use ah_vfs_storage::{ListRequest, ListTarget, PageSize};
+    use ah_vfs_storage::PageSize;
     assert!(PageSize::new(0).is_err());
     assert!(PageSize::new(PageSize::MAX + 1).is_err());
     for after in ["", ".", "..", "a/b", "a\\b", "a:b", "a\0b"] {
@@ -300,8 +302,8 @@ pub async fn assert_pagination_contract(storage: &dyn Storage) -> TestResult {
     for name in ["a", "b", "文件"] {
         put(storage, name, b"").await?;
     }
-    let first = ListRequest::new(
-        ListTarget::Path(StoragePath::root().to_rooted_expr()),
+    let first = ListOperand::new(
+        ListOperandTarget::Path(StoragePath::root().to_rooted_expr()),
         PageSize::new(1)?,
     );
     let page = storage.list_entries(&first, Default::default()).await?;
@@ -309,7 +311,10 @@ pub async fn assert_pagination_contract(storage: &dyn Storage) -> TestResult {
     assert_eq!(page.entries()[0].path(), &path("a")?);
     let cursor = page.continuation().ok_or("expected continuation")?;
     assert_eq!(cursor.after().as_str(), "a");
-    let next = ListRequest::new(ListTarget::Continue(cursor), PageSize::new(PageSize::MAX)?);
+    let next = ListOperand::new(
+        ListOperandTarget::Continue(cursor),
+        PageSize::new(PageSize::MAX)?,
+    );
     let page = storage.list_entries(&next, Default::default()).await?;
     assert_eq!(
         page.entries()
@@ -339,16 +344,16 @@ pub async fn assert_same_path_rename_contract(
         for name in ["file", "dir"] {
             let before = storage
                 .stat_entry(
-                    ah_vfs_storage::StatRequest::new(
+                    crate::resolve::operand::StatOperand::new(
                         path(name)?.to_rooted_expr(),
-                        ah_vfs_storage::SymlinkAction::Preserve,
+                        crate::resolve::policy::SymlinkAction::Preserve,
                     ),
                     Default::default(),
                 )
                 .await?;
             let result = storage
                 .move_entry(
-                    RenameRequest::new(
+                    RenameOperand::new(
                         (path(name)?).to_rooted_expr(),
                         (path(name)?).to_rooted_expr(),
                         mode,
@@ -372,9 +377,9 @@ pub async fn assert_same_path_rename_contract(
             }
             let after = storage
                 .stat_entry(
-                    ah_vfs_storage::StatRequest::new(
+                    crate::resolve::operand::StatOperand::new(
                         path(name)?.to_rooted_expr(),
-                        ah_vfs_storage::SymlinkAction::Preserve,
+                        crate::resolve::policy::SymlinkAction::Preserve,
                     ),
                     Default::default(),
                 )
@@ -388,7 +393,7 @@ pub async fn assert_same_path_rename_contract(
 
         let error = storage
             .move_entry(
-                RenameRequest::new(
+                RenameOperand::new(
                     (path("missing")?).to_rooted_expr(),
                     (path("missing")?).to_rooted_expr(),
                     mode,
@@ -402,7 +407,7 @@ pub async fn assert_same_path_rename_contract(
         assert!(!exists(storage, "missing").await?);
 
         assert!(
-            RenameRequest::new(
+            RenameOperand::new(
                 StoragePath::root().to_rooted_expr(),
                 path("target")?.to_rooted_expr(),
                 mode
@@ -410,7 +415,7 @@ pub async fn assert_same_path_rename_contract(
             .is_err()
         );
         assert!(
-            RenameRequest::new(
+            RenameOperand::new(
                 path("source")?.to_rooted_expr(),
                 StoragePath::root().to_rooted_expr(),
                 mode

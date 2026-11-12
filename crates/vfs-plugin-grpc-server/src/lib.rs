@@ -222,7 +222,7 @@ impl wire::plugin_server::Plugin for PluginService {
                     _=retired.changed()=>break,
                     _=disconnected.changed()=>break,
                     result=tokio::time::timeout(service.admission.limits.request_timeout,session.call(operation,data))=>
-                        result.unwrap_or_else(|_|Err(c::call_error(&request_context, Failure::Backend(BackendFailure::TimedOut), true, None).into())),
+                        result.unwrap_or_else(|_|Err(c::call_error(&request_context, Failure::Backend(BackendFailure::TimedOut), true, None))),
                 };
                 let broken = result
                     .as_ref()

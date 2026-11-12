@@ -1,6 +1,15 @@
 #![cfg(target_os = "linux")]
+use ah_vfs::resolve::StorageOperations;
+use ah_vfs::resolve::operand::{
+    CreateDirectoryMode, CreateDirectoryOperand, ListOperand, ListOperandTarget, StatOperand,
+    WriteOperand,
+};
+use ah_vfs::resolve::operand::{RemoveOperand, RenameOperand};
+use ah_vfs::resolve::path::PathExpr;
+use ah_vfs::resolve::path::RootedPath;
+use ah_vfs::resolve::policy::SymlinkAction;
 use ah_vfs_storage::{BackendFailure, Failure, Rejection};
-use ah_vfs_storage::{RemoveKind, RemoveRequest, RenameMode, RenameRequest};
+use ah_vfs_storage::{RemoveKind, RenameMode};
 mod common;
 
 use ah_vfs::application::port::{Driver, Storage, StorageFileReader};
@@ -66,9 +75,9 @@ async fn metadata_and_sorted_pagination_use_instance_relative_paths() -> TestRes
     let root = f
         .storage
         .stat_entry(
-            ah_vfs_storage::StatRequest::new(
+            ah_vfs::resolve::operand::StatOperand::new(
                 path("")?.to_rooted_expr(),
-                ah_vfs_storage::SymlinkAction::Preserve,
+                ah_vfs::resolve::policy::SymlinkAction::Preserve,
             ),
             Default::default(),
         )
@@ -77,9 +86,9 @@ async fn metadata_and_sorted_pagination_use_instance_relative_paths() -> TestRes
     let file = f
         .storage
         .stat_entry(
-            ah_vfs_storage::StatRequest::new(
+            ah_vfs::resolve::operand::StatOperand::new(
                 path("c.txt")?.to_rooted_expr(),
-                ah_vfs_storage::SymlinkAction::Preserve,
+                ah_vfs::resolve::policy::SymlinkAction::Preserve,
             ),
             Default::default(),
         )
@@ -89,14 +98,14 @@ async fn metadata_and_sorted_pagination_use_instance_relative_paths() -> TestRes
     assert!(file.modified().is_some());
     assert!(matches!(
         f.storage
-            .stat_entry(ah_vfs_storage::StatRequest::new(path("missing")?.to_rooted_expr(), ah_vfs_storage::SymlinkAction::Preserve), Default::default())
+            .stat_entry(ah_vfs::resolve::operand::StatOperand::new(path("missing")?.to_rooted_expr(), ah_vfs::resolve::policy::SymlinkAction::Preserve), Default::default())
             .await,
         Err(error) if error.failure() == Failure::Rejected(Rejection::NotFound)
     ));
 
-    use ah_vfs_storage::{ListRequest, ListTarget, PageSize};
-    let query = ListRequest::new(
-        ListTarget::Path(path("")?.to_rooted_expr()),
+    use ah_vfs_storage::PageSize;
+    let query = ListOperand::new(
+        ListOperandTarget::Path(path("")?.to_rooted_expr()),
         PageSize::new(2)?,
     );
     let first = f.storage.list_entries(&query, Default::default()).await?;
@@ -114,7 +123,7 @@ async fn metadata_and_sorted_pagination_use_instance_relative_paths() -> TestRes
     let second = f
         .storage
         .list_entries(
-            &ListRequest::new(ListTarget::Continue(cursor), PageSize::new(2)?),
+            &ListOperand::new(ListOperandTarget::Continue(cursor), PageSize::new(2)?),
             Default::default(),
         )
         .await?;
@@ -130,8 +139,8 @@ async fn metadata_and_sorted_pagination_use_instance_relative_paths() -> TestRes
     assert!(
         f.storage
             .list_entries(
-                &ah_vfs_storage::ListRequest::new(
-                    ah_vfs_storage::ListTarget::Path(path("b")?.to_rooted_expr()),
+                &ah_vfs::resolve::operand::ListOperand::new(
+                    ah_vfs::resolve::operand::ListOperandTarget::Path(path("b")?.to_rooted_expr()),
                     Default::default()
                 ),
                 Default::default()
@@ -151,7 +160,7 @@ async fn invalid_dir_queries_fail_explicitly() -> TestResult {
     std::fs::write(f.root.join("file"), b"x")?;
     assert!(matches!(
         f.storage
-            .list_entries(&ah_vfs_storage::ListRequest::new(ah_vfs_storage::ListTarget::Path(path("file")?.to_rooted_expr()), Default::default()), Default::default())
+            .list_entries(&ah_vfs::resolve::operand::ListOperand::new(ah_vfs::resolve::operand::ListOperandTarget::Path(path("file")?.to_rooted_expr()), Default::default()), Default::default())
             .await,
         Err(error) if error.failure() == Failure::Rejected(Rejection::NotDirectory)
     ));
@@ -163,16 +172,16 @@ async fn dir_creation_and_removal_preserve_root_and_nonempty_dirs() -> TestResul
     let f = fixture().await?;
     assert!(matches!(
         f.storage
-            .create_dir(ah_vfs_storage::CreateDirectoryRequest::new(path("a/b")?.to_rooted_expr(), ah_vfs_storage::CreateDirectoryMode::Single), Default::default())
+            .create_dir(ah_vfs::resolve::operand::CreateDirectoryOperand::new(path("a/b")?.to_rooted_expr(), ah_vfs::resolve::operand::CreateDirectoryMode::Single), Default::default())
             .await,
         Err(error) if error.failure() == Failure::Rejected(Rejection::NotFound)
     ));
     let entry = f
         .storage
         .create_dir(
-            ah_vfs_storage::CreateDirectoryRequest::new(
+            ah_vfs::resolve::operand::CreateDirectoryOperand::new(
                 path("a/b")?.to_rooted_expr(),
-                ah_vfs_storage::CreateDirectoryMode::Recursive,
+                ah_vfs::resolve::operand::CreateDirectoryMode::Recursive,
             ),
             Default::default(),
         )
@@ -180,29 +189,29 @@ async fn dir_creation_and_removal_preserve_root_and_nonempty_dirs() -> TestResul
     assert_eq!(entry.entry_type(), EntryType::Directory);
     f.storage
         .create_dir(
-            ah_vfs_storage::CreateDirectoryRequest::new(
+            ah_vfs::resolve::operand::CreateDirectoryOperand::new(
                 path("a/b")?.to_rooted_expr(),
-                ah_vfs_storage::CreateDirectoryMode::Recursive,
+                ah_vfs::resolve::operand::CreateDirectoryMode::Recursive,
             ),
             Default::default(),
         )
         .await?;
     assert!(matches!(
         f.storage
-            .create_dir(ah_vfs_storage::CreateDirectoryRequest::new(path("a/b")?.to_rooted_expr(), ah_vfs_storage::CreateDirectoryMode::Single), Default::default())
+            .create_dir(ah_vfs::resolve::operand::CreateDirectoryOperand::new(path("a/b")?.to_rooted_expr(), ah_vfs::resolve::operand::CreateDirectoryMode::Single), Default::default())
             .await,
         Err(error) if error.failure() == Failure::Rejected(Rejection::AlreadyExists)
     ));
     assert!(matches!(
         f.storage
-            .remove_entry(RemoveRequest::new((path("a")?).to_rooted_expr(), RemoveKind::EmptyDirectory)?, Default::default())
+            .remove_entry(RemoveOperand::new((path("a")?).to_rooted_expr(), RemoveKind::EmptyDirectory)?, Default::default())
             .await,
         Err(error) if error.failure() == Failure::Rejected(Rejection::DirectoryNotEmpty)
     ));
     std::fs::write(f.root.join("a/b/file"), b"x")?;
     f.storage
         .remove_entry(
-            RemoveRequest::new(
+            RemoveOperand::new(
                 (path("a/b/file")?).to_rooted_expr(),
                 RemoveKind::NonDirectory,
             )?,
@@ -211,13 +220,13 @@ async fn dir_creation_and_removal_preserve_root_and_nonempty_dirs() -> TestResul
         .await?;
     f.storage
         .remove_entry(
-            RemoveRequest::new((path("a/b")?).to_rooted_expr(), RemoveKind::EmptyDirectory)?,
+            RemoveOperand::new((path("a/b")?).to_rooted_expr(), RemoveKind::EmptyDirectory)?,
             Default::default(),
         )
         .await?;
     f.storage
         .remove_entry(
-            RemoveRequest::new((path("a")?).to_rooted_expr(), RemoveKind::EmptyDirectory)?,
+            RemoveOperand::new((path("a")?).to_rooted_expr(), RemoveKind::EmptyDirectory)?,
             Default::default(),
         )
         .await?;
@@ -225,9 +234,9 @@ async fn dir_creation_and_removal_preserve_root_and_nonempty_dirs() -> TestResul
     let root = f
         .storage
         .create_dir(
-            ah_vfs_storage::CreateDirectoryRequest::new(
+            ah_vfs::resolve::operand::CreateDirectoryOperand::new(
                 path("")?.to_rooted_expr(),
-                ah_vfs_storage::CreateDirectoryMode::Recursive,
+                ah_vfs::resolve::operand::CreateDirectoryMode::Recursive,
             ),
             Default::default(),
         )
@@ -236,12 +245,12 @@ async fn dir_creation_and_removal_preserve_root_and_nonempty_dirs() -> TestResul
     assert_eq!(root.entry_type(), EntryType::Directory);
     assert!(matches!(
         f.storage
-            .create_dir(ah_vfs_storage::CreateDirectoryRequest::new(path("")?.to_rooted_expr(), ah_vfs_storage::CreateDirectoryMode::Single), Default::default())
+            .create_dir(ah_vfs::resolve::operand::CreateDirectoryOperand::new(path("")?.to_rooted_expr(), ah_vfs::resolve::operand::CreateDirectoryMode::Single), Default::default())
             .await,
         Err(error) if error.failure() == Failure::Rejected(Rejection::AlreadyExists)
     ));
     assert!(
-        RemoveRequest::new(
+        RemoveOperand::new(
             StoragePath::root().to_rooted_expr(),
             RemoveKind::EmptyDirectory
         )
@@ -259,7 +268,7 @@ async fn chunked_writes_publish_only_at_commit_and_reads_honor_ranges() -> TestR
     let mut writer = f
         .storage
         .write_file(
-            ah_vfs_storage::WriteRequest::new(
+            ah_vfs::resolve::operand::WriteOperand::new(
                 path("data")?.to_rooted_expr(),
                 ah_vfs_storage::WriteMode::CreateNew,
                 ah_vfs_storage::Publication::Staged,
@@ -275,8 +284,8 @@ async fn chunked_writes_publish_only_at_commit_and_reads_honor_ranges() -> TestR
     assert!(
         f.storage
             .list_entries(
-                &ah_vfs_storage::ListRequest::new(
-                    ah_vfs_storage::ListTarget::Path(path("")?.to_rooted_expr()),
+                &ah_vfs::resolve::operand::ListOperand::new(
+                    ah_vfs::resolve::operand::ListOperandTarget::Path(path("")?.to_rooted_expr()),
                     Default::default()
                 ),
                 Default::default()
@@ -308,7 +317,7 @@ async fn chunked_writes_publish_only_at_commit_and_reads_honor_ranges() -> TestR
     let mut reader = f
         .storage
         .read_file(
-            ah_vfs_storage::ReadRequest::new(
+            ah_vfs::resolve::operand::ReadOperand::new(
                 path("data")?.to_rooted_expr(),
                 ah_vfs_storage::ReadRange::FULL,
             ),
@@ -334,7 +343,7 @@ async fn chunked_writes_publish_only_at_commit_and_reads_honor_ranges() -> TestR
         let mut reader = f
             .storage
             .read_file(
-                ah_vfs_storage::ReadRequest::new(
+                ah_vfs::resolve::operand::ReadOperand::new(
                     path("data")?.to_rooted_expr(),
                     ah_vfs_storage::ReadRange::new(offset, length)?,
                 ),
@@ -356,18 +365,18 @@ async fn unsupported_replacement_and_aborted_creation_leave_targets_unchanged() 
     std::fs::write(f.root.join("data"), b"original longer contents")?;
     assert!(matches!(
         f.storage
-            .write_file(ah_vfs_storage::WriteRequest::new(path("data")?.to_rooted_expr(), ah_vfs_storage::WriteMode::CreateNew, ah_vfs_storage::Publication::Staged), Default::default())
+            .write_file(ah_vfs::resolve::operand::WriteOperand::new(path("data")?.to_rooted_expr(), ah_vfs_storage::WriteMode::CreateNew, ah_vfs_storage::Publication::Staged), Default::default())
             .await,
         Err(error) if error.failure() == Failure::Rejected(Rejection::AlreadyExists)
     ));
     assert!(matches!(
-        f.storage.write_file(ah_vfs_storage::WriteRequest::new(path("data")?.to_rooted_expr(), WriteMode::Replace, ah_vfs_storage::Publication::Staged), Default::default()).await,
+        f.storage.write_file(ah_vfs::resolve::operand::WriteOperand::new(path("data")?.to_rooted_expr(), WriteMode::Replace, ah_vfs_storage::Publication::Staged), Default::default()).await,
         Err(error) if error.failure() == Failure::Rejected(Rejection::Unsupported)
     ));
     let mut writer = f
         .storage
         .write_file(
-            ah_vfs_storage::WriteRequest::new(
+            ah_vfs::resolve::operand::WriteOperand::new(
                 path("discard")?.to_rooted_expr(),
                 WriteMode::CreateNew,
                 ah_vfs_storage::Publication::Staged,
@@ -401,7 +410,7 @@ async fn unsupported_replacement_and_aborted_creation_leave_targets_unchanged() 
     let mut empty = f
         .storage
         .write_file(
-            ah_vfs_storage::WriteRequest::new(
+            ah_vfs::resolve::operand::WriteOperand::new(
                 path("empty")?.to_rooted_expr(),
                 ah_vfs_storage::WriteMode::CreateNew,
                 ah_vfs_storage::Publication::Staged,
@@ -420,7 +429,7 @@ async fn dropping_pending_writes_cleans_up_without_publishing() -> TestResult {
     let mut writer = f
         .storage
         .write_file(
-            ah_vfs_storage::WriteRequest::new(
+            ah_vfs::resolve::operand::WriteOperand::new(
                 path("pending")?.to_rooted_expr(),
                 ah_vfs_storage::WriteMode::CreateNew,
                 ah_vfs_storage::Publication::Staged,
@@ -441,7 +450,7 @@ async fn concurrent_create_new_writers_cannot_overwrite_each_other() -> TestResu
     let mut first = f
         .storage
         .write_file(
-            ah_vfs_storage::WriteRequest::new(
+            ah_vfs::resolve::operand::WriteOperand::new(
                 path("same")?.to_rooted_expr(),
                 ah_vfs_storage::WriteMode::CreateNew,
                 ah_vfs_storage::Publication::Staged,
@@ -452,7 +461,7 @@ async fn concurrent_create_new_writers_cannot_overwrite_each_other() -> TestResu
     let mut second = f
         .storage
         .write_file(
-            ah_vfs_storage::WriteRequest::new(
+            ah_vfs::resolve::operand::WriteOperand::new(
                 path("same")?.to_rooted_expr(),
                 ah_vfs_storage::WriteMode::CreateNew,
                 ah_vfs_storage::Publication::Staged,
@@ -482,7 +491,7 @@ async fn failed_commit_is_terminal_and_preserves_a_concurrently_created_target()
     let mut writer = f
         .storage
         .write_file(
-            ah_vfs_storage::WriteRequest::new(
+            ah_vfs::resolve::operand::WriteOperand::new(
                 path("data")?.to_rooted_expr(),
                 ah_vfs_storage::WriteMode::CreateNew,
                 ah_vfs_storage::Publication::Staged,
@@ -506,7 +515,7 @@ async fn failed_commit_is_terminal_and_preserves_a_concurrently_created_target()
     let mut writer = f
         .storage
         .write_file(
-            ah_vfs_storage::WriteRequest::new(
+            ah_vfs::resolve::operand::WriteOperand::new(
                 path("directory")?.to_rooted_expr(),
                 WriteMode::CreateNew,
                 ah_vfs_storage::Publication::Staged,
@@ -530,7 +539,7 @@ async fn sessions_keep_resources_after_the_storage_handle_is_dropped() -> TestRe
     let mut reader = f
         .storage
         .read_file(
-            ah_vfs_storage::ReadRequest::new(
+            ah_vfs::resolve::operand::ReadOperand::new(
                 path("read")?.to_rooted_expr(),
                 ah_vfs_storage::ReadRange::FULL,
             ),
@@ -540,7 +549,7 @@ async fn sessions_keep_resources_after_the_storage_handle_is_dropped() -> TestRe
     let mut writer = f
         .storage
         .write_file(
-            ah_vfs_storage::WriteRequest::new(
+            ah_vfs::resolve::operand::WriteOperand::new(
                 path("write")?.to_rooted_expr(),
                 ah_vfs_storage::WriteMode::CreateNew,
                 ah_vfs_storage::Publication::Staged,
@@ -564,32 +573,32 @@ async fn wrong_entry_types_and_root_writes_are_rejected() -> TestResult {
     for name in ["", "directory"] {
         assert!(matches!(
             f.storage
-                .read_file(ah_vfs_storage::ReadRequest::new(path(name)?.to_rooted_expr(), ah_vfs_storage::ReadRange::FULL), Default::default())
+                .read_file(ah_vfs::resolve::operand::ReadOperand::new(path(name)?.to_rooted_expr(), ah_vfs_storage::ReadRange::FULL), Default::default())
                 .await,
             Err(error) if error.failure() == Failure::Rejected(Rejection::IsDirectory)
         ));
     }
     assert!(matches!(
         f.storage
-            .write_file(ah_vfs_storage::WriteRequest::new(path("")?.to_rooted_expr(), ah_vfs_storage::WriteMode::CreateNew, ah_vfs_storage::Publication::Staged), Default::default())
+            .write_file(ah_vfs::resolve::operand::WriteOperand::new(path("")?.to_rooted_expr(), ah_vfs_storage::WriteMode::CreateNew, ah_vfs_storage::Publication::Staged), Default::default())
             .await,
-        Err(error) if error.failure() == Failure::Rejected(Rejection::RootProtected)
+        Err(error) if ah_vfs::resolve::ResolveFailure::from_error(&error) == ah_vfs::resolve::ResolveFailure::RootProtected
     ));
     assert!(matches!(
         f.storage
-            .write_file(ah_vfs_storage::WriteRequest::new(path("directory")?.to_rooted_expr(), WriteMode::CreateNew, ah_vfs_storage::Publication::Staged), Default::default())
+            .write_file(ah_vfs::resolve::operand::WriteOperand::new(path("directory")?.to_rooted_expr(), WriteMode::CreateNew, ah_vfs_storage::Publication::Staged), Default::default())
             .await,
         Err(error) if error.failure() == Failure::Rejected(Rejection::AlreadyExists)
     ));
     assert!(matches!(
         f.storage
-            .create_dir(ah_vfs_storage::CreateDirectoryRequest::new(path("file/sub")?.to_rooted_expr(), ah_vfs_storage::CreateDirectoryMode::Recursive), Default::default())
+            .create_dir(ah_vfs::resolve::operand::CreateDirectoryOperand::new(path("file/sub")?.to_rooted_expr(), ah_vfs::resolve::operand::CreateDirectoryMode::Recursive), Default::default())
             .await,
         Err(error) if error.failure() == Failure::Rejected(Rejection::NotDirectory)
     ));
     assert!(matches!(
         f.storage
-            .read_file(ah_vfs_storage::ReadRequest::new(path("missing")?.to_rooted_expr(), ah_vfs_storage::ReadRange::FULL), Default::default())
+            .read_file(ah_vfs::resolve::operand::ReadOperand::new(path("missing")?.to_rooted_expr(), ah_vfs_storage::ReadRange::FULL), Default::default())
             .await,
         Err(error) if error.failure() == Failure::Rejected(Rejection::NotFound)
     ));
@@ -604,32 +613,30 @@ async fn rename_handles_files_dirs_conflicts_and_replacement() -> TestResult {
     std::fs::write(f.root.join("b"), b"b")?;
     assert!(matches!(
         f.storage
-            .move_entry(RenameRequest::new((path("a")?).to_rooted_expr(), (path("b")?).to_rooted_expr(), RenameMode::NoReplace)?, Default::default())
+            .move_entry(RenameOperand::new((path("a")?).to_rooted_expr(), (path("b")?).to_rooted_expr(), RenameMode::NoReplace)?, Default::default())
             .await,
         Err(error) if error.failure() == Failure::Rejected(Rejection::AlreadyExists)
     ));
     assert_eq!(std::fs::read(f.root.join("a"))?, b"a");
     assert_eq!(std::fs::read(f.root.join("b"))?, b"b");
-    let error = f
+    let replaced = f
         .storage
         .move_entry(
-            RenameRequest::new(
+            RenameOperand::new(
                 path("a")?.to_rooted_expr(),
                 path("b")?.to_rooted_expr(),
                 RenameMode::Replace,
             )?,
             Default::default(),
         )
-        .await
-        .err()
-        .ok_or("unsafe replacement was accepted")?;
-    assert_eq!(error.failure(), Failure::Rejected(Rejection::Unsupported));
-    assert_eq!(error.outcome(), ah_vfs_storage::MutationOutcome::Unchanged);
-    assert_eq!(std::fs::read(f.root.join("a"))?, b"a");
-    assert_eq!(std::fs::read(f.root.join("b"))?, b"b");
+        .await?;
+    assert_eq!(replaced.path(), &path("b")?);
+    assert!(!f.root.join("a").exists());
+    assert_eq!(std::fs::read(f.root.join("b"))?, b"a");
+    std::fs::write(f.root.join("a"), b"a")?;
     f.storage
         .move_entry(
-            RenameRequest::new(
+            RenameOperand::new(
                 path("a")?.to_rooted_expr(),
                 path("c")?.to_rooted_expr(),
                 RenameMode::Replace,
@@ -644,7 +651,7 @@ async fn rename_handles_files_dirs_conflicts_and_replacement() -> TestResult {
     let entry = f
         .storage
         .move_entry(
-            RenameRequest::new(
+            RenameOperand::new(
                 (path("old")?).to_rooted_expr(),
                 (path("new")?).to_rooted_expr(),
                 RenameMode::NoReplace,
@@ -657,7 +664,7 @@ async fn rename_handles_files_dirs_conflicts_and_replacement() -> TestResult {
     assert!(
         f.storage
             .move_entry(
-                RenameRequest::new(
+                RenameOperand::new(
                     (path("new")?).to_rooted_expr(),
                     (path("new/child/sub")?).to_rooted_expr(),
                     RenameMode::NoReplace
@@ -672,8 +679,8 @@ async fn rename_handles_files_dirs_conflicts_and_replacement() -> TestResult {
 
 #[tokio::test]
 async fn rename_uses_the_actual_slot_and_concurrent_arrivals_cannot_overwrite() -> TestResult {
-    use ah_vfs::application::port::LookupContext;
-    use ah_vfs_storage::{MutationOutcome, PathExpr};
+    use ah_vfs::resolve::LookupContext;
+    use ah_vfs_storage::MutationOutcome;
     use std::os::unix::fs::symlink;
 
     let f = fixture().await?;
@@ -684,7 +691,7 @@ async fn rename_uses_the_actual_slot_and_concurrent_arrivals_cannot_overwrite() 
     }
     let rename = |source: &str, destination: &str, mode| -> TestResult<_> {
         Ok(f.storage.move_entry(
-            RenameRequest::new(
+            RenameOperand::new(
                 PathExpr::parse(source)?,
                 PathExpr::parse(destination)?,
                 mode,
@@ -713,12 +720,10 @@ async fn rename_uses_the_actual_slot_and_concurrent_arrivals_cannot_overwrite() 
         matches!(rename("empty", "directory", RenameMode::Replace)?.await,
         Err(error) if error.failure() == Failure::Rejected(Rejection::DirectoryNotEmpty))
     );
-    assert!(
-        matches!(rename("directory", "empty", RenameMode::Replace)?.await,
-        Err(error) if error.failure() == Failure::Rejected(Rejection::Unsupported))
-    );
-    assert!(f.root.join("work/directory/child").is_dir());
-    assert!(f.root.join("work/empty").is_dir());
+    let moved = rename("directory", "empty", RenameMode::Replace)?.await?;
+    assert_eq!(moved.path(), &path("work/empty")?);
+    assert!(!f.root.join("work/directory").exists());
+    assert!(f.root.join("work/empty/child").is_dir());
 
     let (first, second) = tokio::join!(
         rename("first", "winner", RenameMode::NoReplace)?,
@@ -744,21 +749,19 @@ async fn rename_uses_the_actual_slot_and_concurrent_arrivals_cannot_overwrite() 
 
 #[tokio::test]
 async fn anonymous_staging_reserves_no_entry_names() -> TestResult {
-    use ah_vfs_storage::{
-        ListRequest, ListTarget, Publication, StatRequest, SymlinkAction, WriteRequest,
-    };
+    use ah_vfs_storage::Publication;
 
     let f = fixture().await?;
     let name = ".asset-hub-write-report";
     let target = path(name)?.to_rooted_expr();
-    let listing = ListRequest::new(
-        ListTarget::Path(path("")?.to_rooted_expr()),
+    let listing = ListOperand::new(
+        ListOperandTarget::Path(path("")?.to_rooted_expr()),
         Default::default(),
     );
     let mut writer = f
         .storage
         .write_file(
-            WriteRequest::new(target.clone(), WriteMode::CreateNew, Publication::Atomic),
+            WriteOperand::new(target.clone(), WriteMode::CreateNew, Publication::Atomic),
             Default::default(),
         )
         .await?;
@@ -776,7 +779,7 @@ async fn anonymous_staging_reserves_no_entry_names() -> TestResult {
     let entry = f
         .storage
         .stat_entry(
-            StatRequest::new(target.clone(), SymlinkAction::Preserve),
+            StatOperand::new(target.clone(), SymlinkAction::Preserve),
             Default::default(),
         )
         .await?;
@@ -787,7 +790,7 @@ async fn anonymous_staging_reserves_no_entry_names() -> TestResult {
     assert_eq!(page.entries()[0].path(), entry.path());
     f.storage
         .remove_entry(
-            RemoveRequest::new(target, RemoveKind::NonDirectory)?,
+            RemoveOperand::new(target, RemoveKind::NonDirectory)?,
             Default::default(),
         )
         .await?;
@@ -797,7 +800,7 @@ async fn anonymous_staging_reserves_no_entry_names() -> TestResult {
 
 #[tokio::test]
 async fn listing_reports_a_child_address_beyond_the_logical_limit() -> TestResult {
-    use ah_vfs_storage::{ListRequest, ListTarget, MAX_PATH_BYTES};
+    use ah_vfs_storage::MAX_PATH_BYTES;
     use cap_std::{ambient_authority, fs::Dir};
 
     let f = fixture().await?;
@@ -814,7 +817,7 @@ async fn listing_reports_a_child_address_beyond_the_logical_limit() -> TestResul
         b"data",
     )?;
     let target = path(&segments.join("/"))?.to_rooted_expr();
-    let list = ListRequest::new(ListTarget::Path(target), Default::default());
+    let list = ListOperand::new(ListOperandTarget::Path(target), Default::default());
     let error = f
         .storage
         .list_entries(&list, Default::default())
@@ -839,9 +842,9 @@ async fn lookup_policy_controls_links_without_escaping_the_instance() -> TestRes
         assert_eq!(
             f.storage
                 .stat_entry(
-                    ah_vfs_storage::StatRequest::new(
+                    ah_vfs::resolve::operand::StatOperand::new(
                         path(name)?.to_rooted_expr(),
-                        ah_vfs_storage::SymlinkAction::Preserve
+                        ah_vfs::resolve::policy::SymlinkAction::Preserve
                     ),
                     Default::default()
                 )
@@ -852,7 +855,7 @@ async fn lookup_policy_controls_links_without_escaping_the_instance() -> TestRes
     }
     let target = ah_vfs::resolve::read_link(
         f.storage.as_ref(),
-        ah_vfs_storage::PathExpr::parse("/dangling")?,
+        ah_vfs::resolve::path::PathExpr::parse("/dangling")?,
         Default::default(),
     )
     .await?;
@@ -863,7 +866,7 @@ async fn lookup_policy_controls_links_without_escaping_the_instance() -> TestRes
     );
     assert!(matches!(
         f.storage.stat_entry(
-            ah_vfs_storage::StatRequest::new(ah_vfs_storage::PathExpr::parse("/linked/file")?, ah_vfs_storage::SymlinkAction::FollowWithinInstance),
+            ah_vfs::resolve::operand::StatOperand::new(ah_vfs::resolve::path::PathExpr::parse("/linked/file")?, ah_vfs::resolve::policy::SymlinkAction::FollowWithinInstance),
             Default::default(),
         ).await,
         Err(error) if error.failure() == Failure::Rejected(Rejection::NotFound)
@@ -871,8 +874,8 @@ async fn lookup_policy_controls_links_without_escaping_the_instance() -> TestRes
     let page = f
         .storage
         .list_entries(
-            &ah_vfs_storage::ListRequest::new(
-                ah_vfs_storage::ListTarget::Path(path("")?.to_rooted_expr()),
+            &ah_vfs::resolve::operand::ListOperand::new(
+                ah_vfs::resolve::operand::ListOperandTarget::Path(path("")?.to_rooted_expr()),
                 Default::default(),
             ),
             Default::default(),
@@ -885,36 +888,38 @@ async fn lookup_policy_controls_links_without_escaping_the_instance() -> TestRes
     );
     assert!(matches!(
         f.storage
-            .read_file(ah_vfs_storage::ReadRequest::new(path("leaf")?.to_rooted_expr(), ah_vfs_storage::ReadRange::FULL), Default::default())
+            .read_file(ah_vfs::resolve::operand::ReadOperand::new(path("leaf")?.to_rooted_expr(), ah_vfs_storage::ReadRange::FULL), Default::default())
             .await,
         Err(error) if error.failure() == Failure::Rejected(Rejection::NotFound)
     ));
     assert!(matches!(
         f.storage
-            .write_file(ah_vfs_storage::WriteRequest::new(path("leaf")?.to_rooted_expr(), WriteMode::Replace, ah_vfs_storage::Publication::Staged), Default::default())
+            .write_file(ah_vfs::resolve::operand::WriteOperand::new(path("leaf")?.to_rooted_expr(), WriteMode::Replace, ah_vfs_storage::Publication::Staged), Default::default())
             .await,
         Err(error) if error.failure() == Failure::Rejected(Rejection::Unsupported)
     ));
     assert!(matches!(
         f.storage
-            .write_file(ah_vfs_storage::WriteRequest::new(path("dangling")?.to_rooted_expr(), ah_vfs_storage::WriteMode::CreateNew, ah_vfs_storage::Publication::Staged), Default::default())
+            .write_file(ah_vfs::resolve::operand::WriteOperand::new(path("dangling")?.to_rooted_expr(), ah_vfs_storage::WriteMode::CreateNew, ah_vfs_storage::Publication::Staged), Default::default())
             .await,
         Err(error) if error.failure() == Failure::Rejected(Rejection::AlreadyExists)
     ));
     assert!(matches!(
         f.storage
-            .stat_entry(ah_vfs_storage::StatRequest::new(path("linked/file")?.to_rooted_expr(), ah_vfs_storage::SymlinkAction::Preserve), ah_vfs::application::port::LookupContext {
-                intermediate_symlinks: ah_vfs_storage::IntermediateSymlinks::Reject,
+            .stat_entry(ah_vfs::resolve::operand::StatOperand::new(path("linked/file")?.to_rooted_expr(), ah_vfs::resolve::policy::SymlinkAction::Preserve), ah_vfs::resolve::LookupContext {
+                intermediate_symlinks: ah_vfs::resolve::policy::IntermediateSymlinks::Reject,
                 ..Default::default()
             })
             .await,
-        Err(error) if error.failure() == Failure::Rejected(Rejection::SymlinkNotAllowed)
+        Err(error) if ah_vfs::resolve::ResolveFailure::from_error(&error) == ah_vfs::resolve::ResolveFailure::SymlinkNotAllowed
     ));
     assert!(
         f.storage
             .list_entries(
-                &ah_vfs_storage::ListRequest::new(
-                    ah_vfs_storage::ListTarget::Path(path("linked")?.to_rooted_expr()),
+                &ah_vfs::resolve::operand::ListOperand::new(
+                    ah_vfs::resolve::operand::ListOperandTarget::Path(
+                        path("linked")?.to_rooted_expr()
+                    ),
                     Default::default()
                 ),
                 Default::default()
@@ -925,7 +930,7 @@ async fn lookup_policy_controls_links_without_escaping_the_instance() -> TestRes
     assert!(
         f.storage
             .read_file(
-                ah_vfs_storage::ReadRequest::new(
+                ah_vfs::resolve::operand::ReadOperand::new(
                     path("linked/file")?.to_rooted_expr(),
                     ah_vfs_storage::ReadRange::FULL
                 ),
@@ -937,7 +942,7 @@ async fn lookup_policy_controls_links_without_escaping_the_instance() -> TestRes
     assert!(
         f.storage
             .write_file(
-                ah_vfs_storage::WriteRequest::new(
+                ah_vfs::resolve::operand::WriteOperand::new(
                     path("linked/new")?.to_rooted_expr(),
                     ah_vfs_storage::WriteMode::CreateNew,
                     ah_vfs_storage::Publication::Staged
@@ -950,9 +955,9 @@ async fn lookup_policy_controls_links_without_escaping_the_instance() -> TestRes
     assert!(
         f.storage
             .create_dir(
-                ah_vfs_storage::CreateDirectoryRequest::new(
+                ah_vfs::resolve::operand::CreateDirectoryOperand::new(
                     path("linked/new")?.to_rooted_expr(),
-                    ah_vfs_storage::CreateDirectoryMode::Recursive
+                    ah_vfs::resolve::operand::CreateDirectoryMode::Recursive
                 ),
                 Default::default()
             )
@@ -962,7 +967,7 @@ async fn lookup_policy_controls_links_without_escaping_the_instance() -> TestRes
     assert!(
         f.storage
             .remove_entry(
-                RemoveRequest::new(
+                RemoveOperand::new(
                     (path("linked/file")?).to_rooted_expr(),
                     RemoveKind::NonDirectory
                 )?,
@@ -974,7 +979,7 @@ async fn lookup_policy_controls_links_without_escaping_the_instance() -> TestRes
     assert!(
         f.storage
             .move_entry(
-                RenameRequest::new(
+                RenameOperand::new(
                     (path("linked/file")?).to_rooted_expr(),
                     (path("moved")?).to_rooted_expr(),
                     RenameMode::Replace
@@ -986,7 +991,7 @@ async fn lookup_policy_controls_links_without_escaping_the_instance() -> TestRes
     );
     f.storage
         .move_entry(
-            RenameRequest::new(
+            RenameOperand::new(
                 (path("leaf")?).to_rooted_expr(),
                 (path("moved-link")?).to_rooted_expr(),
                 RenameMode::Replace,
@@ -1001,7 +1006,7 @@ async fn lookup_policy_controls_links_without_escaping_the_instance() -> TestRes
     );
     f.storage
         .remove_entry(
-            RemoveRequest::new(
+            RemoveOperand::new(
                 (path("moved-link")?).to_rooted_expr(),
                 RemoveKind::NonDirectory,
             )?,
@@ -1010,13 +1015,13 @@ async fn lookup_policy_controls_links_without_escaping_the_instance() -> TestRes
         .await?;
     f.storage
         .remove_entry(
-            RemoveRequest::new((path("linked")?).to_rooted_expr(), RemoveKind::NonDirectory)?,
+            RemoveOperand::new((path("linked")?).to_rooted_expr(), RemoveKind::NonDirectory)?,
             Default::default(),
         )
         .await?;
     f.storage
         .remove_entry(
-            RemoveRequest::new(
+            RemoveOperand::new(
                 (path("dangling")?).to_rooted_expr(),
                 RemoveKind::NonDirectory,
             )?,
@@ -1033,7 +1038,7 @@ async fn lookup_policy_controls_links_without_escaping_the_instance() -> TestRes
 async fn nested_writes_without_atomic_parent_binding_are_rejected_before_staging() -> TestResult {
     let f = fixture().await?;
     std::fs::create_dir(f.root.join("parent"))?;
-    let request = ah_vfs_storage::WriteRequest::new(
+    let request = ah_vfs::resolve::operand::WriteOperand::new(
         path("parent/file")?.to_rooted_expr(),
         WriteMode::CreateNew,
         ah_vfs_storage::Publication::Atomic,
@@ -1055,7 +1060,7 @@ async fn non_utf8_dir_entries_fail_without_lossy_conversion() -> TestResult {
     std::fs::write(f.root.join(OsString::from_vec(b"file-\xff".to_vec())), b"x")?;
     assert!(matches!(
         f.storage
-            .list_entries(&ah_vfs_storage::ListRequest::new(ah_vfs_storage::ListTarget::Path(path("")?.to_rooted_expr()), Default::default()), Default::default())
+            .list_entries(&ah_vfs::resolve::operand::ListOperand::new(ah_vfs::resolve::operand::ListOperandTarget::Path(path("")?.to_rooted_expr()), Default::default()), Default::default())
             .await,
         Err(error) if error.failure() == Failure::Backend(BackendFailure::UnrepresentableName)
     ));
@@ -1070,7 +1075,7 @@ async fn new_files_are_private() -> TestResult {
     let mut writer = f
         .storage
         .write_file(
-            ah_vfs_storage::WriteRequest::new(
+            ah_vfs::resolve::operand::WriteOperand::new(
                 path("new")?.to_rooted_expr(),
                 ah_vfs_storage::WriteMode::CreateNew,
                 ah_vfs_storage::Publication::Staged,
@@ -1087,9 +1092,9 @@ async fn new_files_are_private() -> TestResult {
 async fn recursive_creation_failure_preserves_cause_operation_and_parent_effects() -> TestResult {
     use ah_vfs_storage::{MutationOutcome, Operation};
     let f = fixture().await?;
-    let request = ah_vfs_storage::CreateDirectoryRequest::new(
+    let request = ah_vfs::resolve::operand::CreateDirectoryOperand::new(
         (path(&format!("created/{}", "x".repeat(256)))?).to_rooted_expr(),
-        ah_vfs_storage::CreateDirectoryMode::Recursive,
+        ah_vfs::resolve::operand::CreateDirectoryMode::Recursive,
     );
     let error = f
         .storage
@@ -1109,7 +1114,7 @@ async fn recursive_creation_failure_preserves_cause_operation_and_parent_effects
 #[tokio::test]
 async fn recursive_creation_follows_existing_links_without_creating_dangling_targets() -> TestResult
 {
-    use ah_vfs_storage::{CreateDirectoryMode, CreateDirectoryRequest, MutationOutcome, PathExpr};
+    use ah_vfs_storage::MutationOutcome;
     use std::os::unix::fs::symlink;
 
     let f = fixture().await?;
@@ -1118,7 +1123,7 @@ async fn recursive_creation_follows_existing_links_without_creating_dangling_tar
     symlink("/absent/deeper", f.root.join("dangling"))?;
     let create = |operand: &str, mode| -> TestResult<_> {
         Ok(f.storage.create_dir(
-            CreateDirectoryRequest::new(PathExpr::parse(operand)?, mode),
+            CreateDirectoryOperand::new(PathExpr::parse(operand)?, mode),
             Default::default(),
         ))
     };
@@ -1152,12 +1157,12 @@ async fn recursive_creation_follows_existing_links_without_creating_dangling_tar
 
 #[tokio::test]
 async fn replacing_a_directory_during_the_initial_list_conflicts() -> TestResult {
-    use ah_vfs_storage::{ListRequest, ListTarget, MutationOutcome, PageSize};
+    use ah_vfs_storage::{MutationOutcome, PageSize};
 
     let f = fixture().await?;
     std::fs::create_dir(f.root.join("selected"))?;
-    let request = ListRequest::new(
-        ListTarget::Path(path("selected")?.to_rooted_expr()),
+    let request = ListOperand::new(
+        ListOperandTarget::Path(path("selected")?.to_rooted_expr()),
         PageSize::DEFAULT,
     );
     let selected = f
@@ -1184,7 +1189,7 @@ async fn replacing_a_directory_during_the_initial_list_conflicts() -> TestResult
 #[tokio::test]
 async fn directory_cursor_survives_alias_changes_but_rejects_replacement_and_other_instances()
 -> TestResult {
-    use ah_vfs_storage::{ListRequest, ListTarget, PageSize, PathExpr};
+    use ah_vfs_storage::PageSize;
     use std::os::unix::fs::symlink;
     let first = fixture().await?;
     let other = fixture().await?;
@@ -1195,8 +1200,8 @@ async fn directory_cursor_survives_alias_changes_but_rejects_replacement_and_oth
     }
     std::fs::create_dir(first.root.join("b"))?;
     symlink("/a", first.root.join("alias"))?;
-    let initial = ListRequest::new(
-        ListTarget::Path(PathExpr::parse("/alias")?),
+    let initial = ListOperand::new(
+        ListOperandTarget::Path(PathExpr::parse("/alias")?),
         PageSize::new(1)?,
     );
     let page = first
@@ -1205,8 +1210,8 @@ async fn directory_cursor_survives_alias_changes_but_rejects_replacement_and_oth
         .await?;
     assert_eq!(page.selection().address(), &path("a")?);
     assert_eq!(page.entries()[0].path(), &path("a/one")?);
-    let resume = ListRequest::new(
-        ListTarget::Continue(page.continuation().ok_or("continuation")?),
+    let resume = ListOperand::new(
+        ListOperandTarget::Continue(page.continuation().ok_or("continuation")?),
         PageSize::DEFAULT,
     );
     std::fs::remove_file(first.root.join("alias"))?;

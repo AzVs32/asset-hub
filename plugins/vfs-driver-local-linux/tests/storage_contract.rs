@@ -1,5 +1,9 @@
 #![cfg(target_os = "linux")]
 use ah_vfs::application::mount_runtime::MountRuntime;
+use ah_vfs::resolve::LookupContext;
+use ah_vfs::resolve::StorageOperations;
+use ah_vfs::resolve::path::{PathExpr, RootedPath};
+use ah_vfs::resolve::policy::IntermediateSymlinks;
 use ah_vfs_storage::{Failure, Rejection};
 mod common;
 
@@ -8,14 +12,14 @@ use ah_vfs::application::driver_catalog::DriverCatalog;
 use ah_vfs::application::driver_error::DriverError;
 use ah_vfs::application::dto::{MountRequest, ReadFileRequest};
 use ah_vfs::application::error::EntryError;
-use ah_vfs::application::port::{Driver, LookupContext, Storage, validate_storage_extensions};
+use ah_vfs::application::port::{Driver, Storage, validate_storage_extensions};
 use ah_vfs::application::service::{EntryService, MountService};
 use ah_vfs::domain::namespace::VirtualPath;
 use ah_vfs::domain::{DriverInstance, DriverKey, InstanceId};
 use ah_vfs::infrastructure::mount_repository::SqliteMountRepository;
 use ah_vfs_storage::{
-    AttributeAction as A, AttributeResult as R, BackendFailure, IntermediateSymlinks,
-    MutationOutcome, PathExpr, Permissions, StoragePath, XattrName, XattrWriteMode,
+    AttributeAction as A, AttributeResult as R, BackendFailure, MutationOutcome, Permissions,
+    StoragePath, XattrName, XattrWriteMode,
 };
 use ah_vfs_storage::{ReadRange, ReadSupport, RenameMode};
 
@@ -92,7 +96,7 @@ async fn instance_support_matches_driver_and_atomic_publication_is_honored() -> 
     let mut writer = f
         .storage
         .write_file(
-            ah_vfs_storage::WriteRequest::new(
+            ah_vfs::resolve::operand::WriteOperand::new(
                 path("new")?.to_rooted_expr(),
                 ah_vfs_storage::WriteMode::CreateNew,
                 ah_vfs_storage::Publication::Atomic,
@@ -113,9 +117,9 @@ async fn io_and_opening_errors_keep_categories_and_original_sources() -> TestRes
     let error = f
         .storage
         .stat_entry(
-            ah_vfs_storage::StatRequest::new(
+            ah_vfs::resolve::operand::StatOperand::new(
                 path("missing")?.to_rooted_expr(),
-                ah_vfs_storage::SymlinkAction::Preserve,
+                ah_vfs::resolve::policy::SymlinkAction::Preserve,
             ),
             Default::default(),
         )
@@ -143,9 +147,9 @@ async fn io_and_opening_errors_keep_categories_and_original_sources() -> TestRes
     assert_eq!(
         f.storage
             .stat_entry(
-                ah_vfs_storage::StatRequest::new(
+                ah_vfs::resolve::operand::StatOperand::new(
                     path("file")?.to_rooted_expr(),
-                    ah_vfs_storage::SymlinkAction::Preserve
+                    ah_vfs::resolve::policy::SymlinkAction::Preserve
                 ),
                 Default::default()
             )
@@ -316,7 +320,7 @@ async fn xattrs_support_binary_empty_and_bounded_values_with_atomic_existence_po
         Err(EntryError::MountBoundary(_))
     ));
 
-    let invalid = std::ffi::CStr::from_bytes_with_nul(b"user.native-\xff\0")?;
+    let invalid = c"user.native-\xff";
     rustix::fs::setxattr(
         f.root.join("file"),
         invalid,
@@ -405,38 +409,38 @@ async fn attribute_lookup_preserves_the_final_link_and_obeys_intermediate_policy
             "../alias/file",
             A::GetPermissions,
             Reject,
-            Rejection::SymlinkNotAllowed,
+            ah_vfs::resolve::ResolveFailure::SymlinkNotAllowed,
         ),
         (
             "/link/",
             A::GetPermissions,
             FollowWithinInstance,
-            Rejection::NotDirectory,
+            Rejection::NotDirectory.into(),
         ),
         (
             "/outside/file",
             A::GetPermissions,
             FollowWithinInstance,
-            Rejection::NotFound,
+            Rejection::NotFound.into(),
         ),
         (
             "/link",
             A::SetPermissions(Permissions::new(0o700)?),
             FollowWithinInstance,
-            Rejection::Unsupported,
+            Rejection::Unsupported.into(),
         ),
         (
             "/link",
             A::list_xattrs(NonZeroUsize::MIN),
             FollowWithinInstance,
-            Rejection::Unsupported,
+            Rejection::Unsupported.into(),
         ),
     ] {
         let error = execute(operand, action, links)?
             .await
             .err()
             .ok_or("expected lookup rejection")?;
-        assert_eq!(error.failure(), Failure::Rejected(reason));
+        assert_eq!(ah_vfs::resolve::ResolveFailure::from_error(&error), reason);
         assert_eq!(error.outcome(), MutationOutcome::Unchanged);
     }
     assert_eq!(outside_file.metadata()?.permissions().mode(), outside_mode);

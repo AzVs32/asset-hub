@@ -1,12 +1,10 @@
 //! Directory-handle based local storage, with staged complete-file writes.
 
-use ah_vfs::application::port::{DirectoryBindings, LookupContext};
-use ah_vfs::application::port::{Storage, StorageFileReader, StorageFileWriter, StorageFuture};
+use ah_vfs::application::port::{DirectoryBindings, OperationLookup, Storage, StorageFuture};
 use ah_vfs_storage::{
-    BackendFailure, BoundListRequest, DirectoryPage, DirectorySelection, Failure, ListRequest,
-    ListTarget, Operation, StorageError,
+    BackendFailure, BoundListRequest, Capabilities, DirectoryCursor, DirectoryPage,
+    DirectorySelection, Failure, Operation, Rejection, StorageError,
 };
-use ah_vfs_storage::{Entry, ReadRequest, StatRequest, WriteRequest};
 
 use cap_std::fs::Dir;
 use std::num::NonZeroUsize;
@@ -82,45 +80,42 @@ impl Storage for WindowsLocalStorage {
         NonZeroUsize::new(CHUNK_SIZE).unwrap_or(NonZeroUsize::MIN)
     }
 
-    fn stat_entry(&self, request: StatRequest, context: LookupContext) -> StorageFuture<'_, Entry> {
-        let dir = self.dir.clone();
-        Box::pin(blocking(Operation::Stat, false, move || {
-            lookup::stat(&dir, request.lookup(), context)
-        }))
+    fn storage_capabilities(&self) -> Option<Capabilities> {
+        Some(crate::driver::WindowsLocalDriver::supported_capabilities())
     }
 
-    fn select_directory<'a>(
+    fn begin_lookup(&self, operation: Operation) -> StorageFuture<'_, Box<dyn OperationLookup>> {
+        Box::pin(async move {
+            if !crate::driver::WindowsLocalDriver::supported_capabilities().supports(operation) {
+                return Err(StorageError::without_effects(
+                    operation,
+                    Failure::Rejected(Rejection::Unsupported),
+                    None,
+                ));
+            }
+            Ok(Box::new(lookup::LocalLookup::new(
+                self.dir.clone(),
+                self.directory_bindings.clone(),
+                operation,
+            )) as Box<dyn OperationLookup>)
+        })
+    }
+
+    fn resume_directory<'a>(
         &'a self,
-        request: &'a ListRequest,
-        context: LookupContext,
+        cursor: &'a DirectoryCursor,
     ) -> StorageFuture<'a, DirectorySelection> {
-        let request = request.clone();
+        let selection = cursor.selection().clone();
         let root = self.dir.clone();
         let bindings = self.directory_bindings.clone();
         Box::pin(blocking(Operation::List, false, move || {
-            match request.target() {
-                ListTarget::Path(_) => {
-                    let (address, dir) = lookup::listing_directory(
-                        &root,
-                        request.lookup().ok_or_else(lookup::list_stale)?,
-                        context,
-                    )?;
-                    bindings.bind(address, dir, lookup::same_directory)
-                }
-                ListTarget::Continue(cursor) => {
-                    let selection = cursor.selection();
-                    let dir = lookup::reopen_listing_directory(&root, selection, true)?;
-                    bindings.verify(selection, &dir, true, lookup::same_directory)?;
-                    Ok(selection.clone())
-                }
-            }
+            let dir = lookup::reopen_listing_directory(&root, &selection, true)?;
+            bindings.verify(&selection, &dir, true, lookup::same_directory)?;
+            Ok(selection)
         }))
     }
 
-    fn list_page<'a>(
-        &'a self,
-        bound: &'a BoundListRequest<'_>,
-    ) -> StorageFuture<'a, DirectoryPage> {
+    fn list_page<'a>(&'a self, bound: &'a BoundListRequest) -> StorageFuture<'a, DirectoryPage> {
         let request = bound.request().clone();
         let resuming = bound.after().is_some();
         let selection = bound.selection().clone();
@@ -138,67 +133,6 @@ impl Storage for WindowsLocalStorage {
                 return Err(lookup::list_replaced(resuming));
             }
             Ok(page)
-        }))
-    }
-    fn read_file(
-        &self,
-        request: ReadRequest,
-        context: LookupContext,
-    ) -> StorageFuture<'_, Box<dyn StorageFileReader>> {
-        let dir = self.dir.clone();
-        Box::pin(blocking(Operation::Read, false, move || {
-            let file = lookup::open_reader(&dir, request.lookup(), context)?;
-            Ok(
-                Box::new(file_reader::LocalFileReader::open(file, request.range())?)
-                    as Box<dyn StorageFileReader>,
-            )
-        }))
-    }
-
-    fn write_file(
-        &self,
-        request: WriteRequest,
-        context: LookupContext,
-    ) -> StorageFuture<'_, Box<dyn StorageFileWriter>> {
-        let dir = self.dir.clone();
-        Box::pin(blocking(Operation::Write, false, move || {
-            Ok(
-                Box::new(file_writer::LocalFileWriter::open(dir, request, context)?)
-                    as Box<dyn StorageFileWriter>,
-            )
-        }))
-    }
-
-    fn create_dir(
-        &self,
-        request: ah_vfs_storage::CreateDirectoryRequest,
-        context: LookupContext,
-    ) -> StorageFuture<'_, Entry> {
-        let dir = self.dir.clone();
-        Box::pin(blocking(Operation::CreateDirectory, true, move || {
-            lookup::create_dir(&dir, &request, context)
-        }))
-    }
-
-    fn remove_entry(
-        &self,
-        request: ah_vfs_storage::RemoveRequest,
-        context: LookupContext,
-    ) -> StorageFuture<'_, ()> {
-        let dir = self.dir.clone();
-        Box::pin(blocking(Operation::Remove, true, move || {
-            lookup::remove(&dir, &request, context)
-        }))
-    }
-
-    fn move_entry(
-        &self,
-        request: ah_vfs_storage::RenameRequest,
-        context: LookupContext,
-    ) -> StorageFuture<'_, Entry> {
-        let dir = self.dir.clone();
-        Box::pin(blocking(Operation::Rename, true, move || {
-            lookup::rename(&dir, &request, context)
         }))
     }
 }

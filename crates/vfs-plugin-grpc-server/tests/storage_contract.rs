@@ -1,8 +1,21 @@
+use ah_vfs::application::driver_error::{DriverError, LifecycleError, LifecycleFailure};
 use ah_vfs::application::{driver_info::DriverInfo, port::*};
+use ah_vfs::domain::InstanceId;
+use ah_vfs::resolve::LookupContext;
+use ah_vfs::resolve::StorageOperations;
+use ah_vfs::resolve::{
+    ResolveFailure,
+    operand::{
+        CreateDirectoryMode, CreateDirectoryOperand, ListOperand, ReadOperand, RemoveOperand,
+        RenameOperand, StatOperand, WriteOperand,
+    },
+    path::PathExpr,
+    policy::{IntermediateSymlinks, SymlinkAction},
+};
 use ah_vfs_storage as d;
 use hyper_util::rt::TokioIo;
 use std::{error::Error, future::ready, io, sync::Arc, time::Duration};
-use tokio::sync::mpsc;
+use tokio::sync::{Mutex, mpsc};
 use tokio_stream::{StreamExt, wrappers::ReceiverStream};
 use tonic::{
     Request, Streaming,
@@ -35,6 +48,7 @@ impl Driver for BoundMemory {
 
 struct Fixture {
     storage: Arc<MemoryStorage>,
+    dispatcher: Arc<Dispatcher>,
     channel: Channel,
     generation: String,
     task: tokio::task::JoinHandle<Result<(), tonic::transport::Error>>,
@@ -85,7 +99,7 @@ impl Fixture {
                 vec![],
             )
             .await?;
-        let formal = vfs_plugin_grpc_server::service(dispatcher, "storage-test")?;
+        let formal = vfs_plugin_grpc_server::service(dispatcher.clone(), "storage-test")?;
         // Run the actual HTTP/2 and Protobuf stack without listening on a port.
         let (client, server) = tokio::io::duplex(64 * 1024);
         let incoming =
@@ -110,6 +124,7 @@ impl Fixture {
             .await?;
         Ok(Self {
             storage,
+            dispatcher,
             channel,
             generation,
             task,
@@ -117,35 +132,31 @@ impl Fixture {
     }
 
     async fn formal_session(&self) -> TestResult<FormalSession> {
-        use vfs_plugin_grpc_server::wire::plugin_client::PluginClient;
-        let mut client = PluginClient::new(self.channel.clone());
-        let (tx, rx) = mpsc::channel(1);
-        tx.send(p::to_request(
+        let wire = WireSession::open(
+            self.channel.clone(),
             &self.generation,
-            &p::Operation::Open(p::Open {
+            p::Open {
                 id: "fixture".into(),
                 config: Some(Default::default()),
-            }),
-            vec![],
-        )?)
+            },
+        )
         .await?;
-        let mut request = Request::new(ReceiverStream::new(rx));
-        request
-            .metadata_mut()
-            .insert("authorization", "Bearer storage-test".parse()?);
-        let mut replies = tokio::time::timeout(TIMEOUT, client.session(request))
-            .await??
-            .into_inner();
-        let opened = tokio::time::timeout(TIMEOUT, replies.message())
-            .await??
-            .ok_or("missing Open response")?;
-        let Some(p::Value::Storage(opened)) = opened.result else {
-            return Err("formal session did not open".into());
-        };
+        let driver = vfs_plugin_host::PluginDriver::connect(Arc::new(TestTransport {
+            dispatcher: self.dispatcher.clone(),
+            channel: self.channel.clone(),
+        }))
+        .await?;
+        driver.initialize(Default::default()).await?;
+        let storage = driver
+            .open(OpenContext::new(
+                InstanceId::parse("fixture")?,
+                Default::default(),
+            ))
+            .await?;
         Ok(FormalSession {
-            tx,
-            replies,
-            handle: opened.handle,
+            handle: wire.storage.handle,
+            wire,
+            storage,
             writer: None,
         })
     }
@@ -166,52 +177,50 @@ impl Drop for Fixture {
     }
 }
 
-struct FormalSession {
+struct WireSession {
     tx: mpsc::Sender<p::Request>,
     replies: Streaming<p::Reply>,
-    handle: u64,
-    writer: Option<u64>,
+    storage: p::Storage,
 }
-impl FormalSession {
-    async fn remove(&mut self, path: &str, kind: d::RemoveKind) -> TestResult {
-        let request = d::RemoveRequest::new(d::PathExpr::parse(path)?, kind)?;
-        let operation = p::StorageOp::Remove(p::encode_remove(
-            &request,
-            &d::StoragePath::root(),
-            d::IntermediateSymlinks::FollowWithinInstance,
-        ));
-        if !matches!(self.call(operation).await?.result, Some(p::Value::Unit(_))) {
-            return Err("expected removal success".into());
-        }
-        Ok(())
-    }
 
-    async fn mkdir(&mut self, path: &str, mode: d::CreateDirectoryMode) -> TestResult<d::Entry> {
-        let reply = self.call(mkdir(path, mode)?).await?;
-        let Some(p::Value::Entry(entry)) = reply.result else {
-            return Err(format!("expected created directory: {:?}", reply.result).into());
-        };
-        Ok(p::decode_entry(entry)?)
-    }
-
-    async fn call(&mut self, operation: p::StorageOp) -> TestResult<p::Reply> {
-        self.invoke(p::Operation::Storage(p::StorageCall {
-            handle: self.handle,
-            operation: Some(operation),
-        }))
+impl WireSession {
+    async fn open(channel: Channel, generation: &str, open: p::Open) -> Result<Self, DriverError> {
+        use vfs_plugin_grpc_server::wire::plugin_client::PluginClient;
+        let mut client = PluginClient::new(channel);
+        let (tx, rx) = mpsc::channel(1);
+        tx.send(
+            p::to_request(generation, &p::Operation::Open(open), vec![])
+                .map_err(vfs_plugin_codec::protocol_violation_with_source)?,
+        )
         .await
+        .map_err(wire_error)?;
+        let mut request = Request::new(ReceiverStream::new(rx));
+        request.metadata_mut().insert(
+            "authorization",
+            tonic::metadata::MetadataValue::from_static("Bearer storage-test"),
+        );
+        let mut replies = tokio::time::timeout(TIMEOUT, client.session(request))
+            .await
+            .map_err(wire_error)?
+            .map_err(wire_error)?
+            .into_inner();
+        let opened = replies
+            .message()
+            .await
+            .map_err(wire_error)?
+            .ok_or_else(vfs_plugin_codec::protocol_violation)?;
+        let Some(p::Value::Storage(storage)) = opened.result else {
+            return Err(vfs_plugin_codec::protocol_violation());
+        };
+        Ok(Self {
+            tx,
+            replies,
+            storage,
+        })
     }
 
-    async fn invoke(&mut self, operation: p::Operation) -> TestResult<p::Reply> {
-        self.invoke_with_data(operation, vec![]).await
-    }
-
-    async fn invoke_with_data(
-        &mut self,
-        operation: p::Operation,
-        data: Vec<u8>,
-    ) -> TestResult<p::Reply> {
-        // Deliberately let the server validate even malformed test requests.
+    async fn invoke(&mut self, operation: p::Operation, data: Vec<u8>) -> TestResult<p::Reply> {
+        // Deliberately let the server validate malformed test requests.
         self.tx
             .send(p::Request {
                 operation: Some(operation),
@@ -223,16 +232,273 @@ impl FormalSession {
             .await??
             .ok_or("missing response")?)
     }
+}
+
+fn wire_error(source: impl Error + Send + Sync + 'static) -> DriverError {
+    LifecycleError::with_source(LifecycleFailure::Unavailable, source).into()
+}
+
+struct TestTransport {
+    dispatcher: Arc<Dispatcher>,
+    channel: Channel,
+}
+
+impl vfs_plugin_host::TransportFactory for TestTransport {
+    fn connect(self: Arc<Self>) -> vfs_plugin_host::ConnectFuture {
+        Box::pin(async move { Ok(self as Arc<dyn vfs_plugin_host::Transport>) })
+    }
+}
+
+impl vfs_plugin_host::SessionTransport for TestTransport {
+    fn call<'a>(
+        &'a self,
+        generation: &'a str,
+        op: p::Operation,
+        data: Vec<u8>,
+    ) -> vfs_plugin_host::TransportFuture<'a> {
+        Box::pin(async move { self.dispatcher.call(generation, op, data).await })
+    }
+}
+
+impl vfs_plugin_host::Transport for TestTransport {
+    fn open_session(
+        self: Arc<Self>,
+        generation: &str,
+        open: p::Open,
+    ) -> vfs_plugin_host::OpenFuture<'_> {
+        Box::pin(async move {
+            let session = WireSession::open(self.channel.clone(), generation, open).await?;
+            Ok(vfs_plugin_host::OpenedStorage {
+                storage: session.storage,
+                generation: generation.into(),
+                transport: Arc::new(TestSession(Mutex::new(session))),
+            })
+        })
+    }
+}
+
+struct TestSession(Mutex<WireSession>);
+impl vfs_plugin_host::SessionTransport for TestSession {
+    fn call<'a>(
+        &'a self,
+        _: &'a str,
+        op: p::Operation,
+        data: Vec<u8>,
+    ) -> vfs_plugin_host::TransportFuture<'a> {
+        Box::pin(async move {
+            let reply = self
+                .0
+                .lock()
+                .await
+                .invoke(op.clone(), data)
+                .await
+                .map_err(|error| {
+                    vfs_plugin_codec::call_error(
+                        &op,
+                        d::Failure::Backend(d::BackendFailure::Unavailable),
+                        true,
+                        Some(Box::new(io::Error::other(error.to_string()))),
+                    )
+                })?;
+            match reply.result {
+                Some(p::Value::Failure(failure)) => {
+                    Err(vfs_plugin_codec::driver_error(failure, None))
+                }
+                _ => Ok(reply),
+            }
+        })
+    }
+}
+
+struct FormalSession {
+    wire: WireSession,
+    storage: Arc<dyn Storage>,
+    handle: u64,
+    writer: Option<u64>,
+}
+
+struct FormalReply {
+    result: Option<p::Value>,
+    data: Vec<u8>,
+    resolution_error: Option<d::StorageError>,
+}
+
+impl From<p::Reply> for FormalReply {
+    fn from(reply: p::Reply) -> Self {
+        Self {
+            result: reply.result,
+            data: reply.data,
+            resolution_error: None,
+        }
+    }
+}
+
+enum Call {
+    Stat(StatOperand, LookupContext),
+    CreateDirectory(CreateDirectoryOperand, LookupContext),
+    Rename(RenameOperand, LookupContext),
+    Remove(RemoveOperand, LookupContext),
+    Wire(p::StorageOp),
+}
+
+impl From<p::StorageOp> for Call {
+    fn from(op: p::StorageOp) -> Self {
+        Self::Wire(op)
+    }
+}
+
+impl FormalSession {
+    async fn remove(&mut self, path: &str, kind: d::RemoveKind) -> TestResult {
+        let request = RemoveOperand::new(PathExpr::parse(path)?, kind)?;
+        Ok(self
+            .storage
+            .remove_entry(request, Default::default())
+            .await?)
+    }
+
+    async fn mkdir(&mut self, path: &str, mode: CreateDirectoryMode) -> TestResult<d::Entry> {
+        Ok(self
+            .storage
+            .create_dir(
+                CreateDirectoryOperand::new(PathExpr::parse(path)?, mode),
+                Default::default(),
+            )
+            .await?)
+    }
+
+    async fn call(&mut self, operation: impl Into<Call>) -> TestResult<FormalReply> {
+        let entry = |result: Result<d::Entry, d::StorageError>| -> TestResult<Result<p::Value, d::StorageError>> {
+            match result {
+                Ok(entry) => Ok(Ok(p::Value::Entry(p::encode_entry(&entry)?))),
+                Err(error) => Ok(Err(error)),
+            }
+        };
+        let value = match operation.into() {
+            Call::Stat(operand, context) => entry(self.storage.stat_entry(operand, context).await)?,
+            Call::CreateDirectory(operand, context) => {
+                entry(self.storage.create_dir(operand, context).await)?
+            }
+            Call::Rename(operand, context) => {
+                entry(self.storage.move_entry(operand, context).await)?
+            }
+            Call::Remove(operand, context) => self
+                .storage
+                .remove_entry(operand, context)
+                .await
+                .map(|_| p::Value::Unit(p::Empty {})),
+            Call::Wire(operation) => {
+                return self
+                    .invoke(p::Operation::Storage(p::StorageCall {
+                        handle: self.handle,
+                        operation: Some(operation),
+                    }))
+                    .await
+                    .map(FormalReply::from);
+            }
+        };
+        Ok(match value {
+            Ok(value) => FormalReply::from(p::Reply::new(value)),
+            Err(error) => FormalReply {
+                result: None,
+                data: vec![],
+                resolution_error: Some(error),
+            },
+        })
+    }
+
+    async fn invoke(&mut self, operation: p::Operation) -> TestResult<p::Reply> {
+        self.invoke_with_data(operation, vec![]).await
+    }
+
+    async fn invoke_with_data(
+        &mut self,
+        operation: p::Operation,
+        data: Vec<u8>,
+    ) -> TestResult<p::Reply> {
+        self.wire.invoke(operation, data).await
+    }
+
+    async fn bound_slot(&mut self, path: &str, purpose: &str) -> TestResult<(u64, p::BoundSlot)> {
+        let path = d::StoragePath::parse(path.trim_start_matches('/'))?;
+        let p::Value::OpenedLookup(scope) = self
+            .invoke(p::Operation::BeginLookup(p::LookupHandle {
+                handle: self.handle,
+                purpose: purpose.into(),
+            }))
+            .await?
+            .into_value()?
+        else {
+            return Err("lookup scope".into());
+        };
+        let mut parent = scope.root.ok_or("lookup root")?.id;
+        let mut prefix = d::StoragePath::root();
+        let final_name = path.name().ok_or("final name")?;
+        let mut final_entry = None;
+        for name in path.entry_names() {
+            prefix = prefix.join(&name)?;
+            let reply = self
+                .invoke(p::Operation::ObserveChild(p::ObserveChild {
+                    lookup: scope.handle,
+                    parent,
+                    name: name.to_string(),
+                    purpose: purpose.into(),
+                }))
+                .await?;
+            if prefix == path {
+                match reply.result {
+                    Some(p::Value::ObservedEntry(entry)) => final_entry = Some(entry.id),
+                    _ => formal_failure(
+                        reply,
+                        p::decode_lookup_purpose(purpose).ok_or("purpose")?,
+                        d::Rejection::NotFound,
+                    )?,
+                }
+            } else {
+                let p::Value::ObservedEntry(entry) = reply.into_value()? else {
+                    return Err("parent observation".into());
+                };
+                parent = entry.id;
+            }
+        }
+        Ok((
+            scope.handle,
+            p::BoundSlot {
+                slot: Some(p::EntrySlot {
+                    parent,
+                    name: final_name.to_string(),
+                    path: path.to_string(),
+                }),
+                entry: final_entry,
+            },
+        ))
+    }
+
+    async fn execute(&mut self, lookup: u64, operation: p::BoundOp) -> TestResult<p::Reply> {
+        let reply = self
+            .invoke(p::Operation::Execute(p::BoundCall {
+                lookup,
+                operation: Some(operation),
+            }))
+            .await?;
+        self.invoke(p::Operation::Release(p::ResourceRef {
+            handle: lookup,
+            kind: p::ResourceKind::Lookup.into(),
+        }))
+        .await?;
+        Ok(reply)
+    }
 
     async fn read(&mut self, path: &str, range: d::ReadRange) -> TestResult<u64> {
-        let request = d::ReadRequest::new(d::PathExpr::parse(path)?, range);
+        let (lookup, slot) = self.bound_slot(path, "read").await?;
         let reply = self
-            .invoke(p::Operation::Read(p::encode_read(
-                self.handle,
-                &request,
-                &d::StoragePath::root(),
-                d::IntermediateSymlinks::FollowWithinInstance,
-            )))
+            .execute(
+                lookup,
+                p::BoundOp::Read(p::BoundRead {
+                    target: Some(slot),
+                    offset: range.offset(),
+                    length: range.length(),
+                }),
+            )
             .await?;
         let Some(p::Value::Reader(reader)) = reply.result else {
             return Err("expected reader".into());
@@ -254,7 +520,21 @@ impl FormalSession {
     }
 
     async fn begin(&mut self, path: &str, mode: d::WriteMode) -> TestResult {
-        let reply = self.invoke(write(self.handle, path, mode)?).await?;
+        let (lookup, slot) = self.bound_slot(path, "write").await?;
+        let mode = match mode {
+            d::WriteMode::CreateNew => p::WriteMode::CreateNew,
+            d::WriteMode::Replace => p::WriteMode::Replace,
+        };
+        let reply = self
+            .execute(
+                lookup,
+                p::BoundOp::Write(p::BoundWrite {
+                    target: Some(slot),
+                    mode: mode.into(),
+                    publication: p::Publication::Atomic.into(),
+                }),
+            )
+            .await?;
         let Some(p::Value::Writer(handle)) = reply.result else {
             return Err("expected writer".into());
         };
@@ -302,93 +582,85 @@ impl FormalSession {
         Ok(())
     }
 
-    async fn stat_entry(&mut self, op: p::StorageOp) -> TestResult<d::Entry> {
-        let Some(p::Value::Entry(entry)) = self.call(op).await?.result else {
+    async fn stat_entry(&mut self, op: TestResult<Call>) -> TestResult<d::Entry> {
+        let Some(p::Value::Entry(entry)) = self.call(op?).await?.result else {
             return Err("expected formal Stat metadata".into());
         };
         Ok(p::decode_entry(entry)?)
     }
 }
 
-fn lookup(path: &str, base: &str, links: p::IntermediateLink) -> p::Lookup {
-    p::Lookup {
-        operand: path.into(),
-        working_directory: base.into(),
-        intermediate_links: links.into(),
-    }
+fn stat_at(path: &str, follow: bool, base: &str, links: IntermediateSymlinks) -> TestResult<Call> {
+    let follow = if follow {
+        SymlinkAction::FollowWithinInstance
+    } else {
+        SymlinkAction::Preserve
+    };
+    Ok(Call::Stat(
+        StatOperand::new(PathExpr::parse(path)?, follow),
+        LookupContext {
+            working_directory: d::StoragePath::parse(base)?,
+            intermediate_symlinks: links,
+        },
+    ))
 }
-fn stat(path: &str, follow: bool) -> p::StorageOp {
-    p::StorageOp::Stat(p::Stat {
-        lookup: Some(lookup(path, "", p::IntermediateLink::FollowIntermediate)),
-        final_link: if follow {
-            p::FinalLink::FollowFinal
-        } else {
-            p::FinalLink::PreserveFinal
-        }
-        .into(),
-    })
+fn stat(path: &str, follow: bool) -> TestResult<Call> {
+    stat_at(path, follow, "", IntermediateSymlinks::FollowWithinInstance)
 }
 
-fn stat_failure(reply: p::Reply, cause: d::Failure) -> TestResult {
+fn stat_failure(reply: impl Into<FormalReply>, cause: impl Into<ResolveFailure>) -> TestResult {
     formal_failure(reply, d::Operation::Stat, cause)
 }
 
-fn formal_failure(reply: p::Reply, operation: d::Operation, cause: d::Failure) -> TestResult {
+fn formal_failure(
+    reply: impl Into<FormalReply>,
+    operation: d::Operation,
+    cause: impl Into<ResolveFailure>,
+) -> TestResult {
     formal_failure_with_outcome(reply, operation, cause, d::MutationOutcome::Unchanged)
 }
 
 fn formal_failure_with_outcome(
-    reply: p::Reply,
+    reply: impl Into<FormalReply>,
     operation: d::Operation,
-    cause: d::Failure,
+    cause: impl Into<ResolveFailure>,
     outcome: d::MutationOutcome,
 ) -> TestResult {
-    let Some(p::Value::Failure(failure)) = reply.result else {
-        return Err("expected formal storage failure".into());
+    let reply = reply.into();
+    let failure = match reply.resolution_error {
+        Some(error) => error,
+        None => {
+            let Some(p::Value::Failure(failure)) = reply.result else {
+                return Err("expected formal storage failure".into());
+            };
+            p::decode_storage_error(failure.storage.ok_or("missing storage failure")?)?
+        }
     };
-    let failure = p::decode_storage_error(failure.storage.ok_or("missing storage failure")?)?;
     assert_eq!(failure.operation(), operation);
-    assert_eq!(failure.failure(), cause);
+    assert_eq!(ResolveFailure::from_error(&failure), cause.into());
     assert_eq!(failure.outcome(), outcome);
     Ok(())
 }
 
-fn mkdir(path: &str, mode: d::CreateDirectoryMode) -> TestResult<p::StorageOp> {
-    let request = d::CreateDirectoryRequest::new(d::PathExpr::parse(path)?, mode);
-    Ok(p::StorageOp::CreateDirectory(p::encode_create_directory(
-        &request,
-        &d::StoragePath::root(),
-        d::IntermediateSymlinks::FollowWithinInstance,
-    )))
-}
-fn write(handle: u64, path: &str, mode: d::WriteMode) -> TestResult<p::Operation> {
-    Ok(p::Operation::Write(p::encode_write(
-        handle,
-        &d::WriteRequest::new(d::PathExpr::parse(path)?, mode, d::Publication::Atomic),
-        &d::StoragePath::root(),
-        d::IntermediateSymlinks::FollowWithinInstance,
-    )))
+fn mkdir(path: &str, mode: CreateDirectoryMode) -> TestResult<Call> {
+    Ok(Call::CreateDirectory(
+        CreateDirectoryOperand::new(PathExpr::parse(path)?, mode),
+        Default::default(),
+    ))
 }
 async fn select_listing(
     session: &mut FormalSession,
-    request: &d::ListRequest,
+    request: &ListOperand,
 ) -> TestResult<d::DirectorySelection> {
-    let reply = session
-        .call(p::StorageOp::SelectDirectory(p::encode_select_directory(
-            request,
-            &d::StoragePath::root(),
-            d::IntermediateSymlinks::FollowWithinInstance,
-        )))
-        .await?;
-    let Some(p::Value::SelectedDirectory(selection)) = reply.result else {
-        return Err("expected independent selection".into());
-    };
-    Ok(p::decode_selection(selection)?)
+    Ok(session
+        .storage
+        .select_directory(request, Default::default())
+        .await?)
 }
 
 async fn wire_page(
     session: &mut FormalSession,
-    bound: &d::BoundListRequest<'_>,
+    bound: &d::BoundListRequest,
 ) -> TestResult<(p::Page, Vec<u8>)> {
     let reply = session
         .call(p::StorageOp::List(p::encode_list(bound)))
@@ -404,18 +676,25 @@ async fn formal_lookup_preserves_policy_instance_and_link_bytes() -> TestResult 
     let fixture = Fixture::new(64).await?;
     let mut formal = fixture.formal_session().await?;
     formal
-        .mkdir("/docs/sub", d::CreateDirectoryMode::Recursive)
+        .mkdir(
+            "/docs/sub",
+            ah_vfs::resolve::operand::CreateDirectoryMode::Recursive,
+        )
         .await?;
 
-    use d::CreateDirectoryMode::Recursive;
-    let request =
-        d::CreateDirectoryRequest::new(d::PathExpr::parse("first/../sibling/")?, Recursive);
+    use ah_vfs::resolve::operand::CreateDirectoryMode::Recursive;
+    let request = ah_vfs::resolve::operand::CreateDirectoryOperand::new(
+        ah_vfs::resolve::path::PathExpr::parse("first/../sibling/")?,
+        Recursive,
+    );
     let reply = formal
-        .call(p::StorageOp::CreateDirectory(p::encode_create_directory(
-            &request,
-            &d::StoragePath::parse("docs/sub")?,
-            d::IntermediateSymlinks::Reject,
-        )))
+        .call(Call::CreateDirectory(
+            request,
+            LookupContext {
+                working_directory: d::StoragePath::parse("docs/sub")?,
+                intermediate_symlinks: IntermediateSymlinks::Reject,
+            },
+        ))
         .await?;
     let Some(p::Value::Entry(directory)) = reply.result else {
         return Err("expected a directory at the bound working directory".into());
@@ -432,17 +711,22 @@ async fn formal_lookup_preserves_policy_instance_and_link_bytes() -> TestResult 
         d::EntryType::Directory
     );
 
-    let request = d::CreateDirectoryRequest::new(d::PathExpr::parse("alias/child")?, Recursive);
+    let request = ah_vfs::resolve::operand::CreateDirectoryOperand::new(
+        ah_vfs::resolve::path::PathExpr::parse("alias/child")?,
+        Recursive,
+    );
     formal_failure(
         formal
-            .call(p::StorageOp::CreateDirectory(p::encode_create_directory(
-                &request,
-                &d::StoragePath::root(),
-                d::IntermediateSymlinks::Reject,
-            )))
+            .call(Call::CreateDirectory(
+                request,
+                LookupContext {
+                    working_directory: d::StoragePath::root(),
+                    intermediate_symlinks: IntermediateSymlinks::Reject,
+                },
+            ))
             .await?,
         d::Operation::CreateDirectory,
-        d::Failure::Rejected(d::Rejection::SymlinkNotAllowed),
+        ResolveFailure::SymlinkNotAllowed,
     )?;
     let directory = formal.mkdir("alias/child", Recursive).await?;
     assert_eq!(directory.path().as_str(), "docs/child");
@@ -452,7 +736,7 @@ async fn formal_lookup_preserves_policy_instance_and_link_bytes() -> TestResult 
         d::Failure::Rejected(d::Rejection::NotFound),
     )?;
     stat_failure(
-        formal.call(stat("/missing", false)).await?,
+        formal.call(stat("/missing", false)?).await?,
         d::Failure::Rejected(d::Rejection::NotFound),
     )?;
 
@@ -481,14 +765,12 @@ async fn formal_lookup_preserves_policy_instance_and_link_bytes() -> TestResult 
     );
     assert_eq!(
         formal
-            .stat_entry(p::StorageOp::Stat(p::Stat {
-                lookup: Some(lookup(
-                    "../",
-                    "docs/sub",
-                    p::IntermediateLink::FollowIntermediate
-                )),
-                final_link: p::FinalLink::FollowFinal.into(),
-            }))
+            .stat_entry(stat_at(
+                "../",
+                true,
+                "docs/sub",
+                IntermediateSymlinks::FollowWithinInstance
+            ))
             .await?
             .path()
             .as_str(),
@@ -503,28 +785,23 @@ async fn formal_lookup_preserves_policy_instance_and_link_bytes() -> TestResult 
     );
 
     for (path, follow, cause) in [
-        ("alias/", false, d::Rejection::NotDirectory),
-        ("dangling", true, d::Rejection::NotFound),
-        ("loop", true, d::Rejection::TooManySymlinks),
-        ("missing/../docs", true, d::Rejection::NotFound),
+        ("alias/", false, d::Rejection::NotDirectory.into()),
+        ("dangling", true, d::Rejection::NotFound.into()),
+        ("loop", true, ResolveFailure::TooManySymlinks),
+        ("missing/../docs", true, d::Rejection::NotFound.into()),
     ] {
-        stat_failure(
-            formal.call(stat(path, follow)).await?,
-            d::Failure::Rejected(cause),
-        )?;
+        stat_failure(formal.call(stat(path, follow)?).await?, cause)?;
     }
     stat_failure(
         formal
-            .call(p::StorageOp::Stat(p::Stat {
-                lookup: Some(lookup(
-                    "alias/sub",
-                    "",
-                    p::IntermediateLink::RejectIntermediate,
-                )),
-                final_link: p::FinalLink::FollowFinal.into(),
-            }))
+            .call(stat_at(
+                "alias/sub",
+                true,
+                "",
+                IntermediateSymlinks::Reject,
+            )?)
             .await?,
-        d::Failure::Rejected(d::Rejection::SymlinkNotAllowed),
+        ResolveFailure::SymlinkNotAllowed,
     )?;
     for (path, bytes) in [("opaque", b"\xff".as_slice()), ("dangling", b"missing")] {
         let reply = formal
@@ -564,17 +841,28 @@ async fn formal_lookup_preserves_policy_instance_and_link_bytes() -> TestResult 
         assert_eq!(reply.data, bytes);
     }
     stat_failure(
-        formal.call(stat("opaque", true)).await?,
+        formal.call(stat("opaque", true)?).await?,
         d::Failure::Backend(d::BackendFailure::UnrepresentableLinkTarget),
     )?;
 
-    formal_failure(
-        formal
-            .invoke(write(formal.handle, "root-link/..", d::WriteMode::Replace)?)
-            .await?,
-        d::Operation::Write,
-        d::Failure::Rejected(d::Rejection::RootProtected),
-    )?;
+    let error = formal
+        .storage
+        .write_file(
+            WriteOperand::new(
+                PathExpr::parse("root-link/..")?,
+                d::WriteMode::Replace,
+                d::Publication::Atomic,
+            ),
+            Default::default(),
+        )
+        .await
+        .err()
+        .ok_or("root mutation accepted")?;
+    assert_eq!(
+        ResolveFailure::from_error(&error),
+        ResolveFailure::RootProtected
+    );
+    assert_eq!(error.outcome(), d::MutationOutcome::Unchanged);
     formal_failure(
         formal
             .invoke(p::Operation::BeginLookup(p::LookupHandle {
@@ -590,20 +878,20 @@ async fn formal_lookup_preserves_policy_instance_and_link_bytes() -> TestResult 
     formal.begin("docs/file", d::WriteMode::CreateNew).await?;
     formal.stage(b"scoped read").await?;
     formal.commit().await?;
-    let read = p::encode_read(
-        formal.handle,
-        &d::ReadRequest::new(d::PathExpr::parse("../file")?, d::ReadRange::FULL),
-        &d::StoragePath::parse("docs/sub")?,
-        d::IntermediateSymlinks::FollowWithinInstance,
-    );
-    let Some(p::Value::Reader(reader)) = formal.invoke(p::Operation::Read(read)).await?.result
-    else {
-        return Err("expected relative lookup to open a reader".into());
+    let mut relative = formal
+        .storage
+        .read_file(
+            ReadOperand::new(PathExpr::parse("../file")?, d::ReadRange::FULL),
+            LookupContext {
+                working_directory: d::StoragePath::parse("docs/sub")?,
+                ..Default::default()
+            },
+        )
+        .await?;
+    assert_eq!(relative.next_chunk().await?, Some(b"scoped read".to_vec()));
+    let reader = p::Handle {
+        handle: formal.read("/docs/file", d::ReadRange::FULL).await?,
     };
-    assert_eq!(
-        formal.next_chunk(reader.handle).await?,
-        Some(b"scoped read".to_vec())
-    );
     let released = formal
         .invoke(p::Operation::Release(p::ResourceRef {
             kind: p::ResourceKind::Reader.into(),
@@ -623,20 +911,21 @@ async fn formal_lookup_preserves_policy_instance_and_link_bytes() -> TestResult 
 
     stat_failure(
         formal
-            .call(p::StorageOp::Stat(p::Stat {
-                lookup: Some(lookup(
-                    ".",
-                    "missing",
-                    p::IntermediateLink::FollowIntermediate,
-                )),
-                final_link: p::FinalLink::PreserveFinal.into(),
-            }))
+            .call(stat_at(
+                ".",
+                false,
+                "missing",
+                IntermediateSymlinks::FollowWithinInstance,
+            )?)
             .await?,
         d::Failure::Backend(d::BackendFailure::Stale),
     )?;
     let mut formal = fixture.formal_session().await?;
     let invalid_request = formal
-        .call(stat("", true))
+        .invoke(p::Operation::Execute(p::BoundCall {
+            lookup: 0,
+            operation: None,
+        }))
         .await
         .err()
         .ok_or("invalid operand accepted")?;
@@ -651,10 +940,10 @@ async fn formal_lookup_preserves_policy_instance_and_link_bytes() -> TestResult 
 
 #[tokio::test]
 async fn formal_remove_and_rename_share_bindings_and_apply_the_destination_matrix() -> TestResult {
-    use d::{
-        CreateDirectoryMode::Recursive, IntermediateSymlinks::FollowWithinInstance, RemoveKind,
-        RenameMode,
+    use ah_vfs::resolve::{
+        operand::CreateDirectoryMode::Recursive, policy::IntermediateSymlinks::FollowWithinInstance,
     };
+    use d::{RemoveKind, RenameMode};
     let fixture = Fixture::new(64).await?;
     let mut formal = fixture.formal_session().await?;
     formal.mkdir("/docs/source/child", Recursive).await?;
@@ -664,72 +953,74 @@ async fn formal_remove_and_rename_share_bindings_and_apply_the_destination_matri
     formal.stage(b"original").await?;
     formal.commit().await?;
     let base = d::StoragePath::parse("docs")?;
-    let rename = |source: &str, destination: &str, mode| -> TestResult<p::StorageOp> {
-        let request = d::RenameRequest::new(
-            d::PathExpr::parse(source)?,
-            d::PathExpr::parse(destination)?,
+    let rename = |source: &str, destination: &str, mode| -> TestResult<Call> {
+        let request = ah_vfs::resolve::operand::RenameOperand::new(
+            ah_vfs::resolve::path::PathExpr::parse(source)?,
+            ah_vfs::resolve::path::PathExpr::parse(destination)?,
             mode,
         )?;
-        Ok(p::StorageOp::Rename(p::encode_rename(
-            &request,
-            &base,
-            FollowWithinInstance,
-        )))
+        Ok(Call::Rename(
+            request,
+            LookupContext {
+                working_directory: base.clone(),
+                intermediate_symlinks: FollowWithinInstance,
+            },
+        ))
     };
     for (source, destination, mode, reason) in [
         (
             "missing",
             "file/child",
             RenameMode::Replace,
-            d::Rejection::NotFound,
+            d::Rejection::NotFound.into(),
         ),
         (
             "source",
             "/alias/source",
             RenameMode::NoReplace,
-            d::Rejection::AlreadyExists,
+            d::Rejection::AlreadyExists.into(),
         ),
         (
             "source",
             "file",
             RenameMode::Replace,
-            d::Rejection::NotDirectory,
+            d::Rejection::NotDirectory.into(),
         ),
         (
             "file",
             "empty",
             RenameMode::Replace,
-            d::Rejection::IsDirectory,
+            d::Rejection::IsDirectory.into(),
         ),
         (
             "source",
             "nonempty",
             RenameMode::Replace,
-            d::Rejection::DirectoryNotEmpty,
+            d::Rejection::DirectoryNotEmpty.into(),
         ),
         (
             "file",
             "missing/",
             RenameMode::Replace,
-            d::Rejection::NotDirectory,
+            d::Rejection::NotDirectory.into(),
         ),
         (
             "/dangling/",
             "/unused",
             RenameMode::NoReplace,
-            d::Rejection::NotDirectory,
+            d::Rejection::NotDirectory.into(),
         ),
         (
             "/step0/file",
             "/step0/copy",
             RenameMode::NoReplace,
-            d::Rejection::TooManySymlinks,
+            ResolveFailure::TooManySymlinks,
         ),
     ] {
         formal_failure(
             formal.call(rename(source, destination, mode)?).await?,
             d::Operation::Rename,
-            d::Failure::Rejected(reason),
+            reason,
         )?;
     }
     let reply = formal
@@ -755,7 +1046,7 @@ async fn formal_remove_and_rename_share_bindings_and_apply_the_destination_matri
         d::EntryType::Directory
     );
     stat_failure(
-        formal.call(stat("/docs/source", false)).await?,
+        formal.call(stat("/docs/source", false)?).await?,
         d::Failure::Rejected(d::Rejection::NotFound),
     )?;
 
@@ -763,13 +1054,18 @@ async fn formal_remove_and_rename_share_bindings_and_apply_the_destination_matri
         .call(rename("/dangling", "/moved-link", RenameMode::NoReplace)?)
         .await?;
     assert!(matches!(reply.result, Some(p::Value::Entry(_))));
-    let remove = |path: &str, kind| -> TestResult<p::StorageOp> {
-        let request = d::RemoveRequest::new(d::PathExpr::parse(path)?, kind)?;
-        Ok(p::StorageOp::Remove(p::encode_remove(
-            &request,
-            &base,
-            FollowWithinInstance,
-        )))
+    let remove = |path: &str, kind| -> TestResult<Call> {
+        let request = ah_vfs::resolve::operand::RemoveOperand::new(
+            ah_vfs::resolve::path::PathExpr::parse(path)?,
+            kind,
+        )?;
+        Ok(Call::Remove(
+            request,
+            LookupContext {
+                working_directory: base.clone(),
+                intermediate_symlinks: FollowWithinInstance,
+            },
+        ))
     };
     for (path, kind, reason) in [
         (
@@ -799,7 +1095,7 @@ async fn formal_remove_and_rename_share_bindings_and_apply_the_destination_matri
         .remove("/moved-link", RemoveKind::NonDirectory)
         .await?;
     stat_failure(
-        formal.call(stat("/missing", false)).await?,
+        formal.call(stat("/missing", false)?).await?,
         d::Failure::Rejected(d::Rejection::NotFound),
     )?;
     Ok(())
@@ -812,11 +1108,16 @@ async fn listing_checks_separate_binding_and_rejects_replaced_directory() -> Tes
     let mut other = fixture.formal_session().await?;
     for path in ["docs/é", "docs/Report", "docs/report"] {
         listing
-            .mkdir(path, d::CreateDirectoryMode::Recursive)
+            .mkdir(
+                path,
+                ah_vfs::resolve::operand::CreateDirectoryMode::Recursive,
+            )
             .await?;
     }
-    let request = d::ListRequest::new(
-        d::ListTarget::Path(d::PathExpr::parse("alias/")?),
+    let request = ah_vfs::resolve::operand::ListOperand::new(
+        ah_vfs::resolve::operand::ListOperandTarget::Path(ah_vfs::resolve::path::PathExpr::parse(
+            "alias/",
+        )?),
         d::PageSize::new(1)?,
     );
     let selection = select_listing(&mut listing, &request).await?;
@@ -854,7 +1155,8 @@ async fn listing_checks_separate_binding_and_rejects_replaced_directory() -> Tes
         p::decode_page(&bound, wire.clone(), &duplicate),
         Err(d::ContractViolation::InvalidPage)
     );
-    let larger = d::ListRequest::new(request.target().clone(), d::PageSize::new(2)?);
+    let larger =
+        ah_vfs::resolve::operand::ListOperand::new(request.target().clone(), d::PageSize::new(2)?);
     assert_eq!(
         p::decode_page(&larger.bind_selection(selection.clone())?, wire, &duplicate),
         Err(d::ContractViolation::InvalidPage)
@@ -862,10 +1164,15 @@ async fn listing_checks_separate_binding_and_rejects_replaced_directory() -> Tes
 
     other.remove("alias", d::RemoveKind::NonDirectory).await?;
     listing
-        .mkdir("docs/middle", d::CreateDirectoryMode::Single)
+        .mkdir(
+            "docs/middle",
+            ah_vfs::resolve::operand::CreateDirectoryMode::Single,
+        )
         .await?;
-    let continuation = d::ListRequest::new(
-        d::ListTarget::Continue(first.continuation().ok_or("first cursor")?),
+    let continuation = ah_vfs::resolve::operand::ListOperand::new(
+        ah_vfs::resolve::operand::ListOperandTarget::Continue(
+            first.continuation().ok_or("first cursor")?,
+        ),
         request.size(),
     );
     let resumed = select_listing(&mut listing, &continuation).await?;
@@ -885,7 +1192,10 @@ async fn listing_checks_separate_binding_and_rejects_replaced_directory() -> Tes
         other.remove(path, d::RemoveKind::EmptyDirectory).await?;
     }
     listing
-        .mkdir("/docs", d::CreateDirectoryMode::Single)
+        .mkdir(
+            "/docs",
+            ah_vfs::resolve::operand::CreateDirectoryMode::Single,
+        )
         .await?;
     formal_failure(
         listing
@@ -907,7 +1217,7 @@ async fn staging_releases_resources_and_commit_revalidates_slot_and_parent() -> 
     first.begin("/file", d::WriteMode::CreateNew).await?;
     first.stage(b"old").await?;
     stat_failure(
-        formal.call(stat("file", true)).await?,
+        formal.call(stat("file", true)?).await?,
         d::Failure::Rejected(d::Rejection::NotFound),
     )?;
     assert_eq!(
@@ -915,7 +1225,7 @@ async fn staging_releases_resources_and_commit_revalidates_slot_and_parent() -> 
         d::EntryType::file(Some(3))
     );
     stat_failure(
-        formal.call(stat("file/../", true)).await?,
+        formal.call(stat("file/../", true)?).await?,
         d::Failure::Rejected(d::Rejection::NotDirectory),
     )?;
 
@@ -953,7 +1263,10 @@ async fn staging_releases_resources_and_commit_revalidates_slot_and_parent() -> 
     assert_eq!(fixture.storage.used_bytes(), 7);
 
     formal
-        .mkdir("parent", d::CreateDirectoryMode::Single)
+        .mkdir(
+            "parent",
+            ah_vfs::resolve::operand::CreateDirectoryMode::Single,
+        )
         .await?;
     first.begin("parent/child", d::WriteMode::CreateNew).await?;
     first.stage(b"private").await?;
@@ -961,7 +1274,10 @@ async fn staging_releases_resources_and_commit_revalidates_slot_and_parent() -> 
         .remove("parent", d::RemoveKind::EmptyDirectory)
         .await?;
     formal
-        .mkdir("parent", d::CreateDirectoryMode::Single)
+        .mkdir(
+            "parent",
+            ah_vfs::resolve::operand::CreateDirectoryMode::Single,
+        )
         .await?;
     formal_failure(
         first.commit_reply().await?,
@@ -969,7 +1285,7 @@ async fn staging_releases_resources_and_commit_revalidates_slot_and_parent() -> 
         d::Failure::Rejected(d::Rejection::Conflict),
     )?;
     stat_failure(
-        formal.call(stat("parent/child", true)).await?,
+        formal.call(stat("parent/child", true)?).await?,
         d::Failure::Rejected(d::Rejection::NotFound),
     )?;
 
@@ -998,7 +1314,7 @@ async fn staging_releases_resources_and_commit_revalidates_slot_and_parent() -> 
     drop(first);
     fixture.wait_for_used(7).await?;
     stat_failure(
-        formal.call(stat("dropped", true)).await?,
+        formal.call(stat("dropped", true)?).await?,
         d::Failure::Rejected(d::Rejection::NotFound),
     )?;
 
@@ -1006,7 +1322,7 @@ async fn staging_releases_resources_and_commit_revalidates_slot_and_parent() -> 
         formal
             .call(mkdir(
                 "created/../file/child",
-                d::CreateDirectoryMode::Recursive,
+                ah_vfs::resolve::operand::CreateDirectoryMode::Recursive,
             )?)
             .await?,
         d::Operation::CreateDirectory,

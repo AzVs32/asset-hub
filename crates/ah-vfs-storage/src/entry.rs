@@ -26,17 +26,15 @@ impl EntryType {
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 #[non_exhaustive]
 pub enum EntryError {
-    #[error("the instance root must be a directory")]
+    #[error("the backend root must be a directory")]
     RootNotDirectory,
 }
-/// Metadata describes the selected entry. A lookup that preserves the final
-/// symlink describes the link itself. The instance root is always a directory.
+/// Metadata describes the selected entry. The backend root is always a directory.
 /// Native timestamp encodings are converted at the adapter boundary. Metadata
 /// from separate operations need not describe the same backend revision.
 #[derive(Clone, Debug, Eq, PartialEq, Getters, CopyGetters)]
 pub struct Entry {
-    /// The selected address. Use [`StoragePath::to_rooted_expr`] to reuse it
-    /// as an operand in a new operation request.
+    /// The canonical address of the selected entry.
     #[getset(get = "pub")]
     path: StoragePath,
     #[getset(get_copy = "pub")]

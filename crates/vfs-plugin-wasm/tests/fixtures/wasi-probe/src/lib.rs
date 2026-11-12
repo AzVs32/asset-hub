@@ -1,7 +1,7 @@
 //! Real Rust component for host authorization and execution integration tests.
 use ah_vfs_storage::{
-    BackendFailure, Capabilities, Entry, EntryName, EntryType, Failure, IntermediateSymlinks,
-    LinkTarget, Operation, Rejection, StatRequest, StoragePath,
+    BackendFailure, Capabilities, Entry, EntryName, EntryType, Failure, LinkTarget, Operation,
+    Rejection, StoragePath,
 };
 use std::num::NonZeroUsize;
 use vfs_plugin_guest::api::{self, Description, Guest, GuestStorage};
@@ -164,34 +164,17 @@ impl GuestStorage for Probe {
         NonZeroUsize::new(1024).unwrap_or(NonZeroUsize::MIN)
     }
 
-    fn begin_lookup(&self, _: Operation) -> api::Result<api::Lookup> {
-        Ok(api::Lookup::new(LinkLookup))
-    }
-
-    fn stat(
-        &self,
-        request: &StatRequest,
-        base: &StoragePath,
-        links: IntermediateSymlinks,
-    ) -> api::Result<Entry> {
-        api::direct_stat(request, base, links, |path| {
-            let context = api::ErrorContext::storage(Operation::Stat);
-            if !path.is_root() {
-                return Err(context.failure(Failure::Rejected(Rejection::NotFound)));
-            }
-            Entry::new(path.clone(), EntryType::Directory, None).map_err(|_| {
-                context.failure(Failure::Contract(
-                    ah_vfs_storage::ContractViolation::InvalidEntry,
-                ))
-            })
-        })
+    fn begin_lookup(&self, operation: Operation) -> api::Result<api::Lookup> {
+        Ok(api::Lookup::new(LinkLookup(operation)))
     }
 }
 
-struct LinkLookup;
+struct LinkLookup(Operation);
 
-fn link_failure(failure: Failure) -> api::Failure {
-    api::ErrorContext::storage(Operation::ReadLink).failure(failure)
+impl LinkLookup {
+    fn failure(&self, failure: Failure) -> api::Failure {
+        api::ErrorContext::storage(self.0).failure(failure)
+    }
 }
 
 impl api::GuestLookup for LinkLookup {
@@ -202,13 +185,16 @@ impl api::GuestLookup for LinkLookup {
     }
 
     fn observe(&mut self, parent: u64, name: &EntryName) -> api::Result<(u64, Entry)> {
+        if self.0 == Operation::Stat {
+            return Err(self.failure(Failure::Rejected(Rejection::NotFound)));
+        }
         let (id, path, kind) = match (parent, name.as_str()) {
             (1, "alias") => (2, "alias", EntryType::Symlink),
             (1, "dir") => (3, "dir", EntryType::Directory),
             (3, "link") => (4, "dir/link", EntryType::Symlink),
-            (1 | 3, _) => return Err(link_failure(Failure::Rejected(Rejection::NotFound))),
-            (2 | 4, _) => return Err(link_failure(Failure::Rejected(Rejection::NotDirectory))),
-            _ => return Err(link_failure(Failure::Backend(BackendFailure::Stale))),
+            (1 | 3, _) => return Err(self.failure(Failure::Rejected(Rejection::NotFound))),
+            (2 | 4, _) => return Err(self.failure(Failure::Rejected(Rejection::NotDirectory))),
+            _ => return Err(self.failure(Failure::Backend(BackendFailure::Stale))),
         };
         let path = StoragePath::parse(path)
             .map_err(|_| p::Failure::new(p::FailureCode::InvalidRequest))?;
@@ -221,9 +207,20 @@ impl api::GuestLookup for LinkLookup {
         match entry {
             2 => Ok(LinkTarget::new(b"dir".to_vec())),
             4 => Ok(LinkTarget::new(vec![0xff, b'/'])),
-            1 | 3 => Err(link_failure(Failure::Rejected(Rejection::NotSymlink))),
-            _ => Err(link_failure(Failure::Backend(BackendFailure::Stale))),
+            1 | 3 => Err(self.failure(Failure::Rejected(Rejection::NotSymlink))),
+            _ => Err(self.failure(Failure::Backend(BackendFailure::Stale))),
         }
+    }
+
+    fn execute_stat(&self, entry: u64, request: ah_vfs_storage::StatRequest) -> api::Result<Entry> {
+        if entry != 1 || !request.path().is_root() {
+            return Err(self.failure(Failure::InvalidBinding));
+        }
+        Entry::new(StoragePath::root(), EntryType::Directory, None).map_err(|_| {
+            self.failure(Failure::Contract(
+                ah_vfs_storage::ContractViolation::InvalidEntry,
+            ))
+        })
     }
 
     fn verify(&self) -> api::Result<()> {

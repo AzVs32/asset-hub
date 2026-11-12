@@ -1,6 +1,6 @@
 //! Stage anonymously and publish by linking the opened inode into an unused slot.
-use super::{blocking, fs, lookup};
-use ah_vfs::application::port::{LookupContext, StorageFileWriter, StorageFuture};
+use super::{blocking, fs};
+use ah_vfs::application::port::{StorageFileWriter, StorageFuture};
 use ah_vfs_storage::{
     BackendFailure, Entry, Failure, Operation, Rejection, StorageError, StoragePath, WriteMode,
     WriteRequest,
@@ -8,7 +8,7 @@ use ah_vfs_storage::{
 use cap_std::fs::{Dir, File};
 use rustix::fs::{AtFlags, Mode, OFlags, linkat, openat};
 use rustix::io::Errno;
-use std::{io::Write, os::fd::AsRawFd, sync::Arc};
+use std::{io::Write, os::fd::AsRawFd};
 
 const OP: Operation = Operation::Write;
 fn closed() -> StorageError {
@@ -26,11 +26,7 @@ struct FileWriteSession {
 }
 
 impl LocalFileWriter {
-    pub(super) fn open(
-        root: Arc<Dir>,
-        request: WriteRequest,
-        context: LookupContext,
-    ) -> Result<Self, StorageError> {
+    pub(super) fn open(parent: Dir, request: WriteRequest) -> Result<Self, StorageError> {
         // Linux has no rename conditional on the destination inode.
         if request.mode() != WriteMode::CreateNew {
             return Err(StorageError::without_effects(
@@ -39,7 +35,7 @@ impl LocalFileWriter {
                 None,
             ));
         }
-        let (parent, path) = lookup::write_destination(&root, &request, context)?;
+        let path = request.path().clone();
         // The instance-root descriptor is already the authoritative binding.
         // linkat cannot also attest that a nested parent still occupies its name.
         if !path.parent().is_some_and(|parent| parent.is_root()) {
@@ -78,9 +74,10 @@ impl FileWriteSession {
             self.path.clone(),
             self.file.metadata().map_err(|cause| fs::error(OP, cause))?,
         )?;
-        let target = self.path.name().ok_or_else(|| {
-            StorageError::without_effects(OP, Failure::Rejected(Rejection::RootProtected), None)
-        })?;
+        let target = self
+            .path
+            .name()
+            .ok_or_else(|| StorageError::without_effects(OP, Failure::InvalidBinding, None))?;
         let source = format!("/proc/self/fd/{}", self.file.as_raw_fd());
         linkat(
             rustix::fs::CWD,

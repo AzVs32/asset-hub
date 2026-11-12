@@ -11,9 +11,12 @@ use ah_vfs::application::dto::*;
 use ah_vfs::application::port::*;
 use ah_vfs_storage::{
     AttributeRequest, AttributeResult, AttributeSupport, BoundListRequest, DirectoryPage,
-    DirectorySelection, Entry, EntryName, ListRequest, MutationBinding, StoragePath,
+    DirectorySelection, Entry, EntryName, MutationBinding, StoragePath,
 };
-use ah_vfs_storage::{LinkTarget, ReadLinkRequest, ReadRequest, StatRequest, WriteRequest};
+use ah_vfs_storage::{
+    CreateDirectoryRequest, LinkTarget, ListRequest, ReadLinkRequest, ReadRequest, RemoveKind,
+    RemoveRequest, RenameMode, RenameRequest, StatRequest, WriteMode, WriteRequest,
+};
 use std::{
     collections::HashSet,
     future::Future,
@@ -508,47 +511,9 @@ impl RemoteStorage {
             .await
             .map_err(|error| convert::storage_error(operation, operation.may_mutate(), error))
     }
-    async fn unit(&self, request: p::StorageOp, data: Vec<u8>) -> Result<(), StorageError> {
-        let operation = request.storage_operation();
-        let r = self.call(request, data).await?;
-        match r
-            .result
-            .ok_or_else(|| bad_response(operation, operation.may_mutate()))?
-        {
-            Value::Unit(p::Empty {}) if r.data.is_empty() => Ok(()),
-            _ => Err(bad_response(operation, operation.may_mutate())),
-        }
-    }
 }
 // When traversal cannot redirect the operand, verify the selected address
 // rather than accepting an arbitrary response for this request.
-fn expected_lookup_address(
-    lookup: ah_vfs_storage::PathLookup<'_>,
-    context: &LookupContext,
-) -> Option<StoragePath> {
-    use ah_vfs_storage::{IntermediateSymlinks, LookupStart, PathComponent, SymlinkAction};
-    let operand = lookup.path();
-    let components = operand.components();
-    if !components.is_empty() && lookup.final_symlink() == SymlinkAction::FollowWithinInstance
-        || components.len() > 1 && context.intermediate_symlinks != IntermediateSymlinks::Reject
-    {
-        return None;
-    }
-    let mut path = match operand.start() {
-        LookupStart::InstanceRoot => StoragePath::root(),
-        LookupStart::BaseDirectory => context.working_directory.clone(),
-    };
-    for component in components {
-        match component {
-            PathComponent::Name(name) => path = path.join(name).ok()?,
-            PathComponent::CurrentDirectory => {}
-            PathComponent::ParentDirectory => {
-                path = path.parent().unwrap_or_else(StoragePath::root)
-            }
-        }
-    }
-    Some(path)
-}
 impl Storage for RemoteStorage {
     fn is_stale(&self) -> bool {
         self.resource.runtime.is_stale()
@@ -565,50 +530,8 @@ impl Storage for RemoteStorage {
         self.driver_info.capabilities().mutation_binding()
     }
 
-    fn stat_entry(&self, request: StatRequest, context: LookupContext) -> StorageFuture<'_, Entry> {
-        Box::pin(async move {
-            let op = Operation::Stat;
-            if !self.driver_info.capabilities().stat() {
-                return Err(StorageError::without_effects(
-                    op,
-                    Failure::Rejected(Rejection::Unsupported),
-                    None,
-                ));
-            }
-            let reply = self
-                .call(
-                    p::StorageOp::Stat(p::encode_stat(
-                        &request,
-                        &context.working_directory,
-                        context.intermediate_symlinks,
-                    )),
-                    vec![],
-                )
-                .await?;
-            match reply.result {
-                Some(Value::Entry(entry)) if reply.data.is_empty() => {
-                    let entry = convert::decode_entry(op, entry)
-                        .map_err(|source| convert::response_error(op, false, source))?;
-                    let lookup = request.lookup();
-                    if lookup
-                        .check_existing_target(entry.path(), entry.entry_type())
-                        .is_err()
-                        || (lookup.final_symlink()
-                            == ah_vfs_storage::SymlinkAction::FollowWithinInstance
-                            && entry.entry_type() == ah_vfs_storage::EntryType::Symlink)
-                    {
-                        return Err(bad_response(op, false));
-                    }
-                    if let Some(expected) = expected_lookup_address(request.lookup(), &context)
-                        && entry.path() != &expected
-                    {
-                        return Err(bad_response(op, false));
-                    }
-                    Ok(entry)
-                }
-                _ => Err(bad_response(op, false)),
-            }
-        })
+    fn storage_capabilities(&self) -> Option<ah_vfs_storage::Capabilities> {
+        Some(self.driver_info.capabilities())
     }
 
     fn begin_lookup(&self, op: Operation) -> StorageFuture<'_, Box<dyn OperationLookup>> {
@@ -673,167 +596,30 @@ impl Storage for RemoteStorage {
         })
     }
 
-    fn create_dir(
-        &self,
-        request: ah_vfs_storage::CreateDirectoryRequest,
-        context: LookupContext,
-    ) -> StorageFuture<'_, Entry> {
-        Box::pin(async move {
-            let op = Operation::CreateDirectory;
-            if !self.driver_info.capabilities().directories().can_create() {
-                return Err(StorageError::without_effects(
-                    op,
-                    Failure::Rejected(Rejection::Unsupported),
-                    None,
-                ));
-            }
-            let reply = self
-                .call(
-                    p::StorageOp::CreateDirectory(p::encode_create_directory(
-                        &request,
-                        &context.working_directory,
-                        context.intermediate_symlinks,
-                    )),
-                    vec![],
-                )
-                .await?;
-            if !reply.data.is_empty() {
-                return Err(bad_response(op, true));
-            }
-            let Some(Value::Entry(entry)) = reply.result else {
-                return Err(bad_response(op, true));
-            };
-            let entry = convert::decode_entry(op, entry)
-                .map_err(|error| convert::response_error(op, true, error))?;
-            if entry.entry_type() != ah_vfs_storage::EntryType::Directory
-                || expected_lookup_address(request.lookup(), &context)
-                    .is_some_and(|path| entry.path() != &path)
-            {
-                return Err(bad_response(op, true));
-            }
-            Ok(entry)
-        })
-    }
-    fn move_entry(
-        &self,
-        request: ah_vfs_storage::RenameRequest,
-        context: LookupContext,
-    ) -> StorageFuture<'_, Entry> {
-        Box::pin(async move {
-            if !self
-                .driver_info
-                .capabilities()
-                .rename()
-                .supports(request.mode())
-            {
-                return Err(StorageError::without_effects(
-                    Operation::Rename,
-                    Failure::Rejected(Rejection::Unsupported),
-                    None,
-                ));
-            }
-            let op = Operation::Rename;
-            let reply = self
-                .call(
-                    p::StorageOp::Rename(p::encode_rename(
-                        &request,
-                        &context.working_directory,
-                        context.intermediate_symlinks,
-                    )),
-                    vec![],
-                )
-                .await?;
-            let Some(Value::Entry(entry)) = reply.result else {
-                return Err(bad_response(op, true));
-            };
-            let entry = convert::decode_entry(op, entry)
-                .map_err(|error| convert::response_error(op, true, error))?;
-            if !reply.data.is_empty()
-                || entry.path().is_root()
-                || expected_lookup_address(request.lookups().1, &context)
-                    .is_some_and(|path| entry.path() != &path)
-                || (request.source().requires_directory()
-                    || request.destination().requires_directory())
-                    && entry.entry_type() != ah_vfs_storage::EntryType::Directory
-            {
-                return Err(bad_response(op, true));
-            }
-            Ok(entry)
-        })
-    }
-    fn remove_entry(
-        &self,
-        request: ah_vfs_storage::RemoveRequest,
-        context: LookupContext,
-    ) -> StorageFuture<'_, ()> {
-        Box::pin(async move {
-            if !self.driver_info.capabilities().remove() {
-                return Err(StorageError::without_effects(
-                    Operation::Remove,
-                    Failure::Rejected(Rejection::Unsupported),
-                    None,
-                ));
-            }
-            self.unit(
-                p::StorageOp::Remove(p::encode_remove(
-                    &request,
-                    &context.working_directory,
-                    context.intermediate_symlinks,
-                )),
-                vec![],
-            )
-            .await
-        })
-    }
-    fn select_directory<'a>(
+    fn resume_directory<'a>(
         &'a self,
-        request: &'a ListRequest,
-        context: LookupContext,
+        cursor: &'a ah_vfs_storage::DirectoryCursor,
     ) -> StorageFuture<'a, DirectorySelection> {
         Box::pin(async move {
-            if !self.driver_info.capabilities().list() {
-                return Err(StorageError::without_effects(
-                    Operation::List,
-                    Failure::Rejected(Rejection::Unsupported),
-                    None,
-                ));
-            }
             let reply = self
                 .call(
-                    p::StorageOp::SelectDirectory(p::encode_select_directory(
-                        request,
-                        &context.working_directory,
-                        context.intermediate_symlinks,
-                    )),
+                    p::StorageOp::ResumeDirectory(p::encode_checkpoint(cursor)),
                     vec![],
                 )
                 .await?;
             let Some(Value::SelectedDirectory(selection)) = reply.result else {
                 return Err(bad_response(Operation::List, false));
             };
-            let selection = p::decode_selection(selection).map_err(|source| {
-                convert::storage_protocol_violation_with_source(Operation::List, source)
-            })?;
-            if request
-                .lookup()
-                .and_then(|lookup| expected_lookup_address(lookup, &context))
-                .is_some_and(|address| &address != selection.address())
-            {
+            let selection =
+                p::decode_selection(selection).map_err(|_| bad_response(Operation::List, false))?;
+            if &selection != cursor.selection() {
                 return Err(bad_response(Operation::List, false));
             }
-            request
-                .bind_selection(selection.clone())
-                .map_err(|reason| {
-                    StorageError::without_effects(Operation::List, Failure::Backend(reason), None)
-                })?;
             Ok(selection)
         })
     }
 
-    fn list_page<'a>(
-        &'a self,
-        bound: &'a BoundListRequest<'_>,
-    ) -> StorageFuture<'a, DirectoryPage> {
+    fn list_page<'a>(&'a self, bound: &'a BoundListRequest) -> StorageFuture<'a, DirectoryPage> {
         Box::pin(async move {
             if !self.driver_info.capabilities().list() {
                 return Err(StorageError::without_effects(
@@ -851,87 +637,6 @@ impl Storage for RemoteStorage {
             p::decode_page(bound, page, &reply.data).map_err(|reason| {
                 StorageError::without_effects(Operation::List, Failure::Contract(reason), None)
             })
-        })
-    }
-    fn read_file(
-        &self,
-        request: ReadRequest,
-        context: LookupContext,
-    ) -> StorageFuture<'_, Box<dyn StorageFileReader>> {
-        Box::pin(async move {
-            self.driver_info
-                .capabilities()
-                .require_read(&request)
-                .map_err(|reason| {
-                    StorageError::without_effects(Operation::Read, Failure::Rejected(reason), None)
-                })?;
-            let value = self
-                .resource
-                .runtime
-                .value(Op::Read(p::encode_read(
-                    self.resource.handle,
-                    &request,
-                    &context.working_directory,
-                    context.intermediate_symlinks,
-                )))
-                .await
-                .map_err(|error| convert::storage_error(Operation::Read, false, error))?;
-            match value {
-                Value::Reader(p::Handle { handle }) => Ok(Box::new(RemoteReader {
-                    resource: Some(
-                        Resource::new(
-                            self.resource.runtime.clone(),
-                            p::ResourceKind::Reader,
-                            handle,
-                        )
-                        .map_err(|error| convert::storage_error(Operation::Read, false, error))?,
-                    ),
-                    eof: false,
-                    remaining: request.range().length(),
-                })
-                    as Box<dyn StorageFileReader>),
-                _ => Err(bad_response(Operation::Read, false)),
-            }
-        })
-    }
-    fn write_file(
-        &self,
-        request: WriteRequest,
-        context: LookupContext,
-    ) -> StorageFuture<'_, Box<dyn StorageFileWriter>> {
-        Box::pin(async move {
-            self.driver_info
-                .capabilities()
-                .require_write(&request)
-                .map_err(|reason| {
-                    StorageError::without_effects(Operation::Write, Failure::Rejected(reason), None)
-                })?;
-            let value = self
-                .resource
-                .runtime
-                .value(Op::Write(p::encode_write(
-                    self.resource.handle,
-                    &request,
-                    &context.working_directory,
-                    context.intermediate_symlinks,
-                )))
-                .await
-                .map_err(|error| convert::storage_error(Operation::Write, false, error))?;
-            match value {
-                Value::Writer(p::Handle { handle }) => Ok(Box::new(RemoteWriter {
-                    resource: Some(
-                        Resource::new(
-                            self.resource.runtime.clone(),
-                            p::ResourceKind::Writer,
-                            handle,
-                        )
-                        .map_err(|error| convert::storage_error(Operation::Write, false, error))?,
-                    ),
-                    path: expected_lookup_address(request.lookup(), &context),
-                })
-                    as Box<dyn StorageFileWriter>),
-                _ => Err(bad_response(Operation::Write, false)),
-            }
         })
     }
 }
@@ -974,6 +679,71 @@ impl RemoteLookup {
             .await
             .map_err(|error| convert::storage_error(self.operation, false, error))
     }
+    fn invalid(&self) -> StorageError {
+        StorageError::without_effects(self.operation, Failure::InvalidBinding, None)
+    }
+
+    fn wire_slot(
+        &self,
+        slot: EntrySlot<'_>,
+        path: &StoragePath,
+    ) -> Result<p::BoundSlot, StorageError> {
+        slot.validate(self.operation, path)?;
+        Ok(p::BoundSlot {
+            slot: Some(p::EntrySlot {
+                parent: self.id(slot.parent)?,
+                name: slot.name.as_str().into(),
+                path: path.as_str().into(),
+            }),
+            entry: slot.entry.map(|entry| self.id(entry)).transpose()?,
+        })
+    }
+
+    fn wire_target(
+        &self,
+        slot: Option<EntrySlot<'_>>,
+        entry: &ObservedEntry,
+        path: &StoragePath,
+    ) -> Result<p::BoundTarget, StorageError> {
+        let id = self.id(entry)?;
+        if entry.entry().path() != path || slot.is_none() != path.is_root() {
+            return Err(self.invalid());
+        }
+        let slot = slot.map(|slot| self.wire_slot(slot, path)).transpose()?;
+        if slot.as_ref().is_some_and(|slot| slot.entry != Some(id)) {
+            return Err(self.invalid());
+        }
+        Ok(p::BoundTarget {
+            slot: slot.and_then(|slot| slot.slot),
+            entry: id,
+        })
+    }
+
+    async fn execute(&self, command: p::BoundOp) -> Result<Value, StorageError> {
+        if self.operation != command.storage_operation() {
+            return Err(self.invalid());
+        }
+        let op = Op::Execute(p::BoundCall {
+            lookup: self.resource.handle,
+            operation: Some(command),
+        });
+        let may_publish = op.may_publish();
+        self.resource
+            .runtime
+            .value(op)
+            .await
+            .map_err(|error| convert::storage_error(self.operation, may_publish, error))
+    }
+
+    fn stream_resource(
+        &self,
+        kind: p::ResourceKind,
+        handle: u64,
+    ) -> Result<Resource, StorageError> {
+        Resource::new(self.resource.runtime.clone(), kind, handle)
+            .map_err(|error| convert::storage_error(self.operation, false, error))
+    }
+
     async fn read(
         &self,
         link: &ObservedEntry,
@@ -1052,6 +822,187 @@ impl OperationLookup for RemoteLookup {
                 path: request.path().as_str().into(),
             };
             self.read(link, Some(slot)).await
+        })
+    }
+
+    fn execute_stat<'a>(
+        &'a self,
+        slot: Option<EntrySlot<'a>>,
+        entry: &'a ObservedEntry,
+        request: StatRequest,
+    ) -> StorageFuture<'a, Entry> {
+        Box::pin(async move {
+            let op = Operation::Stat;
+            let target = self.wire_target(slot, entry, request.path())?;
+            let Value::Entry(wire) = self.execute(p::BoundOp::Stat(target)).await? else {
+                return Err(bad_response(op, false));
+            };
+            let result = convert::decode_entry(op, wire)?;
+            if result.path() != request.path() || result.entry_type() != entry.entry().entry_type()
+            {
+                return Err(bad_response(op, false));
+            }
+            Ok(result)
+        })
+    }
+
+    fn execute_read<'a>(
+        &'a self,
+        slot: EntrySlot<'a>,
+        request: ReadRequest,
+    ) -> StorageFuture<'a, Box<dyn StorageFileReader>> {
+        Box::pin(async move {
+            let target = self.wire_slot(slot, request.path())?;
+            let wire = p::BoundRead {
+                target: Some(target),
+                offset: request.range().offset(),
+                length: request.range().length(),
+            };
+            let Value::Reader(p::Handle { handle }) = self.execute(p::BoundOp::Read(wire)).await?
+            else {
+                return Err(bad_response(Operation::Read, false));
+            };
+            Ok(Box::new(RemoteReader {
+                resource: Some(self.stream_resource(p::ResourceKind::Reader, handle)?),
+                eof: false,
+                remaining: request.range().length(),
+            }) as Box<dyn StorageFileReader>)
+        })
+    }
+
+    fn execute_write<'a>(
+        &'a self,
+        slot: EntrySlot<'a>,
+        request: WriteRequest,
+    ) -> StorageFuture<'a, Box<dyn StorageFileWriter>> {
+        Box::pin(async move {
+            let target = self.wire_slot(slot, request.path())?;
+            let mode = match request.mode() {
+                WriteMode::CreateNew => p::WriteMode::CreateNew,
+                WriteMode::Replace => p::WriteMode::Replace,
+            };
+            let publication = match request.publication() {
+                ah_vfs_storage::Publication::Staged => p::Publication::Staged,
+                ah_vfs_storage::Publication::Atomic => p::Publication::Atomic,
+            };
+            let wire = p::BoundWrite {
+                target: Some(target),
+                mode: mode.into(),
+                publication: publication.into(),
+            };
+            let Value::Writer(p::Handle { handle }) = self.execute(p::BoundOp::Write(wire)).await?
+            else {
+                return Err(bad_response(Operation::Write, false));
+            };
+            Ok(Box::new(RemoteWriter {
+                resource: Some(self.stream_resource(p::ResourceKind::Writer, handle)?),
+                path: request.path().clone(),
+            }) as Box<dyn StorageFileWriter>)
+        })
+    }
+
+    fn execute_create_directory<'a>(
+        &'a mut self,
+        slot: EntrySlot<'a>,
+        request: CreateDirectoryRequest,
+    ) -> StorageFuture<'a, ObservedEntry> {
+        Box::pin(async move {
+            let op = Operation::CreateDirectory;
+            let target = self.wire_slot(slot, request.path())?;
+            let Value::ObservedEntry(wire) =
+                self.execute(p::BoundOp::CreateDirectory(target)).await?
+            else {
+                return Err(bad_response(op, true));
+            };
+            decode_observation(op, &self.scope, wire).map_err(|error| {
+                StorageError::after_dispatch(op, error.failure(), Some(Box::new(error)))
+            })
+        })
+    }
+
+    fn execute_remove<'a>(
+        &'a self,
+        slot: EntrySlot<'a>,
+        request: RemoveRequest,
+    ) -> StorageFuture<'a, ()> {
+        Box::pin(async move {
+            let target = self.wire_slot(slot, request.path())?;
+            let kind = match request.kind() {
+                RemoveKind::NonDirectory => p::remove::Kind::NonDirectory,
+                RemoveKind::EmptyDirectory => p::remove::Kind::EmptyDirectory,
+            };
+            let wire = p::BoundRemove {
+                target: Some(target),
+                kind: kind.into(),
+            };
+            match self.execute(p::BoundOp::Remove(wire)).await? {
+                Value::Unit(_) => Ok(()),
+                _ => Err(bad_response(Operation::Remove, true)),
+            }
+        })
+    }
+
+    fn execute_rename<'a>(
+        &'a self,
+        source: EntrySlot<'a>,
+        destination: EntrySlot<'a>,
+        request: RenameRequest,
+    ) -> StorageFuture<'a, Entry> {
+        Box::pin(async move {
+            let op = Operation::Rename;
+            let mode = match request.mode() {
+                RenameMode::NoReplace => p::rename::Mode::NoReplace,
+                RenameMode::Replace => p::rename::Mode::Replace,
+            };
+            let expected = source
+                .entry
+                .ok_or_else(|| self.invalid())?
+                .entry()
+                .entry_type();
+            let wire = p::BoundRename {
+                source: Some(self.wire_slot(source, request.source())?),
+                destination: Some(self.wire_slot(destination, request.destination())?),
+                mode: mode.into(),
+            };
+            let Value::Entry(entry) = self.execute(p::BoundOp::Rename(wire)).await? else {
+                return Err(bad_response(op, true));
+            };
+            let entry = convert::decode_entry(op, entry).map_err(|error| {
+                StorageError::after_dispatch(op, error.failure(), Some(Box::new(error)))
+            })?;
+            if entry.path() != request.destination() || entry.entry_type() != expected {
+                return Err(bad_response(op, true));
+            }
+            Ok(entry)
+        })
+    }
+
+    fn select_directory<'a>(
+        &'a self,
+        slot: Option<EntrySlot<'a>>,
+        entry: &'a ObservedEntry,
+        request: ListRequest,
+    ) -> StorageFuture<'a, DirectorySelection> {
+        Box::pin(async move {
+            let op = Operation::List;
+            if request.after().is_some() {
+                return Err(self.invalid());
+            }
+            let target = self.wire_target(slot, entry, request.directory())?;
+            let wire = p::BoundList {
+                target: Some(target),
+                size: request.size().get() as u32,
+            };
+            let Value::SelectedDirectory(selection) =
+                self.execute(p::BoundOp::SelectDirectory(wire)).await?
+            else {
+                return Err(bad_response(op, false));
+            };
+            let selection = p::decode_selection(selection).map_err(|_| bad_response(op, false))?;
+            if selection.address() != request.directory() {
+                return Err(bad_response(op, false));
+            }
+            Ok(selection)
         })
     }
 
@@ -1193,7 +1144,7 @@ impl StorageFileReader for RemoteReader {
 }
 struct RemoteWriter {
     resource: Option<Resource>,
-    path: Option<StoragePath>,
+    path: StoragePath,
 }
 impl StorageFileWriter for RemoteWriter {
     fn write_chunk<'a>(&'a mut self, data: &'a [u8]) -> StorageFuture<'a, ()> {
@@ -1246,8 +1197,7 @@ impl StorageFileWriter for RemoteWriter {
                         convert::decode_entry(Operation::Write, entry).map_err(|source| {
                             convert::response_error(Operation::Write, true, source)
                         })?;
-                    if self.path.as_ref().is_some_and(|path| entry.path() != path)
-                        || entry.path().is_root()
+                    if entry.path() != &self.path
                         || !matches!(entry.entry_type(), ah_vfs_storage::EntryType::File { .. })
                     {
                         return Err(bad_response(Operation::Write, true));

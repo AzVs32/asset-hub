@@ -25,7 +25,7 @@ pub struct WindowsLocalDriver {
     info: DriverInfo,
 }
 impl WindowsLocalDriver {
-    fn supported_capabilities() -> Capabilities {
+    pub(crate) fn supported_capabilities() -> Capabilities {
         Capabilities::default()
             .with_stat(true)
             .with_list(true)

@@ -140,7 +140,7 @@ fn list_path_error(operation: Operation, cause: ah_vfs_storage::PathError) -> St
 
 pub(super) fn list_entries(
     dir: &Dir,
-    bound: &ah_vfs_storage::BoundListRequest<'_>,
+    bound: &ah_vfs_storage::BoundListRequest,
 ) -> Result<ah_vfs_storage::DirectoryPage, StorageError> {
     let operation = Operation::List;
     let address = bound.selection().address();

@@ -123,28 +123,76 @@ impl GuestStorage for S3Storage {
         NonZeroUsize::new(64 * 1024).unwrap_or(NonZeroUsize::MIN)
     }
 
-    fn stat(
-        &self,
-        request: &ah_vfs_storage::StatRequest,
-        base: &ah_vfs_storage::StoragePath,
-        links: ah_vfs_storage::IntermediateSymlinks,
-    ) -> Result<ah_vfs_storage::Entry> {
-        let client = self.client.for_operation(Operation::Stat);
-        api::direct_stat(request, base, links, |path| client.stat(path.as_str()))
+    fn begin_lookup(&self, operation: Operation) -> Result<api::Lookup> {
+        Ok(api::Lookup::new(S3Lookup {
+            client: self.client.for_operation(operation),
+            bindings: api::DirectBindings::new(operation),
+        }))
+    }
+}
+
+struct S3Lookup {
+    client: s3::Client,
+    bindings: api::DirectBindings<Option<String>>,
+}
+
+impl api::GuestLookup for S3Lookup {
+    fn root(&mut self) -> Result<(u64, ah_vfs_storage::Entry)> {
+        self.bindings.observe(
+            ah_vfs_storage::StoragePath::root(),
+            self.client.stat_object(""),
+        )
     }
 
-    fn remove(
+    fn observe(
+        &mut self,
+        parent: u64,
+        name: &ah_vfs_storage::EntryName,
+    ) -> Result<(u64, ah_vfs_storage::Entry)> {
+        let path = self.bindings.child_path(parent, name)?;
+        let value = self.client.stat_object(path.as_str());
+        self.bindings.observe(path, value)
+    }
+
+    fn read_link(&self, id: u64) -> Result<ah_vfs_storage::LinkTarget> {
+        self.bindings.get(id)?;
+        Err(self
+            .client
+            .context
+            .failure(Failure::Rejected(Rejection::NotSymlink)))
+    }
+
+    fn verify(&self) -> Result<()> {
+        self.bindings
+            .verify(|path| self.client.stat_object(path.as_str()))
+    }
+
+    fn execute_stat(
         &self,
-        request: &ah_vfs_storage::RemoveRequest,
-        base: &ah_vfs_storage::StoragePath,
-        links: ah_vfs_storage::IntermediateSymlinks,
+        id: u64,
+        request: ah_vfs_storage::StatRequest,
+    ) -> Result<ah_vfs_storage::Entry> {
+        let (entry, _) = self.bindings.get(id)?;
+        if entry.path() != request.path() {
+            return Err(self.client.context.failure(Failure::InvalidBinding));
+        }
+        self.verify()?;
+        Ok(entry.clone())
+    }
+
+    fn execute_remove(
+        &self,
+        slot: api::EntrySlot<'_>,
+        request: ah_vfs_storage::RemoveRequest,
     ) -> Result<()> {
-        let client = self.client.for_operation(Operation::Remove);
+        let client = &self.client;
         let context = &client.context;
-        let (entry, etag) =
-            api::direct_lookup(request.lookup(), base, links, Operation::Remove, |path| {
-                client.stat_object(path.as_str())
-            })?;
+        let (_, selected) = self.bindings.slot(slot, request.path())?;
+        let (entry, etag) = selected.ok_or_else(|| context.failure(Failure::InvalidBinding))?;
+        request
+            .check_target(entry.entry_type())
+            .map_err(|reason| context.failure(Failure::Rejected(reason)))?;
+        let etag = etag.clone();
         let etag =
             etag.ok_or_else(|| context.failure(Failure::Rejected(Rejection::Unsupported)))?;
         let reply = client.request(
@@ -161,18 +209,19 @@ impl GuestStorage for S3Storage {
         }
         Ok(())
     }
-    fn read(
+    fn execute_read(
         &self,
+        slot: api::EntrySlot<'_>,
         request: ah_vfs_storage::ReadRequest,
-        base: ah_vfs_storage::StoragePath,
-        links: ah_vfs_storage::IntermediateSymlinks,
     ) -> Result<api::Reader> {
-        let client = self.client.for_operation(Operation::Read);
+        let client = self.client.clone();
         let context = client.context.clone();
-        let (entry, etag) =
-            api::direct_lookup(request.lookup(), &base, links, Operation::Read, |path| {
-                client.stat_object(path.as_str())
-            })?;
+        let (_, selected) = self.bindings.slot(slot, request.path())?;
+        let (entry, etag) = selected.ok_or_else(|| context.failure(Failure::InvalidBinding))?;
+        request
+            .check_target(entry.entry_type())
+            .map_err(|reason| context.failure(Failure::Rejected(reason)))?;
+        let etag = etag.clone();
         let EntryType::File {
             size: Some(size), ..
         } = entry.entry_type()
@@ -185,7 +234,9 @@ impl GuestStorage for S3Storage {
             .length()
             .unwrap_or(u64::MAX)
             .min(size.saturating_sub(offset));
-        if remaining != 0 && etag.is_none() {
+        if remaining == 0 {
+            self.verify()?;
+        } else if etag.is_none() {
             return Err(context.failure(Failure::Rejected(Rejection::Unsupported)));
         }
         Ok(api::Reader::new(S3Reader {
@@ -196,18 +247,19 @@ impl GuestStorage for S3Storage {
             position: Cell::new(Some((offset, remaining))),
         }))
     }
-    fn write(
+    fn execute_write(
         &self,
+        slot: api::EntrySlot<'_>,
         request: ah_vfs_storage::WriteRequest,
-        base: ah_vfs_storage::StoragePath,
-        links: ah_vfs_storage::IntermediateSymlinks,
     ) -> Result<api::Writer> {
-        let client = self.client.for_operation(Operation::Write);
+        let client = self.client.clone();
         let context = client.context.clone();
-        let (path, _, destination) =
-            api::direct_write_destination(&request, &base, links, |path| {
-                client.stat_object(path.as_str())
-            })?;
+        let path = request.path().clone();
+        let (_, selected) = self.bindings.slot(slot, &path)?;
+        request
+            .check_target(selected.map(|(entry, _)| entry.entry_type()))
+            .map_err(|reason| context.failure(Failure::Rejected(reason)))?;
+        let destination = selected.map(|(_, etag)| etag.clone());
         // A prefix has no directory identity which S3 can conditionally bind.
         if !path.parent().is_some_and(|parent| parent.is_root()) {
             return Err(context.failure(Failure::Rejected(Rejection::Unsupported)));

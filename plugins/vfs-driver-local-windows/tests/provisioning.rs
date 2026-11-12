@@ -1,5 +1,7 @@
 #![cfg(target_os = "windows")]
 use ah_vfs::application::driver_error::LifecycleFailure;
+use ah_vfs::resolve::StorageOperations;
+use ah_vfs::resolve::path::RootedPath;
 mod common;
 use ah_vfs::application::driver_error::DriverError;
 use ah_vfs::application::dto::*;
@@ -48,7 +50,7 @@ async fn host_creation_opens_for_read_write_and_rejects_root_changes() -> Result
     let path = StoragePath::parse("file")?;
     let mut writer = storage
         .write_file(
-            ah_vfs_storage::WriteRequest::new(
+            ah_vfs::resolve::operand::WriteOperand::new(
                 path.clone().to_rooted_expr(),
                 ah_vfs_storage::WriteMode::CreateNew,
                 ah_vfs_storage::Publication::Staged,
@@ -60,7 +62,7 @@ async fn host_creation_opens_for_read_write_and_rejects_root_changes() -> Result
     writer.commit().await?;
     let mut reader = storage
         .read_file(
-            ah_vfs_storage::ReadRequest::new(
+            ah_vfs::resolve::operand::ReadOperand::new(
                 (path).to_rooted_expr(),
                 ah_vfs_storage::ReadRange::FULL,
             ),
