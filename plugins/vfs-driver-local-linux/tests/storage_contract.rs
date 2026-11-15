@@ -63,6 +63,40 @@ async fn fixture() -> Result<Fixture, Box<dyn Error>> {
         pool,
     })
 }
+#[tokio::test]
+async fn binding_validation_obeys_the_shared_execution_contract() -> TestResult {
+    let f = fixture().await?;
+    std::fs::create_dir(f.root.join("binding-dir"))?;
+    std::os::unix::fs::symlink("file", f.root.join("binding-dir/link"))?;
+    ah_vfs::testing::assert_execution_binding_contract(
+        f.storage.as_ref(),
+        f.driver.info().capabilities(),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn synthetic_directory_merges_only_its_exact_backend_address() -> TestResult {
+    let f = fixture().await?;
+    let (entries, mounts) = services(&f).await?;
+    std::fs::create_dir_all(f.root.join("real/subdir"))?;
+    std::fs::write(f.root.join("real/subdir/physical"), b"contents")?;
+    std::os::unix::fs::symlink("/real", f.root.join("alias"))?;
+    mounts
+        .mount(MountRequest {
+            virtual_path: VirtualPath::parse("/alias/subdir/virtual-child")?,
+            driver_instance: DriverInstance::new(DriverKey::parse("local")?, f.id.clone()),
+        })
+        .await?;
+
+    let page = entries
+        .list_entries(&VirtualPath::parse("/alias/subdir")?, Default::default())
+        .await?;
+    assert_eq!(page.entries.len(), 1);
+    assert_eq!(page.entries[0].path.as_str(), "/alias/subdir/virtual-child");
+    Ok(())
+}
+
 fn path(name: &str) -> Result<StoragePath, Box<dyn Error>> {
     Ok(StoragePath::parse(name)?)
 }

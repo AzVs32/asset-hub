@@ -3,6 +3,7 @@ name = "vfs-plugin-codec"
 description = "Checked VFS value conversions shared by host proxies and plugin servers"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true

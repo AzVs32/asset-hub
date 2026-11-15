@@ -68,7 +68,7 @@ impl Lookup {
         };
         resolved
             .as_slot()
-            .validate(self.backend.operation(), &slot.path)?;
+            .validate_address(self.backend.operation(), &slot.path)?;
         Ok(resolved)
     }
 

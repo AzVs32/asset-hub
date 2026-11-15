@@ -1,4 +1,12 @@
 //! Shared protobuf messages, validation and VFS protocol semantics.
+//!
+//! The byte-oriented codec caps the total frame before Protobuf decoding.
+//! It checks control and data budgets and the structure of the envelope after
+//! decoding. The total frame cap bounds the input to Protobuf, while enforcing
+//! individual repeated-field allocation budgets would require checks during
+//! that decode. The separate directory page decoder checks the requested entry
+//! count and each encoded entry length before decoding the next entry. The
+//! attribute payload decoder also applies the requested byte budget separately.
 pub mod wire {
     include!(concat!(env!("OUT_DIR"), "/assethub.vfs.v15.rs"));
 }

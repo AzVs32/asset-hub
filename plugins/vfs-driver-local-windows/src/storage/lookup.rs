@@ -97,9 +97,9 @@ impl LocalLookup {
         slot: EntrySlot<'_>,
         path: &StoragePath,
     ) -> Result<Slot, StorageError> {
+        slot.validate(&self.scope, op, path)?;
         let parent = self.selected(slot.parent)?;
         let entry = slot.entry.map(|entry| self.selected(entry)).transpose()?;
-        slot.validate(op, path)?;
         if self.operation != op || (entry.is_none() && !self.missing.contains(path)) {
             return Err(invalid(op));
         }

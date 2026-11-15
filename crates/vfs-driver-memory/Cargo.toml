@@ -3,6 +3,7 @@ name = "vfs-driver-memory"
 description = "Capacity-limited in-memory storage driver for Asset Hub VFS"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true

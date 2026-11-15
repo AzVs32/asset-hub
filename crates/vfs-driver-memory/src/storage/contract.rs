@@ -220,11 +220,7 @@ impl MemoryLookup {
         slot: EntrySlot<'_>,
         path: &StoragePath,
     ) -> Result<(), StorageError> {
-        self.data(slot.parent)?;
-        if let Some(entry) = slot.entry {
-            self.data(entry)?;
-        }
-        slot.validate(op, path)?;
+        slot.validate(&self.scope, op, path)?;
         if self.operation != op || (slot.entry.is_none() && !self.missing.contains(path)) {
             return Err(super::error(op, Failure::InvalidBinding));
         }

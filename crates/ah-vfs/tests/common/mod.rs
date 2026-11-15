@@ -342,7 +342,7 @@ impl OperationLookup for TestLookup {
                 return Err(error(storage::Failure::InvalidBinding));
             }
             if let Some(slot) = slot {
-                slot.validate(op, request.path())?;
+                slot.validate(&self.scope, op, request.path())?;
                 if !slot
                     .entry
                     .is_some_and(|candidate| std::ptr::eq(candidate, entry))

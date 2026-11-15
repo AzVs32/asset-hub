@@ -3,6 +3,7 @@ name = "vfs-plugin-host"
 description = "Host-side Driver and Storage proxies for VFS plugins"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true

@@ -97,11 +97,16 @@ impl LookupScope {
     }
 
     pub fn get<'a, T: Any>(&self, entry: &'a ObservedEntry) -> Option<&'a T> {
-        if Arc::ptr_eq(&self.0, &entry.scope) {
+        if self.owns(entry) {
             entry.value.downcast_ref()
         } else {
             None
         }
+    }
+
+    /// Check whether this lookup issued the observation.
+    pub fn owns(&self, entry: &ObservedEntry) -> bool {
+        Arc::ptr_eq(&self.0, &entry.scope)
     }
 }
 
@@ -115,17 +120,30 @@ pub struct EntrySlot<'a> {
 }
 
 impl EntrySlot<'_> {
-    pub fn validate(self, operation: Operation, address: &StoragePath) -> Result<(), StorageError> {
-        if self
-            .entry
-            .is_some_and(|entry| !Arc::ptr_eq(&entry.scope, &self.parent.scope))
-        {
+    /// Check scope ownership before comparing the request address.
+    pub fn validate(
+        self,
+        scope: &LookupScope,
+        operation: Operation,
+        address: &StoragePath,
+    ) -> Result<(), StorageError> {
+        if !scope.owns(self.parent) || self.entry.is_some_and(|entry| !scope.owns(entry)) {
             return Err(StorageError::without_effects(
                 operation,
                 Failure::Backend(BackendFailure::Stale),
                 None,
             ));
         }
+        self.validate_address(operation, address)
+    }
+
+    /// Check only address agreement after ownership was already verified,
+    /// for example by resolving both handles in a lookup-local resource table.
+    pub fn validate_address(
+        self,
+        operation: Operation,
+        address: &StoragePath,
+    ) -> Result<(), StorageError> {
         if self.parent.entry().entry_type() != EntryType::Directory
             || self.parent.entry().path().join(self.name).as_ref() != Ok(address)
             || self
@@ -169,7 +187,8 @@ pub trait OperationLookup: Send + Sync {
     /// the namespace no longer agrees with the observations. This consumes
     /// a canonical request and reads from the same binding used in traversal.
     /// A caller-supplied address that disagrees with the slot fails with
-    /// [`Failure::InvalidBinding`].
+    /// [`Failure::InvalidBinding`]. Implementations of `read_link` must reject
+    /// a link observation issued outside their own scope.
     fn execute_read_link<'a>(
         &'a self,
         parent: &'a ObservedEntry,

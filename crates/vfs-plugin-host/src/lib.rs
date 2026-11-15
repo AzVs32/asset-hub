@@ -688,7 +688,7 @@ impl RemoteLookup {
         slot: EntrySlot<'_>,
         path: &StoragePath,
     ) -> Result<p::BoundSlot, StorageError> {
-        slot.validate(self.operation, path)?;
+        slot.validate(&self.scope, self.operation, path)?;
         Ok(p::BoundSlot {
             slot: Some(p::EntrySlot {
                 parent: self.id(slot.parent)?,
@@ -816,12 +816,13 @@ impl OperationLookup for RemoteLookup {
                     None,
                 ));
             }
-            let slot = p::EntrySlot {
-                parent: self.id(parent)?,
-                name: name.as_str().into(),
-                path: request.path().as_str().into(),
+            let slot = EntrySlot {
+                parent,
+                name,
+                entry: Some(link),
             };
-            self.read(link, Some(slot)).await
+            let target = self.wire_slot(slot, request.path())?;
+            self.read(link, target.slot).await
         })
     }
 
@@ -1025,19 +1026,16 @@ impl OperationLookup for RemoteLookup {
                     None,
                 ));
             }
-            let slot = if let Some((parent, name)) = slot {
-                Some(p::EntrySlot {
-                    parent: self.id(parent)?,
-                    name: name.as_str().into(),
-                    path: request.path().as_str().into(),
-                })
-            } else {
-                None
-            };
+            let slot = slot.map(|(parent, name)| EntrySlot {
+                parent,
+                name,
+                entry: Some(entry),
+            });
+            let target = self.wire_target(slot, entry, request.path())?;
             let target = p::BoundAttribute {
                 lookup: self.resource.handle,
-                entry: self.id(entry)?,
-                slot,
+                entry: target.entry,
+                slot: target.slot,
             };
             let expected = request.action().expectation();
             let (wire, data) = p::encode_attribute(request, target).map_err(|error| {

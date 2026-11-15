@@ -75,7 +75,7 @@ pub enum BackendFailure {
     Closed,
     /// A binding has expired or is outside the current resource scope, or its
     /// generation has retired. Discard it and acquire a fresh binding before
-    /// restarting. A fresh lookup reports an absent name as [`Rejection::NotFound`].
+    /// restarting.
     #[error("resource binding is stale")]
     Stale,
     #[error("backend operation failed")]

@@ -61,7 +61,10 @@
 //! create the absent spelling, the occupied native slot instead fails as
 //! [`Rejection::EquivalentNameOccupied`]. This applies to a rename to a
 //! differently spelled equivalent name in the same directory, even if the
-//! equivalent slot is its own source. Creation and replacement must enforce these checks atomically
+//! equivalent slot is its own source. This is a persistent rejection while
+//! the equivalent name occupies the slot. Retrying a rename to an equivalent
+//! spelling of the source does not remove that limitation.
+//! Creation and replacement must enforce these checks atomically
 //! with the name binding, including concurrent or staged mutations. An adapter
 //! that cannot enforce exact lookup or safe mutation rejects the affected
 //! operation as [`Rejection::Unsupported`].
@@ -338,12 +341,14 @@
 //!   [`XattrList`] with `XattrList::new` and the original request's byte
 //!   limit. Invalid order, duplicates and excessive sizes fail validation.
 //!   Sorting, deduplication or truncation would conceal an invalid reply.
-//! - **Allocation.** The plugin protocol bounds the total frame before
-//!   Protobuf message decoding. Control and data limits and collection sizes
-//!   inside that message are validated after decoding. Directory entries
-//!   and attribute names carried in the binary payload have separate bounds.
-//!   In particular, the directory page decoder checks the requested count
-//!   and each encoded entry length before decoding the next entry.
+//! - **Allocation.** Bound the frame before buffering or decompression and
+//!   independently cap decompressed output. Check declared lengths, element
+//!   counts, aggregate byte budgets and integer arithmetic before allocating
+//!   or copying untrusted fields. Enforce limits during decoding of repeated
+//!   fields with no count prefix. Apply request-specific bounds, such as page
+//!   size and attribute bytes, alongside protocol-wide ceilings. A check
+//!   after a decoder has already materialized an unbounded collection cannot
+//!   enforce its allocation budget.
 //!
 //! # Public extension boundaries
 //! Operation modes, their fixed support sets and mutation outcomes are closed.

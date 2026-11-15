@@ -208,6 +208,8 @@ impl EntryService {
                             )
                             .await
                         {
+                            // Merge a synthetic directory only with its own backend
+                            // address. An intermediate link can resolve elsewhere.
                             Ok(entry)
                                 if entry.entry_type() == EntryType::Directory
                                     && entry.path() == &relative =>

@@ -74,7 +74,7 @@ impl LocalLookup {
         slot: EntrySlot<'_>,
         path: &StoragePath,
     ) -> Result<Slot, StorageError> {
-        slot.validate(op, path)?;
+        slot.validate(&self.scope, op, path)?;
         let parent = self.selected(slot.parent)?;
         let entry = slot.entry.map(|entry| self.selected(entry)).transpose()?;
         if self.operation != op || (entry.is_none() && !self.missing.contains(path)) {
@@ -379,24 +379,12 @@ impl OperationLookup for LocalLookup {
     ) -> StorageFuture<'a, AttributeResult> {
         Box::pin(async move {
             let op = request.operation();
-            let selected = self
-                .scope
-                .get::<Selected>(entry)
-                .ok_or_else(|| stale(op))?
-                .clone();
-            let matches_slot = if let Some((parent, name)) = slot {
-                let parent = self
-                    .scope
-                    .get::<Selected>(parent)
-                    .ok_or_else(|| stale(op))?;
-                parent.entry.entry_type() == EntryType::Directory
-                    && parent.entry.path().join(name).as_ref() == Ok(request.path())
-            } else {
-                request.path().is_root()
-            };
-            if op != self.operation || selected.entry.path() != request.path() || !matches_slot {
-                return Err(failure(op, Failure::InvalidBinding));
-            }
+            let slot = slot.map(|(parent, name)| EntrySlot {
+                parent,
+                name,
+                entry: Some(entry),
+            });
+            let selected = self.bound_entry(op, slot, entry, request.path())?;
             self.verify().await?;
             blocking(op, op.may_mutate(), move || {
                 attributes::execute(&selected.entry, &selected.file, request)

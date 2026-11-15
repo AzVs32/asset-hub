@@ -212,6 +212,13 @@ async fn native_process_passes_shared_storage_contracts_over_grpc() -> Result {
     let read_storage = storage(driver.as_ref(), root.path(), records.clone()).await?;
     ah_vfs::testing::assert_stat_binding_contract(read_storage.as_ref()).await?;
     ah_vfs::testing::assert_range_read_contract(read_storage.as_ref()).await?;
+    std::fs::create_dir(root.path().join("binding-dir"))?;
+    std::os::unix::fs::symlink("file", root.path().join("binding-dir/link"))?;
+    ah_vfs::testing::assert_execution_binding_contract(
+        read_storage.as_ref(),
+        driver.info().capabilities(),
+    )
+    .await?;
     let root = tempfile::tempdir()?;
     ah_vfs::testing::assert_create_dir_contract(
         storage(driver.as_ref(), root.path(), records.clone())

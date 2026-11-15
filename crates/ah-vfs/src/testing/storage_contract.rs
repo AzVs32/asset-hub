@@ -1,21 +1,25 @@
 //! Storage behavior shared by independent driver test suites.
 
-use crate::application::port::{Storage, StorageFileReader};
+use crate::application::port::{
+    EntrySlot, ObservedEntry, OperationLookup, Storage, StorageFileReader,
+};
 use crate::resolve::StorageOperations;
 use crate::resolve::operand::{CreateDirectoryOperand, RenameOperand};
 use crate::resolve::operand::{ListOperand, ListOperandTarget};
 use crate::resolve::path::{PathExpr, RootedPath};
 use ah_vfs_storage::RenameMode;
 use ah_vfs_storage::RenameSupport;
-use ah_vfs_storage::{EntryType, StoragePath};
-use ah_vfs_storage::{Failure, Rejection};
+use ah_vfs_storage::{
+    BackendFailure, Capabilities, EntryName, EntryType, MutationOutcome, Operation,
+};
+use ah_vfs_storage::{Failure, Rejection, StorageError, StoragePath};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 /// A Stat lookup accepts its own root observation and rejects another
 /// lookup's observation, even when both address the same root.
 pub async fn assert_stat_binding_contract(storage: &dyn Storage) -> TestResult {
-    use ah_vfs_storage::{BackendFailure, MutationOutcome, Operation, StatRequest};
+    use ah_vfs_storage::StatRequest;
 
     let mut other = storage.begin_lookup(Operation::Stat).await?;
     let mut current = storage.begin_lookup(Operation::Stat).await?;
@@ -33,6 +37,280 @@ pub async fn assert_stat_binding_contract(storage: &dyn Storage) -> TestResult {
         current.execute_stat(None, &own, request).await?,
         *own.entry()
     );
+    Ok(())
+}
+
+/// Check scope, address and live-slot validation for each advertised operation.
+/// Use an isolated fixture with a `binding-dir` containing only `link`, a
+/// symlink to `file`, if ReadLink is advertised. The suite creates other
+/// entries and replaces their parent using no-replace rename and mkdir.
+pub async fn assert_execution_binding_contract(
+    storage: &dyn Storage,
+    capabilities: Capabilities,
+) -> TestResult {
+    let parent_name = EntryName::parse("binding-dir")?;
+    let destination = EntryName::parse("moved")?;
+    let wrong = path("binding-dir/wrong")?;
+    mkdir(storage, "binding-dir/subdir").await?;
+    put(storage, "binding-file", b"original").await?;
+    storage
+        .move_entry(
+            RenameOperand::new(
+                PathExpr::parse("/binding-file")?,
+                PathExpr::parse("/binding-dir/file")?,
+                RenameMode::NoReplace,
+            )?,
+            Default::default(),
+        )
+        .await?;
+
+    let mut observed = Vec::new();
+    for op in [
+        Operation::Stat,
+        Operation::List,
+        Operation::Read,
+        Operation::ReadLink,
+        Operation::Write,
+        Operation::CreateDirectory,
+        Operation::Remove,
+        Operation::Rename,
+        Operation::GetPermissions,
+        Operation::SetPermissions,
+        Operation::ListXattrs,
+        Operation::GetXattr,
+        Operation::SetXattr,
+        Operation::RemoveXattr,
+    ]
+    .into_iter()
+    .filter(|op| capabilities.supports(*op))
+    {
+        let name = EntryName::parse(match op {
+            Operation::List => "subdir",
+            Operation::ReadLink => "link",
+            Operation::Write | Operation::CreateDirectory => "new",
+            _ => "file",
+        })?;
+        let (mut lookup, parent, entry) =
+            observe_slot(storage, op, &parent_name, &name, &destination).await?;
+        let (_foreign_lookup, foreign_parent, foreign_entry) =
+            observe_slot(storage, op, &parent_name, &name, &destination).await?;
+        let address = parent.entry().path().join(&name)?;
+        let foreign = EntrySlot {
+            parent: &foreign_parent,
+            name: &name,
+            entry: foreign_entry.as_ref(),
+        };
+        let local = EntrySlot {
+            parent: &parent,
+            name: &name,
+            entry: entry.as_ref(),
+        };
+        assert_execution_failure(
+            op,
+            "foreign scope",
+            execute_slot(lookup.as_mut(), foreign, &destination, address).await?,
+            Failure::Backend(BackendFailure::Stale),
+        )?;
+        assert_execution_failure(
+            op,
+            "wrong request address",
+            execute_slot(lookup.as_mut(), local, &destination, wrong.clone()).await?,
+            Failure::InvalidBinding,
+        )?;
+        observed.push((lookup, parent, name, entry));
+    }
+
+    // Replace the parent once after all the lookups have bound it. This also
+    // covers operations whose final slot was observed absent.
+    storage
+        .move_entry(
+            RenameOperand::new(
+                PathExpr::parse("/binding-dir")?,
+                PathExpr::parse("/retired-dir")?,
+                RenameMode::NoReplace,
+            )?,
+            Default::default(),
+        )
+        .await?;
+    mkdir(storage, "binding-dir").await?;
+    // The write case uses a root slot so it also works on backends that
+    // restrict publication to the root. Replace its observed absence.
+    if capabilities.supports(Operation::Write) {
+        put(storage, "new", b"occupant").await?;
+    }
+
+    for (mut lookup, parent, name, entry) in observed {
+        let op = lookup.operation();
+        let address = parent.entry().path().join(&name)?;
+        let slot = EntrySlot {
+            parent: &parent,
+            name: &name,
+            entry: entry.as_ref(),
+        };
+        assert_execution_failure(
+            op,
+            "changed namespace",
+            execute_slot(lookup.as_mut(), slot, &destination, address).await?,
+            Failure::Rejected(Rejection::Conflict),
+        )?;
+    }
+    assert_eq!(get(storage, "retired-dir/file").await?, b"original");
+    assert!(!exists(storage, "retired-dir/new").await?);
+    assert!(!exists(storage, "binding-dir/new").await?);
+    assert!(!exists(storage, "binding-dir/moved").await?);
+    if capabilities.supports(Operation::Write) {
+        assert_eq!(get(storage, "new").await?, b"occupant");
+    }
+    Ok(())
+}
+
+async fn observe_slot(
+    storage: &dyn Storage,
+    op: Operation,
+    parent_name: &EntryName,
+    name: &EntryName,
+    destination: &EntryName,
+) -> TestResult<(
+    Box<dyn OperationLookup>,
+    ObservedEntry,
+    Option<ObservedEntry>,
+)> {
+    let mut lookup = storage.begin_lookup(op).await?;
+    let root = lookup.root().await?;
+    let parent = if op == Operation::Write {
+        root
+    } else {
+        lookup.observe(&root, parent_name).await?
+    };
+    let entry = match lookup.observe(&parent, name).await {
+        Ok(entry) => Some(entry),
+        Err(error)
+            if matches!(op, Operation::Write | Operation::CreateDirectory)
+                && error.failure() == Failure::Rejected(Rejection::NotFound) =>
+        {
+            None
+        }
+        Err(error) => return Err(error.into()),
+    };
+    if op == Operation::Rename {
+        assert!(matches!(lookup.observe(&parent, destination).await,
+            Err(error) if error.failure() == Failure::Rejected(Rejection::NotFound)));
+    }
+    Ok((lookup, parent, entry))
+}
+
+async fn execute_slot(
+    lookup: &mut dyn OperationLookup,
+    slot: EntrySlot<'_>,
+    destination: &EntryName,
+    address: StoragePath,
+) -> TestResult<Result<(), StorageError>> {
+    use ah_vfs_storage::{
+        AttributeAction as A, AttributeRequest, CreateDirectoryRequest, ListRequest, PageSize,
+        Permissions, Publication, ReadLinkRequest, ReadRange, ReadRequest, RemoveKind,
+        RemoveRequest, RenameRequest, StatRequest, WriteMode, WriteRequest, XattrName,
+        XattrWriteMode,
+    };
+    use std::num::NonZeroUsize;
+
+    let entry = || {
+        slot.entry
+            .ok_or("expected an observed target in the fixture")
+    };
+    let result = match lookup.operation() {
+        Operation::Stat => lookup
+            .execute_stat(Some(slot), entry()?, StatRequest::new(address))
+            .await
+            .map(drop),
+        Operation::List => lookup
+            .select_directory(
+                Some(slot),
+                entry()?,
+                ListRequest::new(address, PageSize::DEFAULT),
+            )
+            .await
+            .map(drop),
+        Operation::Read => lookup
+            .execute_read(slot, ReadRequest::new(address, ReadRange::FULL))
+            .await
+            .map(drop),
+        Operation::ReadLink => lookup
+            .execute_read_link(
+                slot.parent,
+                slot.name,
+                entry()?,
+                ReadLinkRequest::new(address),
+            )
+            .await
+            .map(drop),
+        Operation::Write => lookup
+            .execute_write(
+                slot,
+                WriteRequest::new(address, WriteMode::CreateNew, Publication::Staged)?,
+            )
+            .await
+            .map(drop),
+        Operation::CreateDirectory => lookup
+            .execute_create_directory(slot, CreateDirectoryRequest::new(address)?)
+            .await
+            .map(drop),
+        Operation::Remove => {
+            lookup
+                .execute_remove(slot, RemoveRequest::new(address, RemoveKind::NonDirectory)?)
+                .await
+        }
+        Operation::Rename => {
+            let target = slot.parent.entry().path().join(destination)?;
+            let destination = EntrySlot {
+                parent: slot.parent,
+                name: destination,
+                entry: None,
+            };
+            lookup
+                .execute_rename(
+                    slot,
+                    destination,
+                    RenameRequest::new(address, target, RenameMode::NoReplace)?,
+                )
+                .await
+                .map(drop)
+        }
+        op => {
+            let key = XattrName::parse("user.binding-contract")?;
+            let action = match op {
+                Operation::GetPermissions => A::GetPermissions,
+                Operation::SetPermissions => A::SetPermissions(Permissions::new(0o600)?),
+                Operation::ListXattrs => A::list_xattrs(NonZeroUsize::MIN),
+                Operation::GetXattr => A::get_xattr(key, NonZeroUsize::MIN),
+                Operation::SetXattr => A::set_xattr(key, vec![1], XattrWriteMode::Upsert),
+                Operation::RemoveXattr => A::RemoveXattr(key),
+                _ => return Err("operation missing from binding suite".into()),
+            };
+            lookup
+                .execute_attribute(
+                    Some((slot.parent, slot.name)),
+                    entry()?,
+                    AttributeRequest::new(address, action),
+                )
+                .await
+                .map(drop)
+        }
+    };
+    Ok(result)
+}
+
+fn assert_execution_failure(
+    op: Operation,
+    case: &str,
+    result: Result<(), StorageError>,
+    expected: Failure,
+) -> TestResult {
+    let error = result
+        .err()
+        .ok_or_else(|| format!("{op} accepted {case}"))?;
+    assert_eq!(error.operation(), op, "{case}");
+    assert_eq!(error.failure(), expected, "{op}: {case}");
+    assert_eq!(error.outcome(), MutationOutcome::Unchanged, "{op}: {case}");
     Ok(())
 }
 

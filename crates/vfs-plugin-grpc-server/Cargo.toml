@@ -3,6 +3,7 @@ name = "vfs-plugin-grpc-server"
 description = "Native VFS plugin server SDK and resource dispatch"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
