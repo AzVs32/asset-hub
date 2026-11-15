@@ -111,8 +111,12 @@ impl Storage for TestStorage {
                     StoragePath::root(),
                     DirectoryIdentity::from_bytes([2; 16]),
                 );
-                let wrong = request.bind_selection(wrong).map_err(|reason| {
-                    StorageError::without_effects(Operation::List, Failure::Backend(reason), None)
+                let wrong = request.bind_selection(wrong).map_err(|cause| {
+                    StorageError::without_effects(
+                        Operation::List,
+                        Failure::InvalidBinding,
+                        Some(Box::new(cause)),
+                    )
                 })?;
                 return DirectoryPage::new(&wrong, vec![], false)
                     .map_err(|cause| invalid_metadata(Operation::List, cause));
@@ -220,10 +224,18 @@ async fn namespace_pagination_keeps_overlay_order_and_validates_virtual_checkpoi
         .await?;
     assert_eq!(first.entries[0].path.as_str(), "/a");
     let cursor = first.continuation.ok_or("expected virtual checkpoint")?;
-    assert!(
-        matches!(files.list_entries(&VirtualPath::parse("/docs")?, DirQuery { cursor: Some(cursor.clone()), size }).await,
-        Err(EntryError::Storage(error)) if error.failure() == Failure::Backend(BackendFailure::Stale))
-    );
+    assert!(matches!(
+        files
+            .list_entries(
+                &VirtualPath::parse("/docs")?,
+                DirQuery {
+                    cursor: Some(cursor.clone()),
+                    size
+                }
+            )
+            .await,
+        Err(EntryError::CursorPathMismatch)
+    ));
     let second = files
         .list_entries(
             &root,
@@ -270,6 +282,38 @@ async fn virtual_cursor_rejects_a_retired_instance() -> TestResult {
         matches!(files.list_entries(&root, DirQuery { cursor: Some(cursor), size }).await,
         Err(EntryError::Storage(error)) if error.failure() == Failure::Backend(BackendFailure::Stale))
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn adapter_must_resume_the_directory_requested_by_the_cursor() -> TestResult {
+    use ah_vfs::resolve::StorageOperations;
+    use ah_vfs::resolve::operand::{ListOperand, ListOperandTarget};
+    use ah_vfs_storage::{DirectoryCursor, EntryName, MutationOutcome};
+
+    let storage = TestStorage {
+        instance: InstanceId::parse("root")?,
+        response: Response::Normal,
+        retired: AtomicBool::new(false),
+    };
+    let cursor = DirectoryCursor::from_checkpoint(
+        DirectorySelection::from_lookup(
+            StoragePath::root(),
+            DirectoryIdentity::from_bytes([2; 16]),
+        ),
+        EntryName::parse("a")?,
+    )?;
+    let request = ListOperand::new(ListOperandTarget::Continue(cursor), PageSize::DEFAULT);
+    let error = storage
+        .select_directory(&request, Default::default())
+        .await
+        .err()
+        .ok_or("wrong directory identity accepted")?;
+    assert_eq!(
+        error.failure(),
+        Failure::Contract(ContractViolation::InvalidPage)
+    );
+    assert_eq!(error.outcome(), MutationOutcome::Unchanged);
     Ok(())
 }
 

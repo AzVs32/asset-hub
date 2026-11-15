@@ -9,16 +9,18 @@ use super::{
 };
 use crate::application::port::{Storage, StorageFileReader, StorageFileWriter, StorageFuture};
 use ah_vfs_storage::{
-    DirectoryPage, DirectorySelection, Entry, Failure, Operation, StorageError, StoragePath,
+    ContractViolation, DirectoryPage, DirectorySelection, Entry, Failure, Operation, StorageError,
+    StoragePath,
 };
 
 /// Per-call inputs for resolving pathname operands on the opened storage instance.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct LookupContext {
     /// An instance-relative base address for relative operands. Each lookup
-    /// resolves it from the instance root. A later call
-    /// may select a different directory at the same address. Absolute operands
-    /// start at the root.
+    /// resolves it from the instance root without following links in the base.
+    /// A missing component returns `NotFound`; a non-directory component
+    /// returns `NotDirectory`. A later call may select a replacement directory
+    /// at the same address. Absolute operands start at the root.
     pub working_directory: StoragePath,
     /// The policy for links before the final component of an operand.
     pub intermediate_symlinks: IntermediateSymlinks,
@@ -43,7 +45,17 @@ pub trait StorageOperations: Storage {
                 ListOperandTarget::Path(_) => {
                     resolve::select_directory(self, request, context).await
                 }
-                ListOperandTarget::Continue(cursor) => self.resume_directory(cursor).await,
+                ListOperandTarget::Continue(cursor) => {
+                    let selection = self.resume_directory(cursor).await?;
+                    if &selection != cursor.selection() {
+                        return Err(StorageError::without_effects(
+                            Operation::List,
+                            Failure::Contract(ContractViolation::InvalidPage),
+                            None,
+                        ));
+                    }
+                    Ok(selection)
+                }
             }
         })
     }
@@ -56,8 +68,12 @@ pub trait StorageOperations: Storage {
     ) -> StorageFuture<'a, DirectoryPage> {
         Box::pin(async move {
             let selection = self.select_directory(request, context).await?;
-            let bound = request.bind_selection(selection).map_err(|reason| {
-                StorageError::without_effects(Operation::List, Failure::Backend(reason), None)
+            let bound = request.bind_selection(selection).map_err(|cause| {
+                StorageError::without_effects(
+                    Operation::List,
+                    Failure::Contract(ContractViolation::InvalidPage),
+                    Some(Box::new(cause)),
+                )
             })?;
             self.list_page(&bound).await
         })

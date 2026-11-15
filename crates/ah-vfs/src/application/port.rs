@@ -79,9 +79,10 @@
 //! within that scope or rebound across scopes. Proxies retain their runtime
 //! independently of the catalog and MountRuntime. Unregistering prevents new routing; graceful
 //! unloading stops new opens and drains retained resources before final shutdown.
-//! A crash cannot preserve remote resources: old proxies fail with StaleHandle
-//! or Unavailable, cached storage is invalidated, and new opens use the new
-//! generation. Existing streams are never silently reopened or replayed.
+//! A crash invalidates remote bindings. Calls that detect the disconnect can
+//! report `BackendFailure::Unavailable`. Later calls on retired bindings report
+//! `BackendFailure::Stale`. Cached storage is invalidated, and new opens use
+//! the new generation. Existing streams are never silently reopened or replayed.
 //!
 //! One lookup issues a root observation and binds each child by parent
 //! observation and exact name. The host walks the operand and supplies a
@@ -93,7 +94,7 @@
 //! Reader EOF is sticky. Cancellation of an in-flight next call may close the
 //! reader because byte consumption can be uncertain. Once execution starts, writer
 //! commit and abort are terminal even on failure or cancellation; further calls
-//! return SessionClosed.
+//! return `BackendFailure::Closed` for a terminal writer session.
 //! Dropping a writer never initiates commit. If commit was already dispatched,
 //! dropping its future cannot guarantee rollback. Explicit close/drop only makes
 //! a best-effort release; disconnecting a gRPC Storage stream drops its entire
@@ -116,8 +117,10 @@
 //! uncertain effects require `Unknown`.
 //!
 //! In either mode, no-replace rename, create-new publication and single-level
-//! directory creation check destination absence atomically. An occupied slot
-//! returns `AlreadyExists` or `Conflict` with `Unchanged`.
+//! directory creation check destination absence atomically. An exact name can
+//! yield `AlreadyExists`, or `Conflict` if the slot changed after observation.
+//! A differently spelled equivalent occupant yields `EquivalentNameOccupied`.
+//! These rejections leave effects `Unchanged`.
 //!
 //! A generation or resource binding that has expired returns `Stale`. Acquire
 //! fresh bindings before restarting the operation. For a pre-effect `Conflict`,

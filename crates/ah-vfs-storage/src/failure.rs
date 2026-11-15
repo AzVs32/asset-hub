@@ -73,7 +73,10 @@ pub enum BackendFailure {
     UnrepresentableName,
     #[error("resource is closed")]
     Closed,
-    #[error("resource belongs to a stale generation")]
+    /// A binding has expired or is outside the current resource scope, or its
+    /// generation has retired. Discard it and acquire a fresh binding before
+    /// restarting. A fresh lookup reports an absent name as [`Rejection::NotFound`].
+    #[error("resource binding is stale")]
     Stale,
     #[error("backend operation failed")]
     Other,

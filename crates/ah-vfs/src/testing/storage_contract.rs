@@ -12,6 +12,30 @@ use ah_vfs_storage::{Failure, Rejection};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
+/// A Stat lookup accepts its own root observation and rejects another
+/// lookup's observation, even when both address the same root.
+pub async fn assert_stat_binding_contract(storage: &dyn Storage) -> TestResult {
+    use ah_vfs_storage::{BackendFailure, MutationOutcome, Operation, StatRequest};
+
+    let mut other = storage.begin_lookup(Operation::Stat).await?;
+    let mut current = storage.begin_lookup(Operation::Stat).await?;
+    let foreign = other.root().await?;
+    let own = current.root().await?;
+    let request = StatRequest::new(StoragePath::root());
+    let error = current
+        .execute_stat(None, &foreign, request.clone())
+        .await
+        .err()
+        .ok_or("foreign stat observation accepted")?;
+    assert_eq!(error.failure(), Failure::Backend(BackendFailure::Stale));
+    assert_eq!(error.outcome(), MutationOutcome::Unchanged);
+    assert_eq!(
+        current.execute_stat(None, &own, request).await?,
+        *own.entry()
+    );
+    Ok(())
+}
+
 fn path(value: &str) -> TestResult<StoragePath> {
     Ok(StoragePath::parse(value)?)
 }

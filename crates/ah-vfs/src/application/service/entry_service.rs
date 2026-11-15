@@ -20,7 +20,7 @@ use crate::resolve::policy::SymlinkAction;
 use ah_vfs_storage::{AttributeAction, AttributeResult, EntryType, StoragePath};
 use ah_vfs_storage::{BackendFailure, DirectoryCursor};
 use ah_vfs_storage::{Capabilities, LinkTarget};
-use ah_vfs_storage::{Failure, Operation, Rejection, StorageError};
+use ah_vfs_storage::{ContractViolation, Failure, Operation, Rejection, StorageError};
 
 use std::{collections::BTreeMap, sync::Arc};
 
@@ -159,7 +159,10 @@ impl EntryService {
     }
 
     /// Merge live backend pages with the current virtual namespace.
-    /// A continuation keeps the mount snapshot and the selected directory.
+    /// A continuation must use the original virtual path, live mount snapshot,
+    /// and selected directory. A different virtual path returns
+    /// [`EntryError::CursorPathMismatch`]. Expired bindings return
+    /// [`BackendFailure::Stale`].
     pub async fn list_entries(
         &self,
         path: &VirtualPath,
@@ -172,17 +175,14 @@ impl EntryService {
                 None,
             )
         };
-        let table = self.runtime.table().await?;
         let cursor = query.cursor;
-        if cursor
-            .as_ref()
-            .is_some_and(|cursor| &cursor.path != path || !Arc::ptr_eq(&cursor.mounts, &table))
-        {
-            return Err(stale().into());
+        if cursor.as_ref().is_some_and(|cursor| &cursor.path != path) {
+            return Err(EntryError::CursorPathMismatch);
         }
+        let table = self.runtime.table().await?;
         let (storage, directory) = match &cursor {
             Some(cursor) => {
-                if cursor.storage.is_stale() {
+                if !Arc::ptr_eq(&cursor.mounts, &table) || cursor.storage.is_stale() {
                     return Err(stale().into());
                 }
                 (cursor.storage.clone(), cursor.directory.clone())
@@ -281,9 +281,13 @@ impl EntryService {
                     ListOperandTarget::Continue,
                 );
                 let request = ListOperand::new(target, query.size);
-                let bound = request
-                    .bind_selection(selection.clone())
-                    .map_err(|_| stale())?;
+                let bound = request.bind_selection(selection.clone()).map_err(|cause| {
+                    StorageError::without_effects(
+                        Operation::List,
+                        Failure::Contract(ContractViolation::InvalidPage),
+                        Some(Box::new(cause)),
+                    )
+                })?;
                 let page = storage.list_page(&bound).await?;
                 if page.selection() != selection
                     || page.entries().len() > limit

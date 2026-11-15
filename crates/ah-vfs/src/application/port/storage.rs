@@ -204,36 +204,14 @@ pub trait OperationLookup: Send + Sync {
     }
 
     /// Fetch metadata from the same observation used to resolve the operand.
+    /// Validate scope ownership, the request address and slot, then verify
+    /// that the observations still agree with the namespace.
     fn execute_stat<'a>(
         &'a self,
         slot: Option<EntrySlot<'a>>,
         entry: &'a ObservedEntry,
         request: StatRequest,
-    ) -> StorageFuture<'a, Entry> {
-        Box::pin(async move {
-            let op = Operation::Stat;
-            if let Some(slot) = slot {
-                slot.validate(op, request.path())?;
-            }
-            if self.operation() != op
-                || request.path() != entry.entry().path()
-                || slot.is_none() != request.path().is_root()
-                || slot.is_some_and(|slot| {
-                    !slot
-                        .entry
-                        .is_some_and(|expected| std::ptr::eq(expected, entry))
-                })
-            {
-                return Err(StorageError::without_effects(
-                    op,
-                    Failure::InvalidBinding,
-                    None,
-                ));
-            }
-            self.verify().await?;
-            Ok(entry.entry().clone())
-        })
-    }
+    ) -> StorageFuture<'a, Entry>;
 
     /// Open a read stream for the bound file.
     fn execute_read<'a>(

@@ -110,6 +110,8 @@ pub enum EntryError {
     MountBoundary(VirtualPath),
     #[error("moving entries between different mounts is not supported")]
     CrossMountMove,
+    #[error("directory cursor belongs to a different virtual path")]
+    CursorPathMismatch,
     #[error("invalid storage response: {0}")]
     InvalidStorageResponse(&'static str),
 }

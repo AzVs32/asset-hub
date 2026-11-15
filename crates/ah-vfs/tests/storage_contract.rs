@@ -450,6 +450,21 @@ impl OperationLookup for PermissionLookup {
         Box::pin(async { Ok(()) })
     }
 
+    fn execute_stat<'a>(
+        &'a self,
+        _: Option<ah_vfs::application::port::EntrySlot<'a>>,
+        _: &'a ObservedEntry,
+        _: ah_vfs_storage::StatRequest,
+    ) -> StorageFuture<'a, Entry> {
+        Box::pin(async {
+            Err(StorageError::without_effects(
+                Operation::Stat,
+                Failure::Rejected(Rejection::Unsupported),
+                None,
+            ))
+        })
+    }
+
     fn execute_attribute<'a>(
         &'a self,
         _: Option<(&'a ObservedEntry, &'a EntryName)>,

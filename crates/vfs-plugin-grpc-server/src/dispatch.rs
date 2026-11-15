@@ -934,8 +934,12 @@ impl Session {
             p::StorageOp::List(wire) => {
                 let (request, selection) = p::decode_list(wire)
                     .map_err(|_| LifecycleError::new(LifecycleFailure::InvalidRequest))?;
-                let bound = request.bind_selection(selection).map_err(|failure| {
-                    StorageError::without_effects(Operation::List, Failure::Backend(failure), None)
+                let bound = request.bind_selection(selection).map_err(|cause| {
+                    StorageError::without_effects(
+                        Operation::List,
+                        Failure::InvalidBinding,
+                        Some(Box::new(cause)),
+                    )
                 })?;
                 let page = s.list_page(&bound).await?;
                 if page.selection() != bound.selection()

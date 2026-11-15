@@ -918,8 +918,21 @@ async fn formal_lookup_preserves_policy_instance_and_link_bytes() -> TestResult 
                 IntermediateSymlinks::FollowWithinInstance,
             )?)
             .await?,
-        d::Failure::Backend(d::BackendFailure::Stale),
+        d::Rejection::NotFound,
     )?;
+    for base in ["alias", "docs/file"] {
+        stat_failure(
+            formal
+                .call(stat_at(
+                    ".",
+                    false,
+                    base,
+                    IntermediateSymlinks::FollowWithinInstance,
+                )?)
+                .await?,
+            d::Rejection::NotDirectory,
+        )?;
+    }
     let mut formal = fixture.formal_session().await?;
     let invalid_request = formal
         .invoke(p::Operation::Execute(p::BoundCall {

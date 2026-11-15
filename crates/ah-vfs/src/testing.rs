@@ -4,7 +4,7 @@ mod storage_contract;
 
 pub use storage_contract::{
     assert_create_dir_contract, assert_pagination_contract, assert_range_read_contract,
-    assert_same_path_rename_contract,
+    assert_same_path_rename_contract, assert_stat_binding_contract,
 };
 
 use crate::application::driver_error::{DriverError, LifecycleError, LifecycleFailure};

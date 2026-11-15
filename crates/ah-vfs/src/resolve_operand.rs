@@ -5,7 +5,7 @@ use super::{
     policy::{ExistingTarget, MissingPolicy, PathLookup, SymlinkAction},
 };
 use ah_vfs_storage::{
-    BackendFailure, BoundListRequest, DirectoryCursor, DirectorySelection, PageSize, Publication,
+    BoundListRequest, DirectoryCursor, DirectorySelection, ListBindingError, PageSize, Publication,
     ReadRange, RemoveKind, RenameMode, StoragePath, WriteMode,
 };
 use getset::{CopyGetters, Getters};
@@ -289,7 +289,7 @@ impl ListOperand {
     pub fn bind_selection(
         &self,
         selection: DirectorySelection,
-    ) -> Result<BoundListRequest, BackendFailure> {
+    ) -> Result<BoundListRequest, ListBindingError> {
         let request = match &self.target {
             ListOperandTarget::Path(_) => {
                 ah_vfs_storage::ListRequest::new(selection.address().clone(), self.size)

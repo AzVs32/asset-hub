@@ -1,5 +1,5 @@
 //! Live, bounded directory enumeration with validated requests and responses.
-use super::{BackendFailure, Entry, EntryName, StoragePath};
+use super::{Entry, EntryName, StoragePath};
 use getset::{CopyGetters, Getters};
 use thiserror::Error;
 
@@ -80,7 +80,7 @@ impl DirectorySelection {
 /// A position in a live directory listing, identified by the selected
 /// directory and an exclusive name. It is usable while the backend can
 /// verify the selection in the same generation. An expired selection
-/// returns [`BackendFailure::Stale`] when the cursor is used.
+/// returns [`crate::BackendFailure::Stale`] when the cursor is used.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DirectoryCursor {
     selection: DirectorySelection,
@@ -140,16 +140,20 @@ impl ListRequest {
     }
 
     /// Bind the independently established selection for this enumeration.
+    /// This checks address and identity agreement. The executor verifies the
+    /// lifetime of the selection separately.
     pub fn bind_selection(
         &self,
         selection: DirectorySelection,
-    ) -> Result<BoundListRequest, BackendFailure> {
-        if self.directory() != selection.address()
-            || self
-                .after()
-                .is_some_and(|cursor| cursor.selection != selection)
+    ) -> Result<BoundListRequest, ListBindingError> {
+        if self.directory() != selection.address() {
+            return Err(ListBindingError::AddressMismatch);
+        }
+        if self
+            .after()
+            .is_some_and(|cursor| cursor.selection != selection)
         {
-            return Err(BackendFailure::Stale);
+            return Err(ListBindingError::CursorSelectionMismatch);
         }
         Ok(BoundListRequest {
             request: self.clone(),
@@ -158,8 +162,18 @@ impl ListRequest {
     }
 }
 
+/// The request and supplied selection disagree as values.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+#[non_exhaustive]
+pub enum ListBindingError {
+    #[error("selection address differs from the requested directory")]
+    AddressMismatch,
+    #[error("selection differs from the cursor's directory selection")]
+    CursorSelectionMismatch,
+}
+
 /// A canonical listing request with the independently established selection.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct BoundListRequest {
     request: ListRequest,
     selection: DirectorySelection,

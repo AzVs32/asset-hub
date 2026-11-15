@@ -313,6 +313,48 @@ impl OperationLookup for TestLookup {
         Box::pin(async { Ok(()) })
     }
 
+    fn execute_stat<'a>(
+        &'a self,
+        slot: Option<EntrySlot<'a>>,
+        entry: &'a ObservedEntry,
+        request: storage::StatRequest,
+    ) -> StorageFuture<'a, storage::Entry> {
+        Box::pin(async move {
+            let op = storage::Operation::Stat;
+            let error = |failure| storage::StorageError::without_effects(op, failure, None);
+            if [
+                Some(entry),
+                slot.map(|slot| slot.parent),
+                slot.and_then(|slot| slot.entry),
+            ]
+            .into_iter()
+            .flatten()
+            .any(|entry| self.scope.get::<()>(entry).is_none())
+            {
+                return Err(error(storage::Failure::Backend(
+                    storage::BackendFailure::Stale,
+                )));
+            }
+            if self.operation != op
+                || entry.entry().path() != request.path()
+                || slot.is_none() != request.path().is_root()
+            {
+                return Err(error(storage::Failure::InvalidBinding));
+            }
+            if let Some(slot) = slot {
+                slot.validate(op, request.path())?;
+                if !slot
+                    .entry
+                    .is_some_and(|candidate| std::ptr::eq(candidate, entry))
+                {
+                    return Err(error(storage::Failure::InvalidBinding));
+                }
+            }
+            self.verify().await?;
+            Ok(entry.entry().clone())
+        })
+    }
+
     fn execute_read<'a>(
         &'a self,
         _: EntrySlot<'a>,

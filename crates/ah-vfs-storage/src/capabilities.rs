@@ -174,8 +174,11 @@ impl AttributeSupport {
 /// The declared guarantee applies regardless of whether a caller reads it.
 ///
 /// No-replace rename, create-new publication and single-directory creation
-/// check destination absence atomically under either level. Occupied slots
-/// yield [`Rejection::AlreadyExists`] or [`Rejection::Conflict`] with unchanged effects.
+/// check destination absence atomically under either level. An exact name
+/// can yield [`Rejection::AlreadyExists`], or [`Rejection::Conflict`] if the
+/// slot changed after observation. A differently spelled equivalent occupant
+/// yields [`Rejection::EquivalentNameOccupied`]. These rejections leave
+/// effects unchanged.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum MutationBinding {

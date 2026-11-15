@@ -428,6 +428,10 @@ fn continuation_requires_the_same_directory_address_and_identity() -> Result {
     for (first_address, changed_address) in [("dir", "retargeted"), ("work-a/dir", "work-b/dir")] {
         let request = ListRequest::new(StoragePath::parse(first_address)?, PageSize::DEFAULT);
         assert!(request.after().is_none());
+        assert!(matches!(
+            request.bind_selection(selected(changed_address, 2)?),
+            Err(ListBindingError::AddressMismatch)
+        ));
         let original = selected(first_address, 1)?;
         let bound = request.bind_selection(original.clone())?;
         let first = DirectoryPage::new(&bound, vec![entry(&format!("{first_address}/a"))?], true)?;
@@ -437,16 +441,16 @@ fn continuation_requires_the_same_directory_address_and_identity() -> Result {
         );
         assert!(request.after().is_some());
 
-        for wrong in [
-            selected(changed_address, 2)?,
-            selected(first_address, 3)?,
-            selected("moved", 1)?,
-        ] {
+        for wrong in [selected(changed_address, 2)?, selected("moved", 1)?] {
             assert!(matches!(
                 request.bind_selection(wrong),
-                Err(BackendFailure::Stale)
+                Err(ListBindingError::AddressMismatch)
             ));
         }
+        assert!(matches!(
+            request.bind_selection(selected(first_address, 3)?),
+            Err(ListBindingError::CursorSelectionMismatch)
+        ));
         let resumed = request.bind_selection(original.clone())?;
         let second =
             DirectoryPage::new(&resumed, vec![entry(&format!("{first_address}/c"))?], false)?;

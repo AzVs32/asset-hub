@@ -51,8 +51,8 @@ use ah_vfs_storage::{
     StatRequest, WriteRequest,
 };
 use ah_vfs_storage::{
-    BackendFailure, ContractViolation, Entry, EntryName, EntryType, Failure, LinkTarget,
-    MAX_PATH_BYTES, MutationOutcome, NameError, Operation, Rejection, StorageError, StoragePath,
+    ContractViolation, Entry, EntryName, EntryType, Failure, LinkTarget, MAX_PATH_BYTES,
+    MutationOutcome, NameError, Operation, Rejection, StorageError, StoragePath,
 };
 use operand::{
     CreateDirectoryOperand, ListOperand, ReadOperand, RemoveOperand, RenameOperand, StatOperand,
@@ -199,25 +199,19 @@ async fn start(
         slot: None,
     }];
     if relative {
-        let stale = || lookup_error(op, Failure::Backend(BackendFailure::Stale));
         for name in context.working_directory.entry_names() {
-            let parent = directories.last().ok_or_else(stale)?;
+            let parent = directories
+                .last()
+                .ok_or_else(|| lookup_error(op, Failure::InvalidBinding))?;
             let address = parent
                 .observed
                 .entry()
                 .path()
                 .join(&name)
-                .map_err(|_| stale())?;
-            let directory =
-                lookup
-                    .observe_child(parent, address, &name)
-                    .await
-                    .map_err(|error| match error.failure() {
-                        Failure::Rejected(Rejection::NotFound | Rejection::NotDirectory) => stale(),
-                        _ => error,
-                    })?;
+                .map_err(|_| lookup_error(op, Failure::Rejected(Rejection::PathTooLong)))?;
+            let directory = lookup.observe_child(parent, address, &name).await?;
             if directory.observed.entry().entry_type() != EntryType::Directory {
-                return Err(stale());
+                return Err(lookup_error(op, Failure::Rejected(Rejection::NotDirectory)));
             }
             directories.push(directory);
         }
@@ -913,7 +907,9 @@ impl Resolver {
         }
         let mut terminal = None;
         for (index, component) in expression.components().iter().enumerate() {
-            let parent = directories.last().ok_or_else(|| self.stale())?;
+            let parent = directories
+                .last()
+                .ok_or_else(|| self.failure(Failure::InvalidBinding))?;
             match component {
                 PathComponent::CurrentDirectory => {}
                 PathComponent::ParentDirectory if directories.len() > 1 => {
@@ -1013,7 +1009,7 @@ impl Resolver {
         }
         let selected = terminal
             .or_else(|| directories.last().cloned())
-            .ok_or_else(|| self.stale())?;
+            .ok_or_else(|| self.failure(Failure::InvalidBinding))?;
         expression
             .check_directory_requirement(P::entry(&selected).entry_type() == EntryType::Directory)
             .map_err(|reason| self.reject(reason))?;
@@ -1022,10 +1018,6 @@ impl Resolver {
 
     fn reject(&self, reason: impl Into<ResolveFailure>) -> StorageError {
         reason.into().without_effects(self.operation)
-    }
-
-    fn stale(&self) -> StorageError {
-        self.failure(Failure::Backend(BackendFailure::Stale))
     }
 
     fn failure(&self, failure: Failure) -> StorageError {

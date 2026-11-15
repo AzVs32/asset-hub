@@ -713,9 +713,13 @@ impl<D: api::Guest> Dispatcher<D> {
             }) => {
                 let (request, selection) = p::decode_list(wire)
                     .map_err(|_| p::Failure::new(p::FailureCode::InvalidRequest))?;
-                let bound = request
-                    .bind_selection(selection)
-                    .map_err(|reason| context.failure(ah_vfs_storage::Failure::Backend(reason)))?;
+                let bound = request.bind_selection(selection).map_err(|cause| {
+                    ah_vfs_storage::StorageError::without_effects(
+                        ah_vfs_storage::Operation::List,
+                        ah_vfs_storage::Failure::InvalidBinding,
+                        Some(Box::new(cause)),
+                    )
+                })?;
                 let page = self.storage(&context, handle)?.list_page(&bound)?;
                 if page.selection() != bound.selection()
                     || page.entries().len() > bound.size().get()

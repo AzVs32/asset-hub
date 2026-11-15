@@ -21,7 +21,10 @@
 //! to be a non-directory entry, including a symbolic link, is a namespace
 //! mismatch. A namespace mismatch detected before effects returns
 //! [`Rejection::Conflict`] with [`MutationOutcome::Unchanged`]. A retired
-//! namespace generation returns [`BackendFailure::Stale`].
+//! namespace generation or unusable resource binding returns
+//! [`BackendFailure::Stale`]. Discard that binding and acquire a fresh one
+//! before restarting. A missing path during a fresh lookup is
+//! [`Rejection::NotFound`].
 //! [`ReadRequest`] and replacement writes reject a link as
 //! [`Rejection::NotRegularFile`]. [`StatRequest`], [`ReadLinkRequest`],
 //! [`AttributeRequest`], non-directory removal and rename address the link
@@ -223,6 +226,10 @@
 //! Resume only at the same address and incarnation in the same backend
 //! generation. A selection can expire within that generation. Start a new
 //! listing if resuming returns [`BackendFailure::Stale`].
+//! [`ListRequest::bind_selection`] reports value mismatches as
+//! [`ListBindingError`]. Classify caller-supplied mismatches as
+//! [`Failure::InvalidBinding`] and incorrect adapter selections as
+//! [`ContractViolation::InvalidPage`].
 //! This protects directory identity, while the contents are live. Changes
 //! before the cursor may be missed and renames can move entries across it.
 //! The cursor is a continuation value, rather than a stored snapshot or a
@@ -325,20 +332,18 @@
 //! - **Collections.** Decode a page with [`DirectoryPage::from_parts`]
 //!   against an independently established [`BoundListRequest`]. Validate the
 //!   reported address, exact identity bytes, entries and explicit end or
-//!   continuation marker. Only a validated page yields a domain cursor.
+//!   continuation marker before deriving a cursor from the response.
 //!   An incoming continuation must refer to an independently verified
 //!   binding and is subject to authorization on every use. Construct an
 //!   [`XattrList`] with `XattrList::new` and the original request's byte
 //!   limit. Invalid order, duplicates and excessive sizes fail validation.
 //!   Sorting, deduplication or truncation would conceal an invalid reply.
-//! - **Allocation.** Bound the frame before buffering or decompression and
-//!   independently cap decompressed output. Check declared lengths, element
-//!   counts, aggregate byte budgets and integer arithmetic before allocating
-//!   or copying untrusted fields. Enforce limits during decoding of repeated
-//!   fields with no count prefix. Apply request-specific bounds, such as page
-//!   size and attribute bytes, alongside protocol-wide ceilings. A check
-//!   after a decoder has already materialized an unbounded collection cannot
-//!   enforce its allocation budget.
+//! - **Allocation.** The plugin protocol bounds the total frame before
+//!   Protobuf message decoding. Control and data limits and collection sizes
+//!   inside that message are validated after decoding. Directory entries
+//!   and attribute names carried in the binary payload have separate bounds.
+//!   In particular, the directory page decoder checks the requested count
+//!   and each encoded entry length before decoding the next entry.
 //!
 //! # Public extension boundaries
 //! Operation modes, their fixed support sets and mutation outcomes are closed.
@@ -490,7 +495,7 @@ pub use capabilities::{
 };
 pub use directory::{
     BoundListRequest, DirectoryCursor, DirectoryIdentity, DirectoryPage, DirectoryPageError,
-    DirectorySelection, ListRequest, PageSize, PageSizeError,
+    DirectorySelection, ListBindingError, ListRequest, PageSize, PageSizeError,
 };
 pub use entry::{Entry, EntryError, EntryType};
 pub use error::StorageError;
