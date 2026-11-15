@@ -510,6 +510,30 @@ fn mutations_round_trip_shared_bindings_and_reject_non_entry_addresses() -> Resu
         mode: p::rename::Mode::Replace.into(),
     };
     assert!(p::encode_request("g", &execute(p::BoundOp::Rename(rename.clone())), vec![]).is_ok());
+    for (destination, expected) in [
+        (
+            "work/source",
+            ah_vfs_storage::RequestPathError::RenameSameAddress,
+        ),
+        (
+            "work/source/child",
+            ah_vfs_storage::RequestPathError::RenameDestinationBelowSource,
+        ),
+    ] {
+        let op = execute(p::BoundOp::Rename(p::BoundRename {
+            destination: Some(bound(destination, None)),
+            ..rename.clone()
+        }));
+        assert!(p::encode_request("g", &op, vec![]).is_err());
+        let Op::Execute(call) = op else {
+            return Err("missing rename call".into());
+        };
+        let error = p::decode_bound_call(call)
+            .err()
+            .ok_or("invalid rename accepted")?;
+        assert!(matches!(error, p::bound::ExecutionError::RequestPath(cause) if cause == expected));
+        assert_eq!(error.failure(), ah_vfs_storage::Failure::InvalidRequest);
+    }
     for invalid in [
         p::BoundRename {
             mode: 0,
@@ -525,6 +549,22 @@ fn mutations_round_trip_shared_bindings_and_reject_non_entry_addresses() -> Resu
             Err(p::CodecError::InvalidData)
         ));
     }
+    Ok(())
+}
+
+#[test]
+fn equivalent_name_occupancy_has_its_own_wire_reason() -> Result {
+    use ah_vfs_storage as d;
+    let error = d::StorageError::without_effects(
+        d::Operation::Rename,
+        d::Failure::Rejected(d::Rejection::EquivalentNameOccupied),
+        None,
+    );
+    let wire = p::encode_storage_error(&error)?;
+    assert_eq!(wire.reason, "equivalent-name-occupied");
+    let decoded = p::decode_storage_error(wire)?;
+    assert_eq!(decoded.failure(), error.failure());
+    assert_eq!(decoded.outcome(), d::MutationOutcome::Unchanged);
     Ok(())
 }
 

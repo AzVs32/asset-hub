@@ -172,10 +172,6 @@ impl Resources {
 fn missing(operation: Operation) -> DriverError {
     StorageError::without_effects(operation, Failure::Backend(BackendFailure::Closed), None).into()
 }
-fn invalid_execution(cause: p::bound::ExecutionError) -> DriverError {
-    LifecycleError::with_source(LifecycleFailure::InvalidRequest, cause).into()
-}
-
 fn id(s: &str) -> Result<InstanceId, DriverError> {
     InstanceId::parse(s).map_err(|error| {
         LifecycleError::with_source(LifecycleFailure::InvalidRequest, error).into()
@@ -811,7 +807,15 @@ impl Session {
     }
     async fn execute(&self, wire: p::BoundCall) -> Result<p::Reply, DriverError> {
         use p::bound::Execution;
-        let (id, command) = p::decode_bound_call(wire).map_err(invalid_execution)?;
+        let operation = wire.operation.as_ref().map(p::BoundOp::storage_operation);
+        let (id, command) = p::decode_bound_call(wire).map_err(|cause| -> DriverError {
+            match operation {
+                Some(op) => {
+                    StorageError::without_effects(op, cause.failure(), Some(Box::new(cause))).into()
+                }
+                None => LifecycleError::with_source(LifecycleFailure::InvalidRequest, cause).into(),
+            }
+        })?;
         let op = command.operation();
         let lookup = self.lookup(id, op).await?;
         let mut lookup = lookup.lock().await;

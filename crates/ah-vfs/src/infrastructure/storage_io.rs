@@ -12,7 +12,6 @@ pub fn io_failure(source: &io::Error) -> ah_vfs_storage::Failure {
         I::NotADirectory => Failure::Rejected(Rejection::NotDirectory),
         I::IsADirectory => Failure::Rejected(Rejection::IsDirectory),
         I::DirectoryNotEmpty => Failure::Rejected(Rejection::DirectoryNotEmpty),
-        I::InvalidInput => Failure::Rejected(Rejection::Conflict),
         I::InvalidData => Failure::Backend(BackendFailure::CorruptData),
         I::Unsupported => Failure::Rejected(Rejection::Unsupported),
         I::TimedOut => Failure::Backend(BackendFailure::TimedOut),

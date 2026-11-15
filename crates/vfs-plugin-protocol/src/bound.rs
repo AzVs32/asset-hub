@@ -11,9 +11,20 @@ pub enum ExecutionError {
     Policy,
     #[error("invalid read range")]
     Range(#[from] d::RangeError),
+    #[error(transparent)]
+    RequestPath(#[from] d::RequestPathError),
 }
 
 use ExecutionError as Error;
+
+impl ExecutionError {
+    pub fn failure(&self) -> d::Failure {
+        match self {
+            Self::RequestPath(cause) => (*cause).into(),
+            Self::Missing | Self::Policy | Self::Range(_) => d::Failure::InvalidRequest,
+        }
+    }
+}
 
 pub struct Slot {
     pub parent: u64,
@@ -116,21 +127,18 @@ pub fn decode_bound_call(call: BoundCall) -> Result<(u64, Execution), Error> {
             let slot = wire.target.ok_or(Error::Missing)?.decode()?;
             let (mode, publication) =
                 crate::lookup::decode_write_policy(wire.mode, wire.publication)?;
-            let request = d::WriteRequest::new(slot.path.clone(), mode, publication)
-                .map_err(|_| Error::Policy)?;
+            let request = d::WriteRequest::new(slot.path.clone(), mode, publication)?;
             Execution::Write(slot, request)
         }
         BoundOp::CreateDirectory(target) => {
             let slot = target.decode()?;
-            let request =
-                d::CreateDirectoryRequest::new(slot.path.clone()).map_err(|_| Error::Policy)?;
+            let request = d::CreateDirectoryRequest::new(slot.path.clone())?;
             Execution::CreateDirectory(slot, request)
         }
         BoundOp::Remove(wire) => {
             let slot = wire.target.ok_or(Error::Missing)?.decode()?;
             let kind = crate::lookup::decode_remove_kind(wire.kind)?;
-            let request =
-                d::RemoveRequest::new(slot.path.clone(), kind).map_err(|_| Error::Policy)?;
+            let request = d::RemoveRequest::new(slot.path.clone(), kind)?;
             Execution::Remove(slot, request)
         }
         BoundOp::Rename(wire) => {
@@ -138,8 +146,7 @@ pub fn decode_bound_call(call: BoundCall) -> Result<(u64, Execution), Error> {
             let destination = wire.destination.ok_or(Error::Missing)?.decode()?;
             let mode = crate::lookup::decode_rename_mode(wire.mode)?;
             let request =
-                d::RenameRequest::new(source.path.clone(), destination.path.clone(), mode)
-                    .map_err(|_| Error::Policy)?;
+                d::RenameRequest::new(source.path.clone(), destination.path.clone(), mode)?;
             Execution::Rename(source, destination, request)
         }
         BoundOp::SelectDirectory(wire) => {

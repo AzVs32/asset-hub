@@ -208,9 +208,14 @@ impl EntryService {
                             )
                             .await
                         {
-                            Ok(entry) if entry.entry_type() == EntryType::Directory => {
+                            Ok(entry)
+                                if entry.entry_type() == EntryType::Directory
+                                    && entry.path() == &relative =>
+                            {
                                 let selection = storage.select_directory(&request, context).await?;
-                                if selection.address() != &relative {
+                                // The resolver already checked the backend's selection against its
+                                // own observation. This compares two independent observations.
+                                if selection.address() != entry.path() {
                                     return Err(StorageError::without_effects(
                                         Operation::List,
                                         Failure::Rejected(Rejection::Conflict),

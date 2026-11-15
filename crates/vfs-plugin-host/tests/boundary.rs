@@ -28,6 +28,7 @@ enum Fault {
     Commit,
     Rename,
     Reader,
+    DirectorySelection,
     DirectoryPage { wrong_address: bool },
     Attributes(Vec<u8>),
 }
@@ -49,7 +50,10 @@ impl Peer {
                 p::Capability::XattrsRead as i32,
             ]);
         }
-        if matches!(self.fault, Fault::DirectoryPage { .. }) {
+        if matches!(
+            self.fault,
+            Fault::DirectorySelection | Fault::DirectoryPage { .. }
+        ) {
             capabilities.push(p::Capability::List as i32);
         }
         if matches!(self.fault, Fault::Rename) {
@@ -175,7 +179,11 @@ impl SessionTransport for Peer {
                 Op::Execute(call) => match call.operation {
                     Some(p::BoundOp::SelectDirectory(_)) => {
                         Value::SelectedDirectory(p::DirectorySelection {
-                            address: String::new(),
+                            address: if matches!(self.fault, Fault::DirectorySelection) {
+                                "forged".into()
+                            } else {
+                                String::new()
+                            },
                             identity: vec![1; 16],
                         })
                     }
@@ -446,6 +454,32 @@ async fn invalid_attribute_replies_are_distinct_from_backend_name_errors() -> Re
         );
         assert_eq!(error.outcome(), MutationOutcome::Unchanged);
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn remote_selection_must_match_the_observed_directory() -> Result {
+    let (driver, _) = peer(Fault::DirectorySelection).await?;
+    let storage = driver
+        .open(OpenContext::new(
+            InstanceId::parse("fixture")?,
+            Default::default(),
+        ))
+        .await?;
+    let request = ListOperand::new(
+        ListOperandTarget::Path(PathExpr::parse("/")?),
+        Default::default(),
+    );
+    let error = storage
+        .select_directory(&request, LookupContext::default())
+        .await
+        .err()
+        .ok_or("invalid directory selection accepted")?;
+    assert_eq!(
+        error.failure(),
+        Failure::Contract(ContractViolation::InvalidPage)
+    );
+    assert_eq!(error.outcome(), ah_vfs_storage::MutationOutcome::Unchanged);
     Ok(())
 }
 

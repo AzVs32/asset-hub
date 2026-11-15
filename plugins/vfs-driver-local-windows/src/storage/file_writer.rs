@@ -85,16 +85,18 @@ impl FileWriteSession {
             file.metadata()
                 .map_err(|cause| fs::error(operation, cause))?,
         )?;
+        lookup::require_absent(operation, &self.parent, &self.target)?;
         // After dispatch the handle may refer to the published file. Deleting
         // through it is safe only if the rename is known to have failed.
         self.cleanup_stage = false;
         if let Err(error) = native::rename(operation, file, &self.parent, &self.target) {
             if error.failure() == Failure::Rejected(Rejection::AlreadyExists) {
                 self.cleanup_stage = true;
-                return Err(StorageError::without_effects(
+                return Err(lookup::occupied_slot_error(
                     operation,
-                    Failure::Rejected(Rejection::Conflict),
-                    Some(Box::new(error)),
+                    &self.parent,
+                    &self.target,
+                    Rejection::Conflict,
                 ));
             }
             self.cleanup_stage = error.outcome() == MutationOutcome::Unchanged;

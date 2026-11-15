@@ -1000,7 +1000,11 @@ impl OperationLookup for RemoteLookup {
             };
             let selection = p::decode_selection(selection).map_err(|_| bad_response(op, false))?;
             if selection.address() != request.directory() {
-                return Err(bad_response(op, false));
+                return Err(StorageError::without_effects(
+                    op,
+                    Failure::Contract(ContractViolation::InvalidPage),
+                    None,
+                ));
             }
             Ok(selection)
         })

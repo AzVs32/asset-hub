@@ -15,7 +15,7 @@ pub fn send(request: Request<Vec<u8>>) -> Result<Response<Vec<u8>>, Failure> {
         io::streams::StreamError,
     };
     fn fail() -> Failure {
-        Failure::Rejected(Rejection::Conflict)
+        Failure::InvalidRequest
     }
     fn failed() -> Failure {
         Failure::Backend(BackendFailure::Unavailable)

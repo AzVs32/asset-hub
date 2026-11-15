@@ -14,7 +14,7 @@ fn native_equivalence_does_not_authorize_a_different_spelling() -> TestResult {
         if requested == &stored {
             Ok(())
         } else if may_create && requested.as_str().as_bytes().eq_ignore_ascii_case(native) {
-            Err(Rejection::Conflict)
+            Err(Rejection::EquivalentNameOccupied)
         } else {
             Err(Rejection::NotFound)
         }
@@ -26,7 +26,7 @@ fn native_equivalence_does_not_authorize_a_different_spelling() -> TestResult {
     );
     assert_eq!(
         access(&EntryName::parse("report")?, true),
-        Err(Rejection::Conflict)
+        Err(Rejection::EquivalentNameOccupied)
     );
     Ok(())
 }

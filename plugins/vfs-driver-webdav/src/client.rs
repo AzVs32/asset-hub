@@ -126,12 +126,12 @@ fn header<'a>(response: &'a http::Response<Vec<u8>>, name: &str) -> Option<&'a s
 }
 fn status_error(context: &api::ErrorContext, status: u16) -> api::Failure {
     context.failure(match status {
-        400 | 422 => Failure::Rejected(Rejection::Conflict),
+        400 | 422 => Failure::InvalidRequest,
         401 | 403 => Failure::Rejected(Rejection::AccessDenied),
         404 | 410 => Failure::Rejected(Rejection::NotFound),
         405 | 415 | 501 => Failure::Rejected(Rejection::Unsupported),
         408 => Failure::Backend(BackendFailure::TimedOut),
-        409 | 412 | 423 | 424 => Failure::Rejected(Rejection::Conflict),
+        423 => Failure::Backend(BackendFailure::Unavailable),
         413 => Failure::Rejected(Rejection::LimitExceeded),
         429 => Failure::Backend(BackendFailure::RateLimited),
         507 => Failure::Backend(BackendFailure::CapacityExceeded),
@@ -594,9 +594,9 @@ impl Client {
                 Ok(true)
             }
             405 => Ok(false),
-            412 => Err(context.failure(Failure::Rejected(Rejection::Conflict))),
+            409 | 412 => Err(context.failure(Failure::Rejected(Rejection::Conflict))),
             // RFC 4918 MKCOL refusals do not create this collection.
-            status @ (403 | 409 | 415 | 507) => Err(status_error(context, status)),
+            status @ (403 | 415 | 507) => Err(status_error(context, status)),
             status => {
                 context.dispatched();
                 Err(status_error(context, status))
@@ -616,7 +616,7 @@ impl Client {
         let end = offset
             .checked_add(length)
             .and_then(|n| n.checked_sub(1))
-            .ok_or_else(|| context.failure(Failure::Rejected(Rejection::Conflict)))?;
+            .ok_or_else(|| context.failure(Failure::InvalidRequest))?;
         let mut headers = vec![("range", format!("bytes={offset}-{end}"))];
         if let Some(etag) = etag {
             headers.push(("if-match", etag.into()));

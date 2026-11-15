@@ -361,11 +361,7 @@ impl OperationLookup for LocalLookup {
                 .map_err(|reason| rejected(op, reason))?;
             let ancestors = self.checked(None).await?;
             blocking(op, false, move || {
-                match open(op, &slot.parent, slot.name.as_str()) {
-                    Err(error) if error.failure() == Failure::Rejected(Rejection::NotFound) => {}
-                    Ok(_) => return Err(rejected(op, Rejection::Conflict)),
-                    Err(error) => return Err(error),
-                }
+                require_absent(op, &slot.parent, slot.name.as_str())?;
                 let destination = WriteDestination {
                     parent: slot.parent,
                     path: request.path().clone(),
@@ -394,13 +390,19 @@ impl OperationLookup for LocalLookup {
             self.missing.remove(&path);
             let selected = blocking(op, true, move || {
                 let _ancestors = ancestors;
+                require_absent(op, &slot.parent, slot.name.as_str())?;
                 slot.parent
                     .create_dir(slot.name.as_str())
                     .map_err(|cause| {
                         use std::io::ErrorKind;
                         match cause.kind() {
-                            ErrorKind::AlreadyExists
-                            | ErrorKind::NotFound
+                            ErrorKind::AlreadyExists => occupied_slot_error(
+                                op,
+                                &slot.parent,
+                                slot.name.as_str(),
+                                Rejection::AlreadyExists,
+                            ),
+                            ErrorKind::NotFound
                             | ErrorKind::NotADirectory
                             | ErrorKind::PermissionDenied
                             | ErrorKind::InvalidInput
@@ -527,6 +529,9 @@ fn rename(source: Slot, destination: Slot, request: RenameRequest) -> Result<Ent
     request
         .decide_destination(kind, observation)
         .map_err(|reason| rejected(op, reason))?;
+    if observation == RenameDestination::Missing {
+        require_absent(op, &destination.parent, destination.name.as_str())?;
+    }
     let file = source.mutation_file(op)?;
     let result = fs::entry(
         op,
@@ -540,19 +545,16 @@ fn rename(source: Slot, destination: Slot, request: RenameRequest) -> Result<Ent
         // FileRenameInfo cannot conditionally replace an identified existing entry.
         return Err(rejected(op, Rejection::Unsupported));
     }
-    match open_named(op, &destination.parent, destination.name.as_str()) {
-        Ok(_) => return Err(rejected(op, Rejection::Conflict)),
-        Err(error) if error.failure() == Failure::Rejected(Rejection::NotFound) => {}
-        Err(error) => return Err(error),
-    }
     native::rename(op, &file, &destination.parent, destination.name.as_str()).map_err(|error| {
-        if error.failure() == Failure::Rejected(Rejection::AlreadyExists)
-            && request.mode() == RenameMode::Replace
-        {
-            rejected(op, Rejection::Conflict)
-        } else {
-            error
+        if error.failure() == Failure::Rejected(Rejection::AlreadyExists) {
+            let exact = if request.mode() == RenameMode::Replace {
+                Rejection::Conflict
+            } else {
+                Rejection::AlreadyExists
+            };
+            return occupied_slot_error(op, &destination.parent, destination.name.as_str(), exact);
         }
+        error
     })?;
     Ok(result)
 }
@@ -615,6 +617,33 @@ fn open(op: Operation, dir: &Dir, name: &str) -> Result<(File, Metadata), Storag
         return Err(rejected(op, Rejection::NotFound));
     }
     Ok((file, metadata))
+}
+
+pub(super) fn require_absent(op: Operation, dir: &Dir, name: &str) -> Result<(), StorageError> {
+    match open_named(op, dir, name) {
+        Ok((_, _, actual)) if actual != name => {
+            Err(rejected(op, Rejection::EquivalentNameOccupied))
+        }
+        Ok(_) => Err(rejected(op, Rejection::Conflict)),
+        Err(error) if error.failure() == Failure::Rejected(Rejection::NotFound) => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+pub(super) fn occupied_slot_error(
+    op: Operation,
+    dir: &Dir,
+    name: &str,
+    fallback: Rejection,
+) -> StorageError {
+    // A no-replace native operation already refused an occupied slot. Classify
+    // its spelling only when the occupant can still be examined.
+    if let Ok((_, _, actual)) = open_named(op, dir, name)
+        && actual != name
+    {
+        return rejected(op, Rejection::EquivalentNameOccupied);
+    }
+    rejected(op, fallback)
 }
 
 fn open_named(

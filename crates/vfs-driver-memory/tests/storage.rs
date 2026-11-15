@@ -602,7 +602,7 @@ async fn failed_renames_leave_every_entry_and_quota_unchanged() -> TestResult {
     mkdir(&storage, "other/sub").await?;
     put(&storage, "file", b"data").await?;
     for (source, destination, expected) in [
-        ("dir", "dir/sub/new", Failure::Rejected(Rejection::Conflict)),
+        ("dir", "dir/sub/new", Failure::InvalidRequest),
         (
             "dir",
             "other",

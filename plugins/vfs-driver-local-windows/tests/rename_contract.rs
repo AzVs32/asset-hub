@@ -20,6 +20,49 @@ async fn local_same_path_rename_obeys_storage_contract() -> Result<(), Box<dyn s
 }
 
 #[tokio::test]
+async fn rename_cannot_publish_over_a_differently_spelled_native_name()
+-> Result<(), Box<dyn std::error::Error>> {
+    use ah_vfs::resolve::operand::RenameOperand;
+    use ah_vfs_storage::{Failure, MutationOutcome, Rejection, RenameMode};
+
+    let dir = tempfile::tempdir()?;
+    let original = dir.path().join("Report");
+    std::fs::write(&original, b"original")?;
+    if !dir.path().join("report").try_exists()? {
+        // The temporary directory may be configured for case-sensitive lookup.
+        return Ok(());
+    }
+    let driver = WindowsLocalDriver::new()?;
+    let registry = common::registry(&driver, common::pool().await?).await?;
+    let instance = registry.create(common::local_config(dir.path())?).await?;
+    let storage = driver
+        .open(registry.open_context(instance.id).await?)
+        .await?;
+    let request = RenameOperand::new(
+        PathExpr::parse("/Report")?,
+        PathExpr::parse("/report")?,
+        RenameMode::NoReplace,
+    )?;
+    let error = storage
+        .move_entry(request, Default::default())
+        .await
+        .err()
+        .ok_or("case-only rename succeeded")?;
+    assert_eq!(
+        error.failure(),
+        Failure::Rejected(Rejection::EquivalentNameOccupied)
+    );
+    assert_eq!(error.outcome(), MutationOutcome::Unchanged);
+    assert!(
+        dir.path()
+            .read_dir()?
+            .any(|entry| entry.is_ok_and(|entry| entry.file_name() == "Report"))
+    );
+    assert_eq!(std::fs::read(original)?, b"original");
+    Ok(())
+}
+
+#[tokio::test]
 async fn remove_unlinks_the_name_while_the_read_handle_is_open()
 -> Result<(), Box<dyn std::error::Error>> {
     use ah_vfs_storage::{Failure, ReadRange, Rejection, RemoveKind};

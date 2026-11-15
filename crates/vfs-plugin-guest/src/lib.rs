@@ -447,8 +447,8 @@ impl<D: api::Guest> Dispatcher<D> {
         wire: p::BoundCall,
     ) -> api::Result<p::Reply> {
         use p::bound::Execution;
-        let (handle, command) = p::decode_bound_call(wire)
-            .map_err(|_| p::Failure::new(p::FailureCode::InvalidRequest))?;
+        let (handle, command) =
+            p::decode_bound_call(wire).map_err(|cause| context.failure(cause.failure()))?;
         let op = command.operation();
         self.lookup(context, handle)?.check_purpose(context, op)?;
         let rejected = |reason| context.failure(ah_vfs_storage::Failure::Rejected(reason));
@@ -587,9 +587,7 @@ impl<D: api::Guest> Dispatcher<D> {
             }) => {
                 if let Some(previous) = &self.settings {
                     if previous != &settings {
-                        return Err(context.failure(ah_vfs_storage::Failure::Rejected(
-                            ah_vfs_storage::Rejection::Conflict,
-                        )));
+                        return Err(p::Failure::new(p::FailureCode::LifecycleConflict).into());
                     }
                 } else {
                     D::initialize(settings.clone())?;

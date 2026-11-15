@@ -332,7 +332,7 @@ pub(crate) async fn write(
         }
     };
     let request = WriteRequest::new(address.clone(), operand.mode(), operand.publication())
-        .map_err(|_| lookup_error(op, Failure::InvalidBinding))?;
+        .map_err(|cause| invalid_request_path(op, cause))?;
     request
         .check_target(slot.entry.map(|entry| entry.entry().entry_type()))
         .map_err(|reason| ResolveFailure::from(reason).without_effects(op))?;
@@ -359,7 +359,7 @@ pub(crate) async fn remove(
     let entry = resolved.require_entry(op)?;
     let observed = entry.observed.entry();
     let request = RemoveRequest::new(observed.path().clone(), operand.kind())
-        .map_err(|_| lookup_error(op, Failure::InvalidBinding))?;
+        .map_err(|cause| invalid_request_path(op, cause))?;
     request
         .check_target(observed.entry_type())
         .map_err(|reason| ResolveFailure::from(reason).without_effects(op))?;
@@ -407,19 +407,7 @@ pub(crate) async fn rename(
     let request = match RenameRequest::new(entry.path().clone(), address.clone(), operand.mode()) {
         Ok(request) => Some(request),
         Err(RequestPathError::RenameSameAddress) => None,
-        Err(cause) => {
-            let failure = match cause {
-                RequestPathError::RenameDestinationBelowSource => {
-                    Failure::Rejected(Rejection::Conflict)
-                }
-                _ => Failure::InvalidRequest,
-            };
-            return Err(StorageError::without_effects(
-                op,
-                failure,
-                Some(Box::new(cause)),
-            ));
-        }
+        Err(cause) => return Err(invalid_request_path(op, cause)),
     };
     let observed = match port.observe_child(&parent, address.clone(), &name).await {
         Ok(entry) => Some(entry),
@@ -581,7 +569,7 @@ impl LookupPort for HostLookup<'_> {
     ) -> Result<HostEntry, StorageError> {
         let op = self.0.operation();
         let request = CreateDirectoryRequest::new(address.clone())
-            .map_err(|_| lookup_error(op, Failure::InvalidBinding))?;
+            .map_err(|cause| invalid_request_path(op, cause))?;
         let slot = EntrySlot {
             parent: &parent.observed,
             name,
@@ -613,6 +601,10 @@ impl LookupPort for HostLookup<'_> {
 
 fn lookup_error(operation: Operation, failure: Failure) -> StorageError {
     StorageError::without_effects(operation, failure, None)
+}
+
+fn invalid_request_path(operation: Operation, cause: RequestPathError) -> StorageError {
+    StorageError::without_effects(operation, cause.into(), Some(Box::new(cause)))
 }
 
 fn complete_immediately<T>(

@@ -56,9 +56,9 @@
 //! Operations that require the exact entry or key return [`Rejection::NotFound`]
 //! or [`Rejection::AttributeNotFound`], respectively. If the operation would
 //! create the absent spelling, the occupied native slot instead fails as
-//! [`Rejection::Conflict`]. This applies to a rename to a differently spelled
-//! equivalent name in the same directory, even if the equivalent slot is its
-//! own source. Creation and replacement must enforce these checks atomically
+//! [`Rejection::EquivalentNameOccupied`]. This applies to a rename to a
+//! differently spelled equivalent name in the same directory, even if the
+//! equivalent slot is its own source. Creation and replacement must enforce these checks atomically
 //! with the name binding, including concurrent or staged mutations. An adapter
 //! that cannot enforce exact lookup or safe mutation rejects the affected
 //! operation as [`Rejection::Unsupported`].
@@ -101,9 +101,11 @@
 //! Validation-to-validation From conversions preserve structural nesting only.
 //! Adapters explicitly classify request/response errors and retain their causes.
 //! [`RequestPathError`] rejects canonical addresses that violate an operation's
-//! constructor rules. [`Failure::InvalidRequest`] reports input that cannot
-//! form a valid dispatchable operation. [`Failure::InvalidBinding`] reports
-//! a valid request that disagrees with its binding. [`ContractViolation`]
+//! constructor rules. Every `RequestPathError` converts to
+//! [`Failure::InvalidRequest`], including a rename into the source subtree.
+//! `InvalidRequest` reports input that cannot form a valid dispatchable
+//! operation. [`Failure::InvalidBinding`] reports a valid request that
+//! disagrees with its binding. [`ContractViolation`]
 //! describes defects at the adapter boundary.
 //! [`StorageError`] records the reason and the effects of the whole attempt
 //! independently. [`MutationOutcome::Unchanged`] requires evidence that no

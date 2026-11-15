@@ -28,6 +28,10 @@ pub enum Rejection {
     /// exactly, for example because it reserves the name or rewrites it.
     #[error("exact name is unsupported by the backend")]
     UnsupportedName,
+    /// The exact name is absent, but a differently spelled name occupies the
+    /// same native slot and prevents creation.
+    #[error("a differently spelled name occupies the native slot")]
+    EquivalentNameOccupied,
     /// The logical address exceeds its UTF-8 byte bound.
     #[error("path exceeds the logical address limit")]
     PathTooLong,
@@ -35,9 +39,8 @@ pub enum Rejection {
     DirectoryNotEmpty,
     #[error("requested operation or guarantee is unsupported")]
     Unsupported,
-    /// Also used when an absent exact name cannot be created because a
-    /// differently spelled, backend-equivalent name occupies the native slot.
-    #[error("operation precondition was not satisfied")]
+    /// The live namespace no longer agrees with the observations for this attempt.
+    #[error("namespace changed after observation")]
     Conflict,
     #[error("operation crosses a device boundary")]
     CrossDevice,
@@ -116,6 +119,12 @@ pub enum Failure {
     Backend(BackendFailure),
     #[error("{0}")]
     Contract(ContractViolation),
+}
+
+impl From<crate::RequestPathError> for Failure {
+    fn from(_: crate::RequestPathError) -> Self {
+        Self::InvalidRequest
+    }
 }
 
 /// The failed attempt's effects on visible directory entries, published

@@ -3,14 +3,14 @@
 use ah_vfs::application::driver_error::DriverError;
 use ah_vfs::application::driver_error::{LifecycleError, LifecycleFailure};
 use ah_vfs::domain::DriverKeyError;
-use ah_vfs_storage::{Failure, Rejection};
+use ah_vfs_storage::{BackendFailure, Failure, Rejection};
 use std::{io, path::PathBuf};
 use thiserror::Error;
 
 /// Classify native failures only at the adapter boundary; callers never inspect errno.
 pub(crate) fn io_failure(error: &io::Error) -> Failure {
     match error.raw_os_error().map(|code| code as u32) {
-        Some(32 | 33 | 303) => return Failure::Rejected(Rejection::Conflict),
+        Some(32 | 33 | 303) => return Failure::Backend(BackendFailure::Unavailable),
         Some(17) => return Failure::Rejected(Rejection::CrossDevice),
         Some(50 | 4390 | 4392 | 4393 | 4394) => return Failure::Rejected(Rejection::Unsupported),
         Some(123 | 161) => return Failure::Rejected(Rejection::UnsupportedName),

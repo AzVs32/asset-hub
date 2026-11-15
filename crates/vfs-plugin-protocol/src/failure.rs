@@ -36,6 +36,11 @@ const CAUSES: &[(&str, &str, d::Failure)] = &[
     ("caller", "invalid-request", d::Failure::InvalidRequest),
     (
         "rejected",
+        "equivalent-name-occupied",
+        d::Failure::Rejected(d::Rejection::EquivalentNameOccupied),
+    ),
+    (
+        "rejected",
         "not-found",
         d::Failure::Rejected(d::Rejection::NotFound),
     ),

@@ -718,7 +718,7 @@ async fn rename_uses_the_actual_slot_and_concurrent_arrivals_cannot_overwrite() 
     .await
     .err()
     .ok_or("directory moved into its own subtree")?;
-    assert_eq!(error.failure(), Failure::Rejected(Rejection::Conflict));
+    assert_eq!(error.failure(), Failure::InvalidRequest);
     assert_eq!(error.outcome(), ah_vfs_storage::MutationOutcome::Unchanged);
     assert!(f.root.join("work/directory/child").is_dir());
     let error = rename("first", "new/", RenameMode::NoReplace)?

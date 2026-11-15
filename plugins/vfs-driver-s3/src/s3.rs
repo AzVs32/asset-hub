@@ -122,10 +122,9 @@ impl Client {
         let publishes = (method == "DELETE" && !query.iter().any(|(key, _)| key == "uploadId"))
             || (method == "PUT" && !query.iter().any(|(key, _)| key == "uploadId"))
             || (method == "POST" && query.iter().any(|(key, _)| key == "uploadId"));
-        let guarded_mutation = publishes
-            && extra
-                .iter()
-                .any(|(header, _)| matches!(header.as_str(), "if-match" | "if-none-match"));
+        let conditional = extra
+            .iter()
+            .any(|(header, _)| matches!(header.as_str(), "if-match" | "if-none-match"));
         let request = self.sign(
             method,
             key,
@@ -147,7 +146,7 @@ impl Client {
             vfs_plugin_guest::wasi_http::send(request).map_err(|cause| context.failure(cause))?;
         match response.status().as_u16() {
             200..=299 => Ok(response),
-            404 | 409 | 412 if guarded_mutation => {
+            404 | 409 | 412 if publishes && conditional => {
                 Err(ah_vfs_storage::StorageError::without_effects(
                     if method == "DELETE" {
                         Operation::Remove
@@ -161,8 +160,9 @@ impl Client {
             }
             403 => Err(context.failure(Failure::Rejected(Rejection::AccessDenied))),
             404 => Err(context.failure(Failure::Rejected(Rejection::NotFound))),
-            409 => Err(context.failure(Failure::Rejected(Rejection::Conflict))),
-            412 if method == "GET" => Err(context.failure(Failure::Rejected(Rejection::Conflict))),
+            412 if method == "GET" && conditional => {
+                Err(context.failure(Failure::Rejected(Rejection::Conflict)))
+            }
             412 => Err(context.failure(Failure::Rejected(Rejection::AlreadyExists))),
             429 => Err(context.failure(Failure::Backend(BackendFailure::RateLimited))),
             500..=599 => Err(context.failure(Failure::Backend(BackendFailure::Unavailable))),
@@ -249,7 +249,7 @@ impl Client {
         }
         request
             .body(body)
-            .map_err(|_| context.failure(Failure::Rejected(Rejection::Conflict)))
+            .map_err(|_| context.failure(Failure::InvalidRequest))
     }
     pub fn check_bucket(&self) -> Result<()> {
         self.request("HEAD", "", vec![], vec![], vec![])?;
