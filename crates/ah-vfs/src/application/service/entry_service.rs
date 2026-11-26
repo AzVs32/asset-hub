@@ -291,18 +291,13 @@ impl EntryService {
                     )
                 })?;
                 let page = storage.list_page(&bound).await?;
-                if page.selection() != selection
-                    || page.entries().len() > limit
-                    || page.entries().first().is_some_and(|entry| {
-                        bound.after().is_some_and(|after| {
-                            entry.path().name().is_none_or(|name| &name <= after)
-                        })
-                    })
-                {
-                    return Err(EntryError::InvalidStorageResponse(
-                        "directory page disagrees with its binding",
-                    ));
-                }
+                page.validate_against(&bound).map_err(|cause| {
+                    StorageError::without_effects(
+                        Operation::List,
+                        Failure::Contract(ContractViolation::InvalidPage),
+                        Some(Box::new(cause)),
+                    )
+                })?;
                 for (index, entry) in page.entries().iter().enumerate() {
                     let checkpoint = page
                         .checkpoint(index)

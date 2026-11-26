@@ -185,20 +185,33 @@
 //! `Unchanged`. No-replace rename, create-new publication and single-directory
 //! creation check destination absence atomically at either guarantee level.
 //!
+//! Use [`Capabilities::supports`] to discover whether a backend offers an
+//! operation. Use [`Capabilities::require_write`] to check the mode and
+//! publication guarantee required by a particular write request.
+//!
 //! ```
 //! use ah_vfs_storage::{
-//!     Capabilities, StoragePath, Publication,
-//!     WriteModes, WriteMode, WriteRequest, WriteSupport,
+//!     Capabilities, Operation, Publication, Rejection, StoragePath, WriteMode,
+//!     WriteModes, WriteRequest, WriteSupport,
 //! };
 //! let capabilities = Capabilities::default()
-//!     .with_write(WriteSupport::staged(WriteModes::CreateNew, true));
-//! let request = WriteRequest::new(
-//!     StoragePath::parse("documents/report.txt")?,
-//!     WriteMode::CreateNew,
-//!     Publication::Atomic,
-//! )?;
-//! capabilities.require_write(&request)?;
+//!     .with_write(WriteSupport::staged(WriteModes::CreateNew, false));
+//! assert!(capabilities.supports(Operation::Write));
+//!
+//! let path = StoragePath::parse("documents/report.txt")?;
+//! let staged = WriteRequest::new(path.clone(), WriteMode::CreateNew, Publication::Staged)?;
+//! capabilities.require_write(&staged)?;
+//!
+//! let atomic = WriteRequest::new(path, WriteMode::CreateNew, Publication::Atomic)?;
+//! assert_eq!(capabilities.require_write(&atomic), Err(Rejection::Unsupported));
 //! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! ```compile_fail
+//! #![deny(unused_must_use)]
+//! use ah_vfs_storage::Capabilities;
+//! let capabilities = Capabilities::default();
+//! capabilities.with_list(true);
 //! ```
 //!
 //! # Validated values

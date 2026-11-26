@@ -721,13 +721,15 @@ impl<D: api::Guest> Dispatcher<D> {
                     )
                 })?;
                 let page = self.storage(&context, handle)?.list_page(&bound)?;
-                if page.selection() != bound.selection()
-                    || page.entries().len() > bound.size().get()
-                {
-                    return Err(context.failure(ah_vfs_storage::Failure::Contract(
-                        ah_vfs_storage::ContractViolation::InvalidPage,
-                    )));
-                }
+                page.validate_against(&bound).map_err(|cause| {
+                    ah_vfs_storage::StorageError::without_effects(
+                        ah_vfs_storage::Operation::List,
+                        ah_vfs_storage::Failure::Contract(
+                            ah_vfs_storage::ContractViolation::InvalidPage,
+                        ),
+                        Some(Box::new(cause)),
+                    )
+                })?;
                 return p::encode_page(page)
                     .map_err(|reason| context.failure(ah_vfs_storage::Failure::Contract(reason)));
             }

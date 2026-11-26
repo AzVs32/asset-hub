@@ -196,8 +196,9 @@ pub enum MutationBinding {
 /// Driver-wide operation and guarantee declarations, shared by all opened backends.
 /// Composition is infallible because each supported mode carries its prerequisites.
 /// The default declaration supports no operations. Each `with_*` method
-/// updates one capability. Backend/path/authorization restrictions
-/// remain operation failures, and declarations do not prove implementation correctness.
+/// returns the declaration with one capability updated. Backend/path/authorization
+/// restrictions remain operation failures, and declarations do not prove
+/// implementation correctness.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, CopyGetters)]
 #[getset(get_copy = "pub")]
 pub struct Capabilities {
@@ -215,56 +216,67 @@ pub struct Capabilities {
     mutation_binding: MutationBinding,
 }
 impl Capabilities {
+    #[must_use = "capability updates return a new declaration"]
     pub fn with_stat(mut self, stat: bool) -> Self {
         self.stat = stat;
         self
     }
 
+    #[must_use = "capability updates return a new declaration"]
     pub fn with_list(mut self, list: bool) -> Self {
         self.list = list;
         self
     }
 
+    #[must_use = "capability updates return a new declaration"]
     pub fn with_remove(mut self, remove: bool) -> Self {
         self.remove = remove;
         self
     }
 
+    #[must_use = "capability updates return a new declaration"]
     pub fn with_read(mut self, read: ReadSupport) -> Self {
         self.read = read;
         self
     }
 
+    #[must_use = "capability updates return a new declaration"]
     pub fn with_read_link(mut self, read_link: bool) -> Self {
         self.read_link = read_link;
         self
     }
 
+    #[must_use = "capability updates return a new declaration"]
     pub fn with_write(mut self, write: WriteSupport) -> Self {
         self.write = write;
         self
     }
 
+    #[must_use = "capability updates return a new declaration"]
     pub fn with_directories(mut self, directories: DirectorySupport) -> Self {
         self.directories = directories;
         self
     }
 
+    #[must_use = "capability updates return a new declaration"]
     pub fn with_rename(mut self, rename: RenameSupport) -> Self {
         self.rename = rename;
         self
     }
 
+    #[must_use = "capability updates return a new declaration"]
     pub fn with_permissions(mut self, permissions: AttributeSupport) -> Self {
         self.permissions = permissions;
         self
     }
 
+    #[must_use = "capability updates return a new declaration"]
     pub fn with_xattrs(mut self, xattrs: AttributeSupport) -> Self {
         self.xattrs = xattrs;
         self
     }
 
+    #[must_use = "capability updates return a new declaration"]
     pub fn with_mutation_binding(mut self, mutation_binding: MutationBinding) -> Self {
         self.mutation_binding = mutation_binding;
         self

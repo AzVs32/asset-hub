@@ -30,7 +30,7 @@ const TIMEOUT: Duration = Duration::from_secs(5);
 
 struct BoundMemory {
     driver: MemoryDriver,
-    storage: Arc<MemoryStorage>,
+    storage: Arc<dyn Storage>,
 }
 impl Driver for BoundMemory {
     fn info(&self) -> &DriverInfo {
@@ -42,7 +42,7 @@ impl Driver for BoundMemory {
     }
 
     fn open(&self, _: OpenContext) -> DriverFuture<'_, Arc<dyn Storage>> {
-        Box::pin(async { Ok(self.storage.clone() as Arc<dyn Storage>) })
+        Box::pin(async { Ok(self.storage.clone()) })
     }
 }
 
@@ -55,6 +55,13 @@ struct Fixture {
 }
 impl Fixture {
     async fn new(quota: u64) -> TestResult<Self> {
+        Self::with_storage(quota, |storage| storage).await
+    }
+
+    async fn with_storage(
+        quota: u64,
+        wrap: impl FnOnce(Arc<MemoryStorage>) -> Arc<dyn Storage>,
+    ) -> TestResult<Self> {
         let mut links = [
             ("alias", b"docs".as_slice()),
             ("opaque", b"\xff"),
@@ -87,7 +94,7 @@ impl Fixture {
         )?);
         let dispatcher = Arc::new(Dispatcher::new(Arc::new(BoundMemory {
             driver: MemoryDriver::new()?,
-            storage: storage.clone(),
+            storage: wrap(storage.clone()),
         }))?);
         let generation = dispatcher.generation();
         dispatcher
@@ -1112,6 +1119,63 @@ async fn formal_remove_and_rename_share_bindings_and_apply_the_destination_matri
         d::Failure::Rejected(d::Rejection::NotFound),
     )?;
     Ok(())
+}
+
+struct RepeatsFirstPage(Arc<MemoryStorage>);
+
+impl Storage for RepeatsFirstPage {
+    fn chunk_size(&self) -> std::num::NonZeroUsize {
+        self.0.chunk_size()
+    }
+
+    fn mutation_binding(&self) -> d::MutationBinding {
+        self.0.mutation_binding()
+    }
+
+    fn list_page<'a>(
+        &'a self,
+        bound: &'a d::BoundListRequest,
+    ) -> StorageFuture<'a, d::DirectoryPage> {
+        Box::pin(async move {
+            let first = d::ListRequest::new(bound.selection().address().clone(), bound.size())
+                .bind_selection(bound.selection().clone())
+                .map_err(|cause| {
+                    vfs_plugin_codec::storage_protocol_violation_with_source(
+                        d::Operation::List,
+                        cause,
+                    )
+                })?;
+            self.0.list_page(&first).await
+        })
+    }
+}
+
+#[tokio::test]
+async fn grpc_rejects_a_first_page_returned_for_a_continuation() -> TestResult {
+    use ah_vfs::resolve::operand::ListOperandTarget;
+
+    let fixture = Fixture::with_storage(64, |storage| Arc::new(RepeatsFirstPage(storage))).await?;
+    let mut listing = fixture.formal_session().await?;
+    let size = d::PageSize::new(1)?;
+    let request = ListOperand::new(ListOperandTarget::Path(PathExpr::parse("/")?), size);
+    let selection = fixture
+        .storage
+        .select_directory(&request, Default::default())
+        .await?;
+    let first = request.bind_selection(selection.clone())?;
+    let (wire, data) = wire_page(&mut listing, &first).await?;
+    let page = p::decode_page(&first, wire, &data)?;
+    let cursor = page.continuation().ok_or("expected continuation")?;
+    let next = d::ListRequest::continuing(cursor, size).bind_selection(selection)?;
+
+    let reply = listing
+        .call(p::StorageOp::List(p::encode_list(&next)))
+        .await?;
+    formal_failure(
+        reply,
+        d::Operation::List,
+        d::Failure::Contract(d::ContractViolation::InvalidPage),
+    )
 }
 
 #[tokio::test]

@@ -27,10 +27,11 @@ use std::{
 
 type TestResult<T = ()> = Result<T, Box<dyn Error>>;
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum Response {
     Normal,
     WrongBinding,
+    RepeatedFirstPage(Arc<AtomicBool>),
     RetiredAfterScan,
 }
 
@@ -56,7 +57,7 @@ impl common::Backend for TestDriver {
         Box::pin(async move {
             Ok(Arc::new(TestStorage {
                 instance,
-                response: self.response,
+                response: self.response.clone(),
                 retired: AtomicBool::new(false),
             }) as Arc<dyn Storage>)
         })
@@ -121,6 +122,19 @@ impl Storage for TestStorage {
                 return DirectoryPage::new(&wrong, vec![], false)
                     .map_err(|cause| invalid_metadata(Operation::List, cause));
             }
+            let first;
+            let bound = if matches!(&self.response, Response::RepeatedFirstPage(repeat) if repeat.load(Ordering::Relaxed))
+            {
+                first = ah_vfs_storage::ListRequest::new(
+                    bound.selection().address().clone(),
+                    bound.size(),
+                )
+                .bind_selection(bound.selection().clone())
+                .map_err(|cause| invalid_metadata(Operation::List, cause))?;
+                &first
+            } else {
+                bound
+            };
             let mut names = ["a", "docs", "z"]
                 .into_iter()
                 .filter(|name| bound.after().is_none_or(|after| *name > after.as_str()));
@@ -324,8 +338,73 @@ async fn page_from_another_binding_is_rejected() -> TestResult {
         files
             .list_entries(&VirtualPath::root(), Default::default())
             .await,
-        Err(EntryError::InvalidStorageResponse(_))
+        Err(EntryError::Storage(error))
+            if error.failure() == Failure::Contract(ContractViolation::InvalidPage)
     ));
+    Ok(())
+}
+
+#[tokio::test]
+async fn repeated_first_page_is_rejected_by_direct_and_mounted_listing() -> TestResult {
+    use ah_vfs::resolve::StorageOperations;
+    use ah_vfs::resolve::operand::{ListOperand, ListOperandTarget};
+    use ah_vfs::resolve::path::PathExpr;
+    use ah_vfs_storage::{DirectoryPageError, MutationOutcome};
+
+    let repeat = Arc::new(AtomicBool::new(true));
+    let response = Response::RepeatedFirstPage(repeat.clone());
+    let size = PageSize::new(1)?;
+    let storage = TestStorage {
+        instance: InstanceId::parse("root")?,
+        response: response.clone(),
+        retired: AtomicBool::new(false),
+    };
+    let first = ListOperand::new(ListOperandTarget::Path(PathExpr::parse("/")?), size);
+    let page = storage.list_entries(&first, Default::default()).await?;
+    let cursor = page.continuation().ok_or("expected storage continuation")?;
+    let next = ListOperand::new(ListOperandTarget::Continue(cursor), size);
+    let direct_error = storage
+        .list_entries(&next, Default::default())
+        .await
+        .err()
+        .ok_or("direct listing accepted the first page again")?;
+
+    // The mounted listing may look ahead before returning its first page.
+    repeat.store(false, Ordering::Relaxed);
+    let (files, _) = services(response).await?;
+    let root = VirtualPath::root();
+    let page = files
+        .list_entries(&root, DirQuery { cursor: None, size })
+        .await?;
+    let cursor = page.continuation.ok_or("expected virtual continuation")?;
+    repeat.store(true, Ordering::Relaxed);
+    let EntryError::Storage(virtual_error) = files
+        .list_entries(
+            &root,
+            DirQuery {
+                cursor: Some(cursor),
+                size,
+            },
+        )
+        .await
+        .err()
+        .ok_or("virtual listing accepted the first page again")?
+    else {
+        return Err("expected storage error from virtual listing".into());
+    };
+
+    for error in [direct_error, virtual_error] {
+        assert_eq!(error.operation(), Operation::List);
+        assert_eq!(
+            error.failure(),
+            Failure::Contract(ContractViolation::InvalidPage)
+        );
+        assert_eq!(error.outcome(), MutationOutcome::Unchanged);
+        assert_eq!(
+            error.source().and_then(|source| source.downcast_ref()),
+            Some(&DirectoryPageError::BeforeCursor),
+        );
+    }
     Ok(())
 }
 

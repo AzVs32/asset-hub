@@ -324,6 +324,25 @@ fn directory_pages_check_scope_order_cursor_limit_and_forward_progress() -> Resu
     let resumed = next.bind_selection(bound.selection().clone())?;
     let last = DirectoryPage::new(&resumed, vec![entry("dir/c")?], false)?;
     assert!(last.continuation().is_none());
+    page.validate_against(&bound)?;
+    last.validate_against(&resumed)?;
+    assert_eq!(
+        page.validate_against(&resumed),
+        Err(DirectoryPageError::BeforeCursor)
+    );
+    let smaller = ListRequest::new(request.directory().clone(), PageSize::new(1)?)
+        .bind_selection(bound.selection().clone())?;
+    assert_eq!(
+        page.validate_against(&smaller),
+        Err(DirectoryPageError::TooManyEntries)
+    );
+    let other = request.bind_selection(selected("dir", 2)?)?;
+    let empty = DirectoryPage::new(&bound, vec![], false)?;
+    empty.validate_against(&resumed)?;
+    assert_eq!(
+        empty.validate_against(&other),
+        Err(DirectoryPageError::UnexpectedDirectory)
+    );
 
     for (entries, more, expected) in [
         (

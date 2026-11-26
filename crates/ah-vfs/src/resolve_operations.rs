@@ -75,7 +75,15 @@ pub trait StorageOperations: Storage {
                     Some(Box::new(cause)),
                 )
             })?;
-            self.list_page(&bound).await
+            let page = self.list_page(&bound).await?;
+            page.validate_against(&bound).map_err(|cause| {
+                StorageError::without_effects(
+                    Operation::List,
+                    Failure::Contract(ContractViolation::InvalidPage),
+                    Some(Box::new(cause)),
+                )
+            })?;
+            Ok(page)
         })
     }
 

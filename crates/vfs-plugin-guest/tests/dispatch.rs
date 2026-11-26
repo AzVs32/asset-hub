@@ -24,6 +24,7 @@ impl Guest for Driver {
             child_mounts: true,
             capabilities: ah_vfs_storage::Capabilities::default()
                 .with_stat(true)
+                .with_list(true)
                 .with_read_link(true)
                 .with_read(ah_vfs_storage::ReadSupport::Range)
                 .with_write(ah_vfs_storage::WriteSupport::staged(
@@ -101,6 +102,21 @@ impl GuestStorage for Store {
     }
     fn begin_lookup(&self, operation: Operation) -> Result<Lookup> {
         Ok(Lookup::new(ObservedFixture(operation, self.fail)))
+    }
+    fn list_page(
+        &self,
+        bound: &ah_vfs_storage::BoundListRequest,
+    ) -> Result<ah_vfs_storage::DirectoryPage> {
+        use ah_vfs_storage::{ContractViolation, DirectoryPage, ListRequest};
+
+        let invalid = || {
+            ErrorContext::storage(Operation::List)
+                .failure(Failure::Contract(ContractViolation::InvalidPage))
+        };
+        let first = ListRequest::new(bound.selection().address().clone(), bound.size())
+            .bind_selection(bound.selection().clone())
+            .map_err(|_| invalid())?;
+        DirectoryPage::new(&first, vec![entry(1)?], true).map_err(|_| invalid())
     }
 }
 impl GuestAttributes for Store {
@@ -190,6 +206,48 @@ fn open(dispatcher: &mut Dispatcher<Driver>, fail: bool) -> TestResult<u64> {
         _ => Err("storage envelope".into()),
     }
 }
+#[test]
+fn dispatch_rejects_a_first_page_returned_for_a_continuation() -> TestResult {
+    use ah_vfs_storage::{
+        ContractViolation, DirectoryIdentity, DirectorySelection, ListRequest, MutationOutcome,
+        PageSize,
+    };
+
+    let mut dispatcher = setup()?;
+    let handle = open(&mut dispatcher, false)?;
+    let root = StoragePath::root();
+    let selection =
+        DirectorySelection::from_lookup(root.clone(), DirectoryIdentity::from_bytes([1; 16]));
+    let size = PageSize::new(1)?;
+    let first = ListRequest::new(root, size).bind_selection(selection.clone())?;
+    let list = |bound| {
+        Op::Storage(p::StorageCall {
+            handle,
+            operation: Some(p::StorageOp::List(p::encode_list(bound))),
+        })
+    };
+    let reply = call(&mut dispatcher, list(&first), vec![])?;
+    let Some(Value::Page(wire)) = reply.result else {
+        return Err("expected first page".into());
+    };
+    let page = p::decode_page(&first, wire, &reply.data)?;
+    let cursor = page.continuation().ok_or("expected continuation")?;
+    let next = ListRequest::continuing(cursor, size).bind_selection(selection)?;
+
+    let bytes = p::encode_request("generation", &list(&next), vec![])?;
+    let failure = p::decode_reply(&dispatcher.call(&bytes))?
+        .err()
+        .ok_or("guest dispatcher accepted the first page again")?;
+    let error = p::decode_storage_error(failure.storage.ok_or("expected storage failure")?)?;
+    assert_eq!(error.operation(), Operation::List);
+    assert_eq!(
+        error.failure(),
+        Failure::Contract(ContractViolation::InvalidPage)
+    );
+    assert_eq!(error.outcome(), MutationOutcome::Unchanged);
+    Ok(())
+}
+
 fn bind_operation(
     dispatcher: &mut Dispatcher<Driver>,
     storage: u64,

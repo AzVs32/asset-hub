@@ -942,11 +942,13 @@ impl Session {
                     )
                 })?;
                 let page = s.list_page(&bound).await?;
-                if page.selection() != bound.selection()
-                    || page.entries().len() > bound.size().get()
-                {
-                    return Err(c::storage_protocol_violation(Operation::List).into());
-                }
+                page.validate_against(&bound).map_err(|cause| {
+                    StorageError::without_effects(
+                        Operation::List,
+                        Failure::Contract(ContractViolation::InvalidPage),
+                        Some(Box::new(cause)),
+                    )
+                })?;
                 return p::encode_page(page).map_err(|cause| {
                     c::storage_protocol_violation_with_source(Operation::List, cause).into()
                 });

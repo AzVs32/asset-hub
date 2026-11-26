@@ -235,10 +235,8 @@ impl DirectoryPage {
         entries: Vec<Entry>,
         has_more: bool,
     ) -> Result<Self, DirectoryPageError> {
-        if entries.len() > bound.size().get() {
-            return Err(DirectoryPageError::TooManyEntries);
-        }
-        let after = bound.after().map(EntryName::as_str);
+        check_page_size(bound.size(), entries.len())?;
+        let after = bound.after();
         let mut previous = None;
         for entry in &entries {
             let (parent, name) = entry
@@ -248,9 +246,7 @@ impl DirectoryPage {
             if parent != bound.selection.address.as_str() {
                 return Err(DirectoryPageError::NotAChild);
             }
-            if after.is_some_and(|after| name <= after) {
-                return Err(DirectoryPageError::BeforeCursor);
-            }
+            check_after_cursor(after, name)?;
             if previous.is_some_and(|previous| name <= previous) {
                 return Err(DirectoryPageError::NotOrdered);
             }
@@ -296,6 +292,27 @@ impl DirectoryPage {
         Ok(page)
     }
 
+    /// Recheck this page against the current request, borrowing its entries.
+    ///
+    /// Construction has already checked child paths, order and continuation.
+    /// This checks directory identity and address, the current size limit and
+    /// the exclusive cursor. An ordered page only needs its first name checked.
+    /// The executor remains responsible for verifying the live directory binding.
+    pub fn validate_against(&self, bound: &BoundListRequest) -> Result<(), DirectoryPageError> {
+        if self.selection() != bound.selection() {
+            return Err(DirectoryPageError::UnexpectedDirectory);
+        }
+        check_page_size(bound.size(), self.entries.len())?;
+        if let Some((_, name)) = self
+            .entries
+            .first()
+            .and_then(|entry| entry.path().split_name())
+        {
+            check_after_cursor(bound.after(), name)?;
+        }
+        Ok(())
+    }
+
     pub fn selection(&self) -> &DirectorySelection {
         &self.selection
     }
@@ -325,4 +342,18 @@ impl DirectoryPage {
     pub fn into_parts(self) -> (DirectorySelection, Vec<Entry>, Option<EntryName>) {
         (self.selection, self.entries, self.next)
     }
+}
+
+fn check_page_size(size: PageSize, len: usize) -> Result<(), DirectoryPageError> {
+    if len > size.get() {
+        return Err(DirectoryPageError::TooManyEntries);
+    }
+    Ok(())
+}
+
+fn check_after_cursor(after: Option<&EntryName>, name: &str) -> Result<(), DirectoryPageError> {
+    if after.is_some_and(|after| name <= after.as_str()) {
+        return Err(DirectoryPageError::BeforeCursor);
+    }
+    Ok(())
 }
